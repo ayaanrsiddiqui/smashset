@@ -87,6 +87,13 @@ export function ReportPanel({ set, presumedWinnerId, characters, onDone, onCance
         {set.fullRoundText} · {set.identifier}
       </div>
 
+      {set.isPreview && (
+        <p className="error">
+          This bracket hasn't been started on start.gg yet, so this is only a preview matchup — it can't be reported
+          until the bracket is actually started.
+        </p>
+      )}
+
       <div className="winner-select">
         {[entrantA, entrantB].map((e) => (
           <button
@@ -184,7 +191,7 @@ export function ReportPanel({ set, presumedWinnerId, characters, onDone, onCance
         </div>
       )}
 
-      <button className="submit-btn" disabled={!games || !!parseError || submitting} onClick={submit}>
+      <button className="submit-btn" disabled={!games || !!parseError || submitting || set.isPreview} onClick={submit}>
         {submitting ? 'Reporting…' : 'Report set'}
       </button>
       {submitError && <p className="error">{submitError}</p>}

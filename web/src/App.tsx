@@ -169,7 +169,10 @@ export default function App() {
             onClick={() => selectSet(s)}
           >
             <span className="entrant-names">{s.entrants.map((e) => e.name).join(' vs ')}</span>
-            <span className="round-text">{s.fullRoundText}</span>
+            <span className="round-text">
+              {s.fullRoundText}
+              {s.isPreview && ' · bracket not started'}
+            </span>
           </li>
         ))}
         {results.length === 0 && <li className="empty">No open sets match "{query}"</li>}

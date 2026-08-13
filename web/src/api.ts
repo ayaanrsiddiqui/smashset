@@ -9,7 +9,7 @@ async function req<T>(url: string, opts?: RequestInit): Promise<T> {
   return body as T;
 }
 
-export function resolveEvent(input: string): Promise<{ event: EventInfo }> {
+export function resolveEvent(input: string): Promise<{ event?: EventInfo; events?: EventInfo[] }> {
   return req('/api/event/resolve', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -33,7 +33,7 @@ export interface CharacterSelections {
 }
 
 export interface ReportPayload {
-  setId: number;
+  setId: number | string;
   winnerEntrantId: number;
   loserEntrantId: number;
   requiredWins: number;

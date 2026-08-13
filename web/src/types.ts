@@ -4,7 +4,8 @@ export interface EntrantInfo {
 }
 
 export interface OpenSet {
-  id: number;
+  id: number | string;
+  isPreview: boolean;
   fullRoundText: string;
   identifier: string;
   entrants: EntrantInfo[];

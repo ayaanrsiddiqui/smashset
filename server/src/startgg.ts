@@ -35,16 +35,30 @@ export async function gql<T>(query: string, variables: Record<string, unknown>):
   return body.data;
 }
 
+export type ParsedInput = { type: 'event'; slug: string } | { type: 'tournament'; slug: string };
+
 /**
- * Accepts a full start.gg URL or a bare "tournament/<t-slug>/event/<e-slug>"
- * slug and normalizes it to the slug form the API expects.
+ * Accepts a full start.gg URL, a "tournament/<t-slug>/event/<e-slug>" event
+ * slug, or a bare tournament URL/slug (e.g. "fireslam23test", the common
+ * case for a tournament with a single event) and figures out which one it
+ * is and what to look up.
  */
-export function normalizeEventSlug(input: string): string {
+export function parseStartggInput(input: string): ParsedInput {
   let s = input.trim();
   s = s.replace(/^https?:\/\/(www\.)?start\.gg\//i, '');
   s = s.replace(/^\/+/, '').replace(/\/+$/, '');
-  // Drop anything after /event/<slug> (e.g. /brackets/..., ?query params)
-  const match = s.match(/^(tournament\/[^/]+\/event\/[^/?]+)/);
-  if (match) return match[1];
-  return s;
+  s = s.split('?')[0];
+
+  const eventMatch = s.match(/^tournament\/([^/]+)\/event\/([^/]+)/);
+  if (eventMatch) {
+    return { type: 'event', slug: `tournament/${eventMatch[1]}/event/${eventMatch[2]}` };
+  }
+
+  const tournamentMatch = s.match(/^tournament\/([^/]+)/);
+  if (tournamentMatch) {
+    return { type: 'tournament', slug: tournamentMatch[1] };
+  }
+
+  const bare = s.split('/')[0];
+  return { type: 'tournament', slug: bare };
 }

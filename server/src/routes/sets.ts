@@ -18,7 +18,9 @@ interface SetsQueryResult {
 }
 
 interface RawSet {
-  id: number;
+  // Real sets have a numeric id; sets in an un-started/preview bracket come
+  // back as a synthetic "preview_..." string instead.
+  id: number | string;
   state: number;
   round: number;
   fullRoundText: string;
@@ -27,7 +29,8 @@ interface RawSet {
 }
 
 export interface OpenSet {
-  id: number;
+  id: number | string;
+  isPreview: boolean;
   fullRoundText: string;
   identifier: string;
   entrants: { id: number; name: string }[];
@@ -83,7 +86,8 @@ async function fetchOpenSets(eventId: string): Promise<OpenSet[]> {
         .map((slot) => slot.entrant)
         .filter((e): e is { id: number; name: string } => e !== null);
       if (entrants.length !== 2) continue; // skip byes / not-yet-determined slots
-      open.push({ id: s.id, fullRoundText: s.fullRoundText, identifier: s.identifier, entrants });
+      const isPreview = typeof s.id === 'string' && s.id.startsWith('preview_');
+      open.push({ id: s.id, isPreview, fullRoundText: s.fullRoundText, identifier: s.identifier, entrants });
     }
     page++;
   }

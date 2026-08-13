@@ -1,15 +1,25 @@
 import { Router } from 'express';
-import { gql, normalizeEventSlug } from '../startgg.js';
+import { gql, parseStartggInput } from '../startgg.js';
 
 export const eventRouter = Router();
 
+interface EventInfo {
+  id: number;
+  name: string;
+  slug: string;
+  videogame: { id: number; name: string };
+  tournament: { id: number; name: string };
+}
+
 interface EventQueryResult {
-  event: {
+  event: Omit<EventInfo, 'tournament'> & { tournament: { id: number; name: string } } | null;
+}
+
+interface TournamentQueryResult {
+  tournament: {
     id: number;
     name: string;
-    slug: string;
-    videogame: { id: number; name: string };
-    tournament: { id: number; name: string };
+    events: (Omit<EventInfo, 'tournament'>)[] | null;
   } | null;
 }
 
@@ -31,22 +41,69 @@ const EVENT_QUERY = /* GraphQL */ `
   }
 `;
 
+const TOURNAMENT_QUERY = /* GraphQL */ `
+  query ResolveTournament($slug: String!) {
+    tournament(slug: $slug) {
+      id
+      name
+      events {
+        id
+        name
+        slug
+        videogame {
+          id
+          name
+        }
+      }
+    }
+  }
+`;
+
 eventRouter.post('/resolve', async (req, res) => {
   const input = req.body?.input;
   if (typeof input !== 'string' || !input.trim()) {
-    res.status(400).json({ error: 'Provide a start.gg event URL or slug' });
+    res.status(400).json({ error: 'Provide a start.gg event or tournament URL/slug' });
     return;
   }
 
-  const slug = normalizeEventSlug(input);
+  const parsed = parseStartggInput(input);
 
   try {
-    const data = await gql<EventQueryResult>(EVENT_QUERY, { slug });
-    if (!data.event) {
-      res.status(404).json({ error: `No event found for "${slug}"` });
+    if (parsed.type === 'event') {
+      const data = await gql<EventQueryResult>(EVENT_QUERY, { slug: parsed.slug });
+      if (!data.event) {
+        res.status(404).json({ error: `No event found for "${parsed.slug}"` });
+        return;
+      }
+      res.json({ event: data.event });
       return;
     }
-    res.json({ event: data.event });
+
+    const data = await gql<TournamentQueryResult>(TOURNAMENT_QUERY, { slug: parsed.slug });
+    if (!data.tournament) {
+      res.status(404).json({ error: `No tournament found for "${parsed.slug}"` });
+      return;
+    }
+
+    const events = data.tournament.events ?? [];
+    if (events.length === 0) {
+      res.status(404).json({ error: `"${data.tournament.name}" has no events` });
+      return;
+    }
+
+    if (events.length === 1) {
+      const e = events[0];
+      res.json({ event: { ...e, tournament: { id: data.tournament.id, name: data.tournament.name } } });
+      return;
+    }
+
+    // Multiple events under this tournament — let the client pick one.
+    res.json({
+      events: events.map((e) => ({
+        ...e,
+        tournament: { id: data.tournament!.id, name: data.tournament!.name },
+      })),
+    });
   } catch (err) {
     res.status(502).json({ error: err instanceof Error ? err.message : 'Failed to resolve event' });
   }

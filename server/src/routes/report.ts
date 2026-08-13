@@ -12,7 +12,7 @@ interface CharacterSelections {
 }
 
 interface ReportBody {
-  setId: number;
+  setId: number | string;
   winnerEntrantId: number;
   loserEntrantId: number;
   requiredWins: number;
@@ -84,6 +84,13 @@ reportRouter.post('/', async (req, res) => {
     typeof body.shorthand !== 'string'
   ) {
     res.status(400).json({ error: 'Missing required fields' });
+    return;
+  }
+
+  if (typeof body.setId === 'string' && body.setId.startsWith('preview_')) {
+    res.status(400).json({
+      error: 'This set is still a bracket preview (the bracket hasn\'t been started on start.gg yet), so it has no real set to report against.',
+    });
     return;
   }
 
