@@ -1,0 +1,64 @@
+export interface ParsedGame {
+  gameNum: number;
+  winnerWonGame: boolean;
+}
+
+/**
+ * Parses TO shorthand for a set's game-by-game outcome, from the perspective
+ * of the entrant who won the overall set.
+ *
+ *   "124"  -> winner won games 1, 2, 4 (so lost game 3) — self-describing,
+ *             the digit count IS the number of games the winner needed.
+ *   "-3"   -> winner lost only game 3 (so won every other game up to the
+ *             clinch) — this form can't tell bo3 from bo5 on its own, so
+ *             requiredWins (from the UI's bo3/bo5 toggle) fills that in.
+ *
+ * Both forms above describe the same bo5 result: 3-1, sequence W W L W.
+ * Assumes best-of-N: the set ends the instant the winner reaches requiredWins.
+ */
+export function parseScoreShorthand(raw: string, requiredWins: number): ParsedGame[] {
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    throw new Error('Enter a score, e.g. "124" or "-3"');
+  }
+
+  const isLossMode = trimmed.startsWith('-');
+  const digitsStr = isLossMode ? trimmed.slice(1) : trimmed;
+
+  if (!/^[1-9]+$/.test(digitsStr)) {
+    throw new Error('Use digits 1-9 only, e.g. "124" or "-3"');
+  }
+
+  const digits = digitsStr.split('').map(Number);
+  for (let i = 1; i < digits.length; i++) {
+    if (digits[i] <= digits[i - 1]) {
+      throw new Error('Game numbers must be strictly increasing, e.g. "124"');
+    }
+  }
+
+  let totalGames: number;
+  let winnerGameNumbers: Set<number>;
+
+  if (isLossMode) {
+    const lossNumbers = new Set(digits);
+    totalGames = requiredWins + lossNumbers.size;
+    if (lossNumbers.has(totalGames)) {
+      throw new Error('The last game of the set has to be a win for the set winner');
+    }
+    winnerGameNumbers = new Set<number>();
+    for (let g = 1; g <= totalGames; g++) {
+      if (!lossNumbers.has(g)) winnerGameNumbers.add(g);
+    }
+  } else {
+    // Win-list mode is self-describing: however many games are listed is
+    // however many wins the winner needed, regardless of the bo3/bo5 toggle.
+    winnerGameNumbers = new Set(digits);
+    totalGames = digits[digits.length - 1];
+  }
+
+  const games: ParsedGame[] = [];
+  for (let g = 1; g <= totalGames; g++) {
+    games.push({ gameNum: g, winnerWonGame: winnerGameNumbers.has(g) });
+  }
+  return games;
+}
