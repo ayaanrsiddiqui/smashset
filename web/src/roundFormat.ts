@@ -10,3 +10,8 @@ export const BO_OPTIONS = [
   { label: 'Bo3', requiredWins: 2 },
   { label: 'Bo5', requiredWins: 3 },
 ];
+
+/** requiredWins -> "BoN" label, for formats beyond the BO_OPTIONS shortcuts (Bo7, Bo9, ...). */
+export function boLabel(requiredWins: number): string {
+  return `Bo${requiredWins * 2 - 1}`;
+}

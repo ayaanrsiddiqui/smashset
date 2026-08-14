@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { Settings } from './Settings';
 import { ReportPanel } from './ReportPanel';
-import { fetchCharacters, fetchOpenSets } from './api';
+import { fetchCharacters, fetchOpenSets, fetchStages } from './api';
 import { fuzzyMatchSets } from './fuzzy';
-import type { Character, EventInfo, OpenSet } from './types';
+import type { Character, EventInfo, OpenSet, Stage } from './types';
 import './App.css';
 
 const STORAGE_KEY = 'quickset.event';
@@ -16,8 +16,10 @@ export default function App() {
   });
   const [sets, setSets] = useState<OpenSet[]>([]);
   const [characters, setCharacters] = useState<Character[]>([]);
+  const [stages, setStages] = useState<Stage[]>([]);
   const [query, setQuery] = useState('');
   const [highlight, setHighlight] = useState(0);
+  const [numberPickArmed, setNumberPickArmed] = useState(false);
   const [selectedSet, setSelectedSet] = useState<OpenSet | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -43,6 +45,9 @@ export default function App() {
     fetchCharacters(event.videogame.id)
       .then(({ characters }) => setCharacters(characters))
       .catch(() => setCharacters([]));
+    fetchStages(event.videogame.id)
+      .then(({ stages }) => setStages(stages))
+      .catch(() => setStages([]));
   }, [event]);
 
   useEffect(() => {
@@ -55,16 +60,12 @@ export default function App() {
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
+      // ReportPanel owns every keypress while a set is open — it has its own
+      // window-level listener and its own escape/confirm flow.
+      if (selectedSet) return;
+
       const active = document.activeElement;
       const inField = active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement;
-
-      if (selectedSet) {
-        if (e.key === 'Escape') {
-          setSelectedSet(null);
-          setQuery('');
-        }
-        return;
-      }
 
       if (e.key === '/' && !inField) {
         e.preventDefault();
@@ -73,10 +74,26 @@ export default function App() {
       }
       if (e.key === 'Escape') {
         setQuery('');
+        setNumberPickArmed(false);
         searchRef.current?.blur();
         return;
       }
       if (!inField) return;
+
+      if (e.key === 'Tab') {
+        e.preventDefault();
+        setNumberPickArmed(true);
+        return;
+      }
+      if (numberPickArmed) {
+        setNumberPickArmed(false);
+        if (/^[1-9]$/.test(e.key)) {
+          e.preventDefault();
+          const pick = results[Number(e.key) - 1];
+          if (pick) selectSet(pick);
+          return;
+        }
+      }
 
       if (e.key === 'ArrowDown') {
         e.preventDefault();
@@ -116,6 +133,7 @@ export default function App() {
           set={selectedSet}
           presumedWinnerId={matchedEntrantId(selectedSet)}
           characters={characters}
+          stages={stages}
           onDone={() => {
             setToast(`Reported ${selectedSet.entrants.map((e) => e.name).join(' vs ')}`);
             setSelectedSet(null);
@@ -151,16 +169,17 @@ export default function App() {
         className="search-box"
         autoFocus
         value={query}
-        placeholder="Winner's name… (press / to focus)"
+        placeholder="Winner's name… (press / to focus, tab + 1-9 to pick)"
         onChange={(e) => {
           setQuery(e.target.value);
           setHighlight(0);
+          setNumberPickArmed(false);
         }}
       />
 
       {loadError && <p className="error">{loadError}</p>}
 
-      <ul className="results-list">
+      <ul className={`results-list ${numberPickArmed ? 'number-pick-armed' : ''}`}>
         {results.map((s, i) => (
           <li
             key={s.id}
@@ -168,6 +187,7 @@ export default function App() {
             onMouseEnter={() => setHighlight(i)}
             onClick={() => selectSet(s)}
           >
+            {i < 9 && <span className="result-num">{i + 1}</span>}
             <span className="entrant-names">{s.entrants.map((e) => e.name).join(' vs ')}</span>
             <span className="round-text">
               {s.fullRoundText}

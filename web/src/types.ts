@@ -16,6 +16,11 @@ export interface Character {
   name: string;
 }
 
+export interface Stage {
+  id: number;
+  name: string;
+}
+
 export interface EventInfo {
   id: number;
   name: string;

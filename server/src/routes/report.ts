@@ -4,11 +4,15 @@ import { parseScoreShorthand } from '../scoreParser.js';
 
 export const reportRouter = Router();
 
-interface CharacterSelections {
-  mode: 'set' | 'perGame';
+interface CharacterSelection {
+  gameNum: number;
   winnerCharacterId?: number;
   loserCharacterId?: number;
-  perGame?: { gameNum: number; winnerCharacterId?: number; loserCharacterId?: number }[];
+}
+
+interface StageSelection {
+  gameNum: number;
+  stageId: number;
 }
 
 interface ReportBody {
@@ -17,12 +21,14 @@ interface ReportBody {
   loserEntrantId: number;
   requiredWins: number;
   shorthand: string;
-  characters?: CharacterSelections;
+  characters?: CharacterSelection[];
+  stages?: StageSelection[];
 }
 
 interface GameDataInput {
   gameNum: number;
   winnerId: number;
+  stageId?: number;
   selections?: { entrantId: number; characterId: number }[];
 }
 
@@ -45,29 +51,20 @@ function buildGameData(
       winnerId: winnerWonGame ? body.winnerEntrantId : body.loserEntrantId,
     };
 
-    const chars = body.characters;
-    if (!chars) return gameData;
-
-    let winnerCharacterId: number | undefined;
-    let loserCharacterId: number | undefined;
-
-    if (chars.mode === 'set') {
-      winnerCharacterId = chars.winnerCharacterId;
-      loserCharacterId = chars.loserCharacterId;
-    } else {
-      const g = chars.perGame?.find((pg) => pg.gameNum === gameNum);
-      winnerCharacterId = g?.winnerCharacterId;
-      loserCharacterId = g?.loserCharacterId;
+    const chars = body.characters?.find((c) => c.gameNum === gameNum);
+    if (chars) {
+      const selections: { entrantId: number; characterId: number }[] = [];
+      if (chars.winnerCharacterId != null) {
+        selections.push({ entrantId: body.winnerEntrantId, characterId: chars.winnerCharacterId });
+      }
+      if (chars.loserCharacterId != null) {
+        selections.push({ entrantId: body.loserEntrantId, characterId: chars.loserCharacterId });
+      }
+      if (selections.length > 0) gameData.selections = selections;
     }
 
-    const selections: { entrantId: number; characterId: number }[] = [];
-    if (winnerCharacterId != null) {
-      selections.push({ entrantId: body.winnerEntrantId, characterId: winnerCharacterId });
-    }
-    if (loserCharacterId != null) {
-      selections.push({ entrantId: body.loserEntrantId, characterId: loserCharacterId });
-    }
-    if (selections.length > 0) gameData.selections = selections;
+    const stage = body.stages?.find((s) => s.gameNum === gameNum);
+    if (stage) gameData.stageId = stage.stageId;
 
     return gameData;
   });

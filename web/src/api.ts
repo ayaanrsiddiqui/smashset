@@ -1,4 +1,4 @@
-import type { Character, EventInfo, OpenSet } from './types';
+import type { Character, EventInfo, OpenSet, Stage } from './types';
 
 async function req<T>(url: string, opts?: RequestInit): Promise<T> {
   const res = await fetch(url, opts);
@@ -25,11 +25,19 @@ export function fetchCharacters(videogameId: number): Promise<{ characters: Char
   return req(`/api/characters/${videogameId}`);
 }
 
-export interface CharacterSelections {
-  mode: 'set' | 'perGame';
+export function fetchStages(videogameId: number): Promise<{ stages: Stage[] }> {
+  return req(`/api/stages/${videogameId}`);
+}
+
+export interface CharacterSelection {
+  gameNum: number;
   winnerCharacterId?: number;
   loserCharacterId?: number;
-  perGame?: { gameNum: number; winnerCharacterId?: number; loserCharacterId?: number }[];
+}
+
+export interface StageSelection {
+  gameNum: number;
+  stageId: number;
 }
 
 export interface ReportPayload {
@@ -38,7 +46,8 @@ export interface ReportPayload {
   loserEntrantId: number;
   requiredWins: number;
   shorthand: string;
-  characters?: CharacterSelections;
+  characters?: CharacterSelection[];
+  stages?: StageSelection[];
 }
 
 export function reportSet(payload: ReportPayload): Promise<{ result: unknown }> {

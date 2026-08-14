@@ -12,21 +12,31 @@ export interface ParsedGame {
  *   "-3"   -> winner lost only game 3 (so won every other game up to the
  *             clinch) — this form can't tell bo3 from bo5 on its own, so
  *             requiredWins (from the UI's bo3/bo5 toggle) fills that in.
+ *   "WWLW" -> a direct per-game sequence (from typing w/l, or arrow keys —
+ *             up/left = W, down/right = L), also self-describing.
  *
- * Both forms above describe the same bo5 result: 3-1, sequence W W L W.
+ * All three forms above describe the same bo5 result: 3-1, sequence W W L W.
  * Assumes best-of-N: the set ends the instant the winner reaches requiredWins.
  */
 export function parseScoreShorthand(raw: string, requiredWins: number): ParsedGame[] {
   const trimmed = raw.trim();
   if (!trimmed) {
-    throw new Error('Enter a score, e.g. "124" or "-3"');
+    throw new Error('Enter a score, e.g. "124", "-3", or "WWLW"');
+  }
+
+  if (/^[wl]+$/i.test(trimmed)) {
+    const chars = trimmed.toUpperCase().split('');
+    if (chars[chars.length - 1] !== 'W') {
+      throw new Error('The last game of the set has to be a win for the set winner');
+    }
+    return chars.map((c, i) => ({ gameNum: i + 1, winnerWonGame: c === 'W' }));
   }
 
   const isLossMode = trimmed.startsWith('-');
   const digitsStr = isLossMode ? trimmed.slice(1) : trimmed;
 
   if (!/^[1-9]+$/.test(digitsStr)) {
-    throw new Error('Use digits 1-9 only, e.g. "124" or "-3"');
+    throw new Error('Use digits 1-9, "w"/"l", or arrow keys, e.g. "124", "-3", "WWLW"');
   }
 
   const digits = digitsStr.split('').map(Number);

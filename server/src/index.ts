@@ -6,6 +6,7 @@ import cors from 'cors';
 import { eventRouter } from './routes/event.js';
 import { setsRouter } from './routes/sets.js';
 import { charactersRouter } from './routes/characters.js';
+import { stagesRouter } from './routes/stages.js';
 import { reportRouter } from './routes/report.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -22,6 +23,7 @@ app.get('/api/config', (_req, res) => {
 app.use('/api/event', eventRouter);
 app.use('/api/sets', setsRouter);
 app.use('/api/characters', charactersRouter);
+app.use('/api/stages', stagesRouter);
 app.use('/api/report', reportRouter);
 
 const PORT = process.env.PORT ? Number(process.env.PORT) : 3001;
