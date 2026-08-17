@@ -61,8 +61,9 @@ export default function App() {
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
       // ReportPanel owns every keypress while a set is open — it has its own
-      // window-level listener and its own escape/confirm flow.
-      if (selectedSet) return;
+      // window-level listener and its own escape/confirm flow. Before an event
+      // is resolved, `results` below doesn't exist yet, so bail out too.
+      if (!event || selectedSet) return;
 
       const active = document.activeElement;
       const inField = active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement;

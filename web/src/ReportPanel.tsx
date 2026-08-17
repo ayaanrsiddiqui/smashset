@@ -166,6 +166,11 @@ export function ReportPanel({ set, presumedWinnerId, characters, stages, onDone,
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
+      // The shorthand/quick-score inputs (and FuzzyCell) handle Escape/Enter/arrows
+      // themselves and call preventDefault — don't reprocess the same keypress here,
+      // since React's synchronous flush can make it re-enter with already-updated mode.
+      if (e.defaultPrevented) return;
+
       const active = document.activeElement;
       const inField = active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement;
 
