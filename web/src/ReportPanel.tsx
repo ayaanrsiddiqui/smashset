@@ -453,16 +453,48 @@ export function ReportPanel({ set, presumedWinnerId, characters, stages, onDone,
 
         {parseError && <p className="error">{parseError}</p>}
         {games && !parseError && (
-          <div className="score-preview">
-            <span className="score-line">
-              {winner.name} {winnerGameCount}–{loserGameCount} {loser.name}
-            </span>
-            <div className="game-chips">
-              {games.map((g) => (
-                <span key={g.gameNum} className={`chip ${g.winnerWonGame ? 'win' : 'loss'}`}>
-                  G{g.gameNum}: {g.winnerWonGame ? winner.name : loser.name}
-                </span>
-              ))}
+          <div className="match-summary">
+            <div className="match-summary-header">
+              <span className="match-summary-name left">{winner.name}</span>
+              <span className="match-summary-score">
+                {winnerGameCount}
+                <span className="final-label">final</span>
+                {loserGameCount}
+              </span>
+              <span className="match-summary-name right">{loser.name}</span>
+            </div>
+            <div className="match-summary-games">
+              {games.map((g) => {
+                const stage = stagesByGame[g.gameNum];
+                const winnerChar = charsByGame[g.gameNum]?.winner;
+                const loserChar = charsByGame[g.gameNum]?.loser;
+                return (
+                  <div className="match-game-row" key={g.gameNum}>
+                    <div className="match-game-title">
+                      Game {g.gameNum}
+                      {stage ? `: ${stage.name}` : ''}
+                    </div>
+                    <div className="match-game-players">
+                      <div className={`match-game-side left ${g.winnerWonGame ? 'won' : ''}`}>
+                        {g.winnerWonGame && (
+                          <span className="match-game-mark">
+                            W <span className="match-game-arrow">◀</span>
+                          </span>
+                        )}
+                        <span className="match-game-player">{winnerChar?.name ?? winner.name}</span>
+                      </div>
+                      <div className={`match-game-side right ${!g.winnerWonGame ? 'won' : ''}`}>
+                        <span className="match-game-player">{loserChar?.name ?? loser.name}</span>
+                        {!g.winnerWonGame && (
+                          <span className="match-game-mark">
+                            <span className="match-game-arrow">▶</span> W
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
         )}

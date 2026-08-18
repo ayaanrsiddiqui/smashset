@@ -323,39 +323,108 @@ kbd {
   border-color: #5865f2;
 }
 
-.score-preview {
+.match-summary {
   margin-top: 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+  border-radius: 14px;
+  background: #1c1f27;
+  border: 1px solid #2a2e38;
+  overflow: hidden;
 }
 
-.score-line {
-  font-size: 20px;
+.match-summary-header {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 20px;
+  background: #21252f;
+  border-bottom: 1px solid #2a2e38;
+}
+
+.match-summary-name {
+  font-size: 18px;
   font-weight: 700;
 }
 
-.game-chips {
+.match-summary-name.left {
+  text-align: right;
+}
+
+.match-summary-name.right {
+  text-align: left;
+}
+
+.match-summary-score {
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 26px;
+  font-weight: 700;
 }
 
-.chip {
-  padding: 4px 10px;
-  border-radius: 999px;
+.final-label {
+  font-size: 11px;
+  font-weight: 700;
+  font-style: italic;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #9aa0ac;
+}
+
+.match-summary-games {
+  display: flex;
+  flex-direction: column;
+}
+
+.match-game-row {
+  padding: 12px 20px;
+}
+
+.match-game-row + .match-game-row {
+  border-top: 1px solid #2a2e38;
+}
+
+.match-game-title {
+  text-align: center;
   font-size: 13px;
-  font-weight: 600;
+  color: #9aa0ac;
+  margin-bottom: 8px;
 }
 
-.chip.win {
-  background: #16241a;
+.match-game-players {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.match-game-side {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 15px;
+  color: #9aa0ac;
+}
+
+.match-game-side.right {
+  justify-content: flex-end;
+}
+
+.match-game-side.won {
+  color: #f1f2f6;
+  font-weight: 700;
+}
+
+.match-game-mark {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   color: #22c55e;
+  font-weight: 700;
+  font-size: 14px;
 }
 
-.chip.loss {
-  background: #2a1616;
-  color: #f87171;
+.match-game-arrow {
+  font-size: 12px;
 }
 
 .characters-section,
