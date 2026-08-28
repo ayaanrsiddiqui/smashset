@@ -45,7 +45,7 @@ export type ParsedInput = { type: 'event'; slug: string } | { type: 'tournament'
  */
 export function parseStartggInput(input: string): ParsedInput {
   let s = input.trim();
-  s = s.replace(/^https?:\/\/(www\.)?start\.gg\//i, '');
+  s = s.replace(/^(https?:\/\/)?(www\.)?start\.gg\//i, '');
   s = s.replace(/^\/+/, '').replace(/\/+$/, '');
   s = s.split('?')[0];
 
