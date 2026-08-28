@@ -21,13 +21,18 @@ export async function gql<T>(query: string, variables: Record<string, unknown>):
     body: JSON.stringify({ query, variables }),
   });
 
-  const body = (await res.json()) as { data?: T; errors?: unknown };
+  const body = (await res.json()) as { data?: T; errors?: Array<{ message?: string }> };
+  const detail = body.errors?.map((e) => e.message).filter(Boolean).join('; ');
 
   if (!res.ok) {
-    throw new StartggError(`start.gg API request failed (${res.status})`, res.status, body.errors);
+    throw new StartggError(
+      `start.gg API request failed (${res.status})${detail ? `: ${detail}` : ''}`,
+      res.status,
+      body.errors
+    );
   }
   if (body.errors) {
-    throw new StartggError('start.gg API returned errors', res.status, body.errors);
+    throw new StartggError(`start.gg API returned an error${detail ? `: ${detail}` : ''}`, res.status, body.errors);
   }
   if (!body.data) {
     throw new StartggError('start.gg API returned no data');
@@ -56,9 +61,13 @@ export function parseStartggInput(input: string): ParsedInput {
 
   const tournamentMatch = s.match(/^tournament\/([^/]+)/);
   if (tournamentMatch) {
-    return { type: 'tournament', slug: tournamentMatch[1] };
+    return { type: 'tournament', slug: `tournament/${tournamentMatch[1]}` };
   }
 
+  // start.gg's `tournament(slug:)` field wants the slug in the same
+  // "tournament/<name>" shape it appears in the URL — a bare short name
+  // fails its format validation (returns a cryptic "did not match the
+  // expected pattern" GraphQL error), so re-add the prefix here too.
   const bare = s.split('/')[0];
-  return { type: 'tournament', slug: bare };
+  return { type: 'tournament', slug: `tournament/${bare}` };
 }
