@@ -34,7 +34,7 @@ stagesRouter.get('/:videogameId', async (req, res) => {
   }
 
   try {
-    const data = await gql<StagesQueryResult>(STAGES_QUERY, { videogameId });
+    const data = await gql<StagesQueryResult>(req.user!.accessToken, STAGES_QUERY, { videogameId });
     const stages = data.videogame?.stages ?? [];
     cache.set(videogameId, stages);
     res.json({ stages });

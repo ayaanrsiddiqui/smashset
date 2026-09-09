@@ -67,10 +67,11 @@ eventRouter.post('/resolve', async (req, res) => {
   }
 
   const parsed = parseStartggInput(input);
+  const accessToken = req.user!.accessToken;
 
   try {
     if (parsed.type === 'event') {
-      const data = await gql<EventQueryResult>(EVENT_QUERY, { slug: parsed.slug });
+      const data = await gql<EventQueryResult>(accessToken, EVENT_QUERY, { slug: parsed.slug });
       if (!data.event) {
         res.status(404).json({ error: `No event found for "${parsed.slug}"` });
         return;
@@ -79,7 +80,7 @@ eventRouter.post('/resolve', async (req, res) => {
       return;
     }
 
-    const data = await gql<TournamentQueryResult>(TOURNAMENT_QUERY, { slug: parsed.slug });
+    const data = await gql<TournamentQueryResult>(accessToken, TOURNAMENT_QUERY, { slug: parsed.slug });
     if (!data.tournament) {
       res.status(404).json({ error: `No tournament found for "${parsed.slug}"` });
       return;

@@ -4,6 +4,7 @@ import { fuzzyMatchSets } from './fuzzy';
 interface Item {
   id: number;
   name: string;
+  imageUrl?: string;
 }
 
 interface Props {
@@ -15,6 +16,20 @@ interface Props {
   onCommit: (item: Item) => void;
   onCancel: () => void;
   onFocusRequest?: () => void;
+  /** Overrides the default name-only fuzzy match — e.g. alias-aware matching for characters. */
+  matchItems?: (query: string, items: Item[]) => Item[];
+  /** Mirrors icon/name so the icon sits on the inner edge (near the opposing column) instead of the outer edge. */
+  reverse?: boolean;
+  /** Part of a multi-game selection (whether or not this is the one currently showing the input) — dashed outline; the active one also gets a lighter background. */
+  multiSelect?: boolean;
+  /**
+   * Lets a bare 1-9 keystroke reach ReportPanel's game-target picker even
+   * while this cell has real DOM focus (the window-level keydown handler
+   * skips everything while an <input> is focused, so without this a digit
+   * would just get typed into the search query instead). Digits only —
+   * letters still type normally, since character names use plenty of those.
+   */
+  onGameDigit?: (n: number) => void;
 }
 
 /**
@@ -22,12 +37,28 @@ interface Props {
  * a live fuzzy-matched text box when `active` (driven by ReportPanel's
  * keyboard mode, not native DOM focus tracking).
  */
-export function FuzzyCell({ items, value, active, placeholder, emptyLabel, onCommit, onCancel, onFocusRequest }: Props) {
+export function FuzzyCell({
+  items,
+  value,
+  active,
+  placeholder,
+  emptyLabel,
+  onCommit,
+  onCancel,
+  onFocusRequest,
+  matchItems,
+  reverse,
+  multiSelect,
+  onGameDigit,
+}: Props) {
   const [query, setQuery] = useState('');
   const [highlight, setHighlight] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const matches = useMemo(() => fuzzyMatchSets(query, items, (i) => [i.name]).slice(0, 8), [query, items]);
+  const matches = useMemo(() => {
+    const ranked = matchItems ? matchItems(query, items) : fuzzyMatchSets(query, items, (i) => [i.name]);
+    return ranked.slice(0, 8);
+  }, [query, items, matchItems]);
 
   useEffect(() => {
     if (active) {
@@ -39,14 +70,22 @@ export function FuzzyCell({ items, value, active, placeholder, emptyLabel, onCom
 
   if (!active) {
     return (
-      <button type="button" className={`fuzzy-cell ${value ? 'filled' : 'empty'}`} onClick={onFocusRequest}>
-        {value ? value.name : (emptyLabel ?? '—')}
+      <button
+        type="button"
+        className={`fuzzy-cell ${value ? 'filled' : 'empty'} ${reverse && value?.imageUrl ? 'reverse' : ''} ${multiSelect ? 'queued' : ''}`}
+        onClick={(e) => {
+          e.stopPropagation();
+          onFocusRequest?.();
+        }}
+      >
+        {value?.imageUrl && <img className="char-icon" src={value.imageUrl} alt="" />}
+        <span className="fuzzy-cell-label">{value ? value.name : (emptyLabel ?? '—')}</span>
       </button>
     );
   }
 
   return (
-    <div className="fuzzy-cell-active">
+    <div className={`fuzzy-cell-active ${multiSelect ? 'multi-active' : ''}`} onClick={(e) => e.stopPropagation()}>
       <input
         ref={inputRef}
         value={query}
@@ -56,6 +95,12 @@ export function FuzzyCell({ items, value, active, placeholder, emptyLabel, onCom
           setHighlight(0);
         }}
         onKeyDown={(e) => {
+          if (onGameDigit && /^[1-9]$/.test(e.key)) {
+            e.preventDefault();
+            e.stopPropagation();
+            onGameDigit(Number(e.key));
+            return;
+          }
           if (e.key === 'ArrowDown') {
             e.preventDefault();
             e.stopPropagation();
@@ -86,6 +131,7 @@ export function FuzzyCell({ items, value, active, placeholder, emptyLabel, onCom
               onMouseDown={() => onCommit(m)}
               onMouseEnter={() => setHighlight(i)}
             >
+              {m.imageUrl && <img className="char-icon" src={m.imageUrl} alt="" />}
               {m.name}
             </li>
           ))}

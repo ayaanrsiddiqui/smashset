@@ -6,17 +6,18 @@ export class StartggError extends Error {
   }
 }
 
-export async function gql<T>(query: string, variables: Record<string, unknown>): Promise<T> {
-  const apiKey = process.env.STARTGG_API_KEY;
-  if (!apiKey) {
-    throw new StartggError('STARTGG_API_KEY is not set in .env');
-  }
-
+// accessToken is always the calling user's own OAuth token — there's no
+// shared/global fallback. Every request goes out under whoever is actually
+// signed in, since that's the whole point of moving off one shared personal
+// API key: the tournament.reporter scope only grants "tournaments the
+// current user has access to," which only means anything if the token
+// attached here really is theirs.
+export async function gql<T>(accessToken: string, query: string, variables: Record<string, unknown>): Promise<T> {
   const res = await fetch(ENDPOINT, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`,
+      Authorization: `Bearer ${accessToken}`,
     },
     body: JSON.stringify({ query, variables }),
   });
@@ -27,7 +28,12 @@ export async function gql<T>(query: string, variables: Record<string, unknown>):
     throw new StartggError(`start.gg API request failed (${res.status})`, res.status, body.errors);
   }
   if (body.errors) {
-    throw new StartggError('start.gg API returned errors', res.status, body.errors);
+    const messages = Array.isArray(body.errors)
+      ? body.errors
+          .map((e) => (e && typeof e === 'object' && 'message' in e ? String((e as { message: unknown }).message) : JSON.stringify(e)))
+          .join('; ')
+      : JSON.stringify(body.errors);
+    throw new StartggError(`start.gg API error: ${messages}`, res.status, body.errors);
   }
   if (!body.data) {
     throw new StartggError('start.gg API returned no data');
@@ -45,7 +51,7 @@ export type ParsedInput = { type: 'event'; slug: string } | { type: 'tournament'
  */
 export function parseStartggInput(input: string): ParsedInput {
   let s = input.trim();
-  s = s.replace(/^https?:\/\/(www\.)?start\.gg\//i, '');
+  s = s.replace(/^(https?:\/\/)?(www\.)?start\.gg\//i, '');
   s = s.replace(/^\/+/, '').replace(/\/+$/, '');
   s = s.split('?')[0];
 

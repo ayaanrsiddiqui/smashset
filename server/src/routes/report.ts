@@ -102,7 +102,7 @@ reportRouter.post('/', async (req, res) => {
   const gameData = buildGameData(body as ReportBody, games);
 
   try {
-    const data = await gql(REPORT_MUTATION, {
+    const data = await gql(req.user!.accessToken, REPORT_MUTATION, {
       setId: body.setId,
       winnerId: body.winnerEntrantId,
       gameData,

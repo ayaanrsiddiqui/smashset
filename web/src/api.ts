@@ -1,12 +1,22 @@
-import type { Character, EventInfo, OpenSet, Stage } from './types';
+import type { Character, CurrentUser, EventInfo, OpenSet, Stage } from './types';
 
 async function req<T>(url: string, opts?: RequestInit): Promise<T> {
-  const res = await fetch(url, opts);
+  // Same-origin requests already send cookies by default, but being
+  // explicit removes any ambiguity now that the session cookie matters.
+  const res = await fetch(url, { ...opts, credentials: 'include' });
   const body = await res.json();
   if (!res.ok) {
     throw new Error(body?.error ?? `Request failed (${res.status})`);
   }
   return body as T;
+}
+
+export function fetchMe(): Promise<{ user: CurrentUser | null }> {
+  return req('/api/me');
+}
+
+export function logout(): Promise<{ ok: true }> {
+  return req('/api/auth/logout', { method: 'POST' });
 }
 
 export function resolveEvent(input: string): Promise<{ event?: EventInfo; events?: EventInfo[] }> {
@@ -19,6 +29,10 @@ export function resolveEvent(input: string): Promise<{ event?: EventInfo; events
 
 export function fetchOpenSets(eventId: number): Promise<{ sets: OpenSet[] }> {
   return req(`/api/sets/${eventId}/open-sets`);
+}
+
+export function startSet(setId: number | string): Promise<{ ok: true }> {
+  return req(`/api/sets/${setId}/start`, { method: 'POST' });
 }
 
 export function fetchCharacters(videogameId: number): Promise<{ characters: Character[] }> {
