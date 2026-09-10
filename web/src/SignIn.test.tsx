@@ -21,9 +21,9 @@ describe('SignIn', () => {
     Object.defineProperty(window, 'location', { value: originalLocation, writable: true });
   });
 
-  it('shows the quickset name and a sign-in call to action', () => {
+  it('shows the SmashSet name and a sign-in call to action', () => {
     render(<SignIn />);
-    expect(screen.getByRole('heading', { name: 'quickset' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'SmashSet' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /sign in with start\.gg/i })).toBeInTheDocument();
   });
 

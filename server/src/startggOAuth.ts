@@ -10,7 +10,7 @@ const AUTHORIZE_URL = 'https://start.gg/oauth/authorize';
 const TOKEN_URL = 'https://api.start.gg/oauth/access_token';
 const REFRESH_URL = 'https://api.start.gg/oauth/refresh';
 
-// Scoped to exactly what quickset needs: user.identity to resolve who signed
+// Scoped to exactly what SmashSet needs: user.identity to resolve who signed
 // in, tournament.reporter to report sets for tournaments that user can
 // already touch on start.gg — nothing broader.
 const SCOPES = 'user.identity tournament.reporter';

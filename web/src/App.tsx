@@ -2,12 +2,13 @@ import { useEffect, useRef, useState } from 'react';
 import { Settings } from './Settings';
 import { SignIn } from './SignIn';
 import { ReportPanel } from './ReportPanel';
+import { HelpModal } from './HelpModal';
 import { startSet, fetchCharacters, fetchOpenSets, fetchStages, fetchMe, logout } from './api';
 import { fuzzyMatchSets } from './fuzzy';
 import type { Character, CurrentUser, EventInfo, OpenSet, Stage } from './types';
 import './App.css';
 
-const STORAGE_KEY = 'quickset.event';
+const STORAGE_KEY = 'smashset.event';
 const POLL_MS = 4000;
 
 export default function App() {
@@ -37,6 +38,7 @@ export default function App() {
   // so a poll landing before start.gg's own read catches up to the mutation
   // can't flip a just-started set back to not-started and bring the button back.
   const [startedIds, setStartedIds] = useState<Set<number | string>>(new Set());
+  const [showHelp, setShowHelp] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -95,8 +97,12 @@ export default function App() {
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
       // ReportPanel owns every keypress while a set is open — it has its own
-      // window-level listener and its own escape/confirm flow.
-      if (selectedSet) return;
+      // window-level listener and its own escape/confirm flow. The help
+      // modal owns its own Escape-to-close and has no other bindings, but
+      // still needs every OTHER key suppressed here, or e.g. a digit typed
+      // while it's open would select a result on the hidden search screen
+      // underneath it.
+      if (selectedSet || showHelp) return;
 
       const active = document.activeElement;
       const inField = active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement;
@@ -154,7 +160,7 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   });
 
-  if (user === undefined) return <div className="settings-screen"><h1>quickset</h1></div>;
+  if (user === undefined) return <div className="settings-screen"><h1>SmashSet</h1></div>;
   if (user === null) return <SignIn />;
   if (!event) return <Settings onResolved={handleResolved} />;
 
@@ -223,6 +229,15 @@ export default function App() {
       <header className="app-header">
         <span className="event-name">{event.name}</span>
         <div className="header-controls">
+          <button
+            type="button"
+            className="help-trigger"
+            onClick={() => setShowHelp(true)}
+            title="Notation guide"
+            aria-label="Notation guide"
+          >
+            ?
+          </button>
           <label className="top-x-control" title="Sets at or above this placement auto-select Bo5">
             Top
             <input
@@ -306,6 +321,7 @@ export default function App() {
       </ul>
 
       {toast && <div className="toast">{toast}</div>}
+      {showHelp && <HelpModal onClose={() => setShowHelp(false)} />}
     </div>
   );
 }

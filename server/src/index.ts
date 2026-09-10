@@ -8,5 +8,5 @@ const app = createApp();
 
 const PORT = process.env.PORT ? Number(process.env.PORT) : 3001;
 app.listen(PORT, () => {
-  console.log(`quickset server listening on http://localhost:${PORT}`);
+  console.log(`SmashSet server listening on http://localhost:${PORT}`);
 });

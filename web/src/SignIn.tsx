@@ -1,7 +1,7 @@
 export function SignIn() {
   return (
     <div className="settings-screen">
-      <h1>quickset</h1>
+      <h1>SmashSet</h1>
       <p className="subtitle">Fast set reporting for start.gg TOs</p>
       <button
         onClick={() => {

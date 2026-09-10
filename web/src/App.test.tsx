@@ -33,7 +33,7 @@ describe('App — sign-in gate', () => {
     fetchMeMock.mockReturnValue(new Promise(() => {})); // never resolves during this test
     render(<App />);
 
-    expect(screen.getByRole('heading', { name: 'quickset' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'SmashSet' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /sign in with start\.gg/i })).not.toBeInTheDocument();
     expect(screen.queryByPlaceholderText(/tournament or event/i)).not.toBeInTheDocument();
   });
@@ -63,7 +63,7 @@ describe('App — sign-in gate', () => {
   it('sign out calls the API and returns to the Sign In screen', async () => {
     fetchMeMock.mockResolvedValue({ user: { id: 1, displayName: 'FireSlam23' } });
     localStorage.setItem(
-      'quickset.event',
+      'smashset.event',
       JSON.stringify({
         id: 1,
         name: 'small bracket',
@@ -79,5 +79,50 @@ describe('App — sign-in gate', () => {
 
     expect(logoutMock).toHaveBeenCalledOnce();
     expect(await screen.findByRole('button', { name: /sign in with start\.gg/i })).toBeInTheDocument();
+  });
+});
+
+describe('App — help modal', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    localStorage.setItem(
+      'smashset.event',
+      JSON.stringify({
+        id: 1,
+        name: 'small bracket',
+        slug: 'tournament/x/event/small-bracket',
+        videogame: { id: 1, name: 'Melee' },
+        tournament: { id: 1, name: 'x' },
+      })
+    );
+    fetchMeMock.mockResolvedValue({ user: { id: 1, displayName: 'FireSlam23' } });
+  });
+
+  afterEach(() => {
+    fetchMeMock.mockReset();
+  });
+
+  it('opens the notation guide from the header and closes it again', async () => {
+    render(<App />);
+
+    const trigger = await screen.findByRole('button', { name: 'Notation guide' });
+    await userEvent.click(trigger);
+
+    expect(screen.getByRole('dialog', { name: 'SmashSet notation' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'The sweep' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Full reference' })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Close' }));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  it('closes on Escape', async () => {
+    render(<App />);
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Notation guide' }));
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+
+    await userEvent.keyboard('{Escape}');
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 });

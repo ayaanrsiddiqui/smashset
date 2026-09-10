@@ -1,4 +1,4 @@
-# quickset
+# SmashSet
 
 Fast, keyboard-driven set reporting for start.gg tournament organizers.
 Search by the winner's tag, type a score shorthand, tag characters and
@@ -6,7 +6,7 @@ stages, done — hands never leave the keyboard.
 
 Reporting a set with full game and character data through start.gg's own UI
 means switching between the mouse and the keyboard a dozen times; a practised
-TO gets it down to roughly 15–20 seconds. quickset is built around never
+TO gets it down to roughly 15–20 seconds. SmashSet is built around never
 making that switch. In live use it lands around 5–10 seconds a set, which is
 about as long as the winner takes to say the score out loud.
 
@@ -113,7 +113,7 @@ one level first).
   that to be filled in later.
 - The bracket view doesn't yet mirror start.gg's bracket structure, and there
   is no in-app keybind reference; both are next up.
-- Reports go straight to the live bracket with no undo inside quickset. A
+- Reports go straight to the live bracket with no undo inside SmashSet. A
   mistake is fixed on start.gg like any other misreport. If you're setting it
   up for the first time, point it at a test event and send one report through
   before running a real tournament on it.

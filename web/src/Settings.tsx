@@ -36,7 +36,7 @@ export function Settings({ onResolved }: Props) {
   if (choices) {
     return (
       <div className="settings-screen">
-        <h1>quickset</h1>
+        <h1>SmashSet</h1>
         <p className="subtitle">"{choices[0].tournament.name}" has multiple events — pick one</p>
         <ul className="results-list">
           {choices.map((e) => (
@@ -53,7 +53,7 @@ export function Settings({ onResolved }: Props) {
 
   return (
     <div className="settings-screen">
-      <h1>quickset</h1>
+      <h1>SmashSet</h1>
       <p className="subtitle">Fast set reporting for start.gg TOs</p>
       <label htmlFor="event-input">Tournament or event URL / slug</label>
       <input
