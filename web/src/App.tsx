@@ -75,8 +75,9 @@ export default function App() {
   const [bracketGroup, setBracketGroup] = useState<BracketGroup | null>(null);
   // Drives whether the floating set panel is expanded; see SetPanel.
   const [searchFocused, setSearchFocused] = useState(false);
-  // Tab flips the search between sets waiting to be reported and sets already
-  // finished — the "someone says I got their last result wrong" flow.
+  // Which pile the search is over: sets waiting to be reported, or sets already
+  // finished — the "someone says I got their last result wrong" flow. Tab
+  // flips it on a keyboard, a horizontal swipe on the panel does on a phone.
   const [mode, setMode] = useState<'open' | 'completed'>('open');
   const [characters, setCharacters] = useState<Character[]>([]);
   const [stages, setStages] = useState<Stage[]>([]);
@@ -133,6 +134,17 @@ export default function App() {
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
+
+  /**
+   * Switching pile invalidates the highlight — index 0 of the new list is a
+   * different set, and a highlight carried over would point at a set the TO
+   * never looked at.
+   */
+  function showMode(next: 'open' | 'completed') {
+    setMode(next);
+    setHighlight(0);
+    setRevealed(false);
+  }
 
   function handleResolved(e: EventInfo) {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(e));
@@ -350,14 +362,14 @@ export default function App() {
       const active = document.activeElement;
       const inField = active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement;
 
-      // Tab swaps which pile is being searched. Intercepted everywhere except
-      // another input (the Top X field), so focus navigation still works there
-      // — and Escape below always steps back out, so this is never a dead end.
-      if (e.key === 'Tab' && !(inField && active !== searchRef.current)) {
+      // Tab swaps which pile is being searched. Shift+Tab is deliberately left
+      // alone: swallowing both would mean focus could never leave this screen
+      // by keyboard, stranding a keyboard-only TO away from the header buttons
+      // — a keyboard trap (WCAG 2.1.2), which Escape does not fix, because it
+      // exits completed mode rather than moving focus.
+      if (e.key === 'Tab' && !e.shiftKey && !(inField && active !== searchRef.current)) {
         e.preventDefault();
-        setMode((m) => (m === 'open' ? 'completed' : 'open'));
-        setHighlight(0);
-        setRevealed(false);
+        showMode(mode === 'open' ? 'completed' : 'open');
         return;
       }
 
@@ -370,9 +382,7 @@ export default function App() {
         // Leaving completed mode comes first, so Escape is always the way back
         // from a Tab rather than wiping the query the TO just typed.
         if (mode === 'completed') {
-          setMode('open');
-          setHighlight(0);
-          setRevealed(false);
+          showMode('open');
           return;
         }
         setQuery('');
@@ -709,6 +719,7 @@ export default function App() {
         }}
         onSearchFocus={() => setSearchFocused(true)}
         onSearchBlur={() => setSearchFocused(false)}
+        onModeChange={showMode}
         error={loadError ?? bracketLoadError}
         collapsedLabel={readyToStart.length === 1 ? '1 ready to start' : `${readyToStart.length} ready to start`}
       >

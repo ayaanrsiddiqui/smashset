@@ -699,7 +699,7 @@ describe('App — unreachable server', () => {
   });
 });
 
-describe('App — Tab searches completed sets', () => {
+describe('App — searching completed sets', () => {
   const fetchBracketMock = vi.mocked(fetchBracket);
 
   // Names shaped like the real ones: two players share the "JL" prefix, which
@@ -828,5 +828,97 @@ describe('App — Tab searches completed sets', () => {
     // The correction flow, pre-filled — same path as clicking it on the bracket.
     expect(await screen.findByText(/Already reported:/)).toBeInTheDocument();
     expect(vi.mocked(fetchSetDetail)).toHaveBeenCalledWith(1);
+  });
+
+  // jsdom implements no TouchEvent, so the gesture is assembled by hand.
+  // React reads touches/changedTouches straight off the native event.
+  function swipe(dx: number, dy: number, from?: Element | null) {
+    const target = from ?? document.querySelector('.set-panel')!;
+    const start = new Event('touchstart', { bubbles: true, cancelable: true });
+    Object.defineProperty(start, 'touches', { value: [{ clientX: 120, clientY: 220 }] });
+    fireEvent(target, start);
+    const end = new Event('touchend', { bubbles: true, cancelable: true });
+    Object.defineProperty(end, 'touches', { value: [] });
+    Object.defineProperty(end, 'changedTouches', { value: [{ clientX: 120 + dx, clientY: 220 + dy }] });
+    fireEvent(target, end);
+  }
+
+  it('swiping the panel right shows completed sets, and again keeps them', async () => {
+    render(<App />);
+    await screen.findByPlaceholderText(/winner's name/i);
+
+    swipe(90, 0);
+    expect(await screen.findByPlaceholderText(/player to correct/i)).toBeInTheDocument();
+
+    // Directional, not a toggle: a second rightward swipe is a no-op rather
+    // than a bounce back to open sets.
+    swipe(90, 0);
+    expect(screen.getByPlaceholderText(/player to correct/i)).toBeInTheDocument();
+  });
+
+  it('swiping the panel left goes back to sets waiting to be reported', async () => {
+    render(<App />);
+    await screen.findByPlaceholderText(/winner's name/i);
+
+    swipe(90, 0);
+    await screen.findByPlaceholderText(/player to correct/i);
+
+    swipe(-90, 0);
+    expect(await screen.findByPlaceholderText(/winner's name/i)).toBeInTheDocument();
+  });
+
+  it('a flick down the results list scrolls it instead of switching pile', async () => {
+    render(<App />);
+    await screen.findByPlaceholderText(/winner's name/i);
+
+    // Far enough sideways to clear the distance bar, but mostly vertical —
+    // this is a TO scrolling the list with an imprecise thumb.
+    swipe(60, 120);
+
+    expect(screen.getByPlaceholderText(/winner's name/i)).toBeInTheDocument();
+  });
+
+  it('a short drag is a tap, not a swipe', async () => {
+    render(<App />);
+    await screen.findByPlaceholderText(/winner's name/i);
+
+    swipe(20, 0);
+
+    expect(screen.getByPlaceholderText(/winner's name/i)).toBeInTheDocument();
+  });
+
+  it('dragging inside the search box moves the text cursor instead of switching', async () => {
+    render(<App />);
+    const search = await screen.findByPlaceholderText(/winner's name/i);
+
+    swipe(90, 0, search);
+
+    expect(screen.getByPlaceholderText(/winner's name/i)).toBeInTheDocument();
+  });
+
+  it('the pile buttons switch without a gesture, for anyone who cannot swipe', async () => {
+    render(<App />);
+    await screen.findByPlaceholderText(/winner's name/i);
+
+    const completedBtn = screen.getByRole('button', { name: 'completed' });
+    expect(completedBtn).toHaveAttribute('aria-pressed', 'false');
+
+    fireEvent.click(completedBtn);
+    expect(await screen.findByPlaceholderText(/player to correct/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'completed' })).toHaveAttribute('aria-pressed', 'true');
+
+    fireEvent.click(screen.getByRole('button', { name: 'to report' }));
+    expect(await screen.findByPlaceholderText(/winner's name/i)).toBeInTheDocument();
+  });
+
+  it('leaves Shift+Tab alone, so focus can still escape the search screen', async () => {
+    render(<App />);
+    await screen.findByPlaceholderText(/winner's name/i);
+
+    fireEvent.keyDown(window, { key: 'Tab', shiftKey: true });
+
+    // Plain Tab switches pile; Shift+Tab has to stay native focus navigation,
+    // or the header buttons become unreachable by keyboard.
+    expect(screen.getByPlaceholderText(/winner's name/i)).toBeInTheDocument();
   });
 });

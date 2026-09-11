@@ -1670,6 +1670,30 @@ kbd {
   width: 100%;
 }
 
+/* The two piles, as a segmented control. Mirrors .bo-toggle's look but sized
+   for a ~280px panel, so the halves split the width instead of hugging text. */
+.pile-toggle {
+  display: flex;
+  gap: 6px;
+}
+
+.pile-toggle button {
+  flex: 1;
+  padding: 7px 8px;
+  border-radius: 8px;
+  border: 2px solid #2a2e38;
+  background: #1c1f27;
+  color: #9aa0ac;
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.pile-toggle button.selected {
+  border-color: #5865f2;
+  color: #f1f2f6;
+  background: #232946;
+}
+
 .set-panel-summary {
   font-size: 12px;
   color: #9aa0ac;
