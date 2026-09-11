@@ -8,13 +8,16 @@ import { SESSION_COOKIE_NAME } from '../middleware/auth.js';
 import { closeTestPool } from '../test-helpers.js';
 
 const gqlMock = vi.fn();
+// What start.gg reports a response cost. Null by default (most tests don't
+// care), but the pager learns from it, so the cost-learning test drives it.
+const complexityMock = vi.fn<() => number | null>(() => null);
 // Only the two request functions are stubbed; the real error classes are kept
 // so the bracket pager's instanceof check against StartggComplexityError still
 // means something in tests.
 vi.mock('../startgg.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../startgg.js')>()),
   gql: (...args: unknown[]) => gqlMock(...args),
-  gqlWithCost: async (...args: unknown[]) => ({ data: await gqlMock(...args), complexity: null }),
+  gqlWithCost: async (...args: unknown[]) => ({ data: await gqlMock(...args), complexity: complexityMock() }),
 }));
 
 // Imported after the mock is registered so app.js's import graph — sets.js ->
@@ -129,6 +132,43 @@ describe('GET /phase-group/:phaseGroupId/open-sets — auto-main integration', (
     // background history lookup — not two of the latter, since the cached
     // entrant must not re-trigger.
     await vi.waitFor(() => expect(gqlMock).toHaveBeenCalledTimes(2));
+  });
+
+  it('reporting a set drops the cached list, so the set it just closed cannot come back as open', async () => {
+    let openSetsCalls = 0;
+    gqlMock.mockImplementation((_token: unknown, query: string) => {
+      if (query.includes('PhaseGroupOpenSets')) {
+        openSetsCalls++;
+        return Promise.resolve(openSetsFixture());
+      }
+      if (query.includes('PlayerMainHistory')) return Promise.resolve(emptyPlayerHistory());
+      if (query.includes('ReportSet')) return Promise.resolve({ reportBracketSet: { id: 5001 } });
+      throw new Error(`unexpected query in test: ${query}`);
+    });
+    const cookie = await makeSignedInCookie('report-invalidates');
+    const phaseGroupId = nextTestEventId++;
+    const url = `/api/sets/phase-group/${phaseGroupId}/open-sets`;
+
+    await request(app).get(url).set('Cookie', cookie);
+    expect(openSetsCalls).toBe(1);
+
+    // Well inside the cache TTL, so this one is served locally.
+    await request(app).get(url).set('Cookie', cookie);
+    expect(openSetsCalls).toBe(1);
+
+    const reported = await request(app).post('/api/report').set('Cookie', cookie).send({
+      setId: 5001,
+      winnerEntrantId: 6001,
+      loserEntrantId: 6002,
+      requiredWins: 2,
+      shorthand: '0', // a clean 2-0
+    });
+    expect(reported.status).toBe(200);
+
+    // Without invalidation the TO would keep seeing the set they just
+    // reported sitting in the list, still waiting to be reported.
+    await request(app).get(url).set('Cookie', cookie);
+    expect(openSetsCalls).toBe(2);
   });
 
   it('a background lookup for a real uncached player actually lands in the database as a tombstone when it has no history', async () => {
@@ -496,6 +536,55 @@ describe('GET /phase-group/:phaseGroupId/bracket', () => {
     // which tournaments are visible, so his request goes out under his own.
     await request(app).get('/api/sets/phase-group/77/bracket').set('Cookie', bob);
     expect(gqlMock.mock.calls.length).toBeGreaterThan(afterAlice);
+  });
+
+  it('learns a higher per-set cost from what start.gg reports, and shrinks the next page', async () => {
+    const perPages: number[] = [];
+    gqlMock.mockImplementation((_token: unknown, query: string, variables: Record<string, unknown>) => {
+      if (query.includes('PhaseGroupProgression')) return Promise.resolve(structureFixture());
+      if (!query.includes('PhaseGroupBracket')) throw new Error(`unexpected query in test: ${query}`);
+      perPages.push(variables.perPage as number);
+      return Promise.resolve(bracketFixture());
+    });
+    // The fixture returns 3 sets; 123 objects for those means ~40 each, far
+    // above the 7 the cost model assumes.
+    complexityMock.mockReturnValue(123);
+
+    const alice = await makeSignedInCookie('cost-learn-a');
+    await request(app).get('/api/sets/phase-group/88/bracket').set('Cookie', alice);
+    const firstPage = perPages[0];
+
+    // A different user misses the per-user cache, so this really re-fetches.
+    const bob = await makeSignedInCookie('cost-learn-b');
+    await request(app).get('/api/sets/phase-group/88/bracket').set('Cookie', bob);
+
+    expect(perPages.at(-1)!).toBeLessThan(firstPage);
+  });
+
+  it('re-fetches the live half far more often than the progression wiring', async () => {
+    const counts = { live: 0, structure: 0 };
+    gqlMock.mockImplementation((_token: unknown, query: string) => {
+      if (query.includes('PhaseGroupProgression')) {
+        counts.structure++;
+        return Promise.resolve(structureFixture());
+      }
+      if (query.includes('PhaseGroupBracket')) {
+        counts.live++;
+        return Promise.resolve(bracketFixture());
+      }
+      throw new Error(`unexpected query in test: ${query}`);
+    });
+
+    // Two users, so the per-user live cache misses both times. The structure
+    // cache is shared and much longer-lived — that split is the entire reason
+    // the bracket query was cut in two.
+    const alice = await makeSignedInCookie('struct-ttl-a');
+    const bob = await makeSignedInCookie('struct-ttl-b');
+    await request(app).get('/api/sets/phase-group/89/bracket').set('Cookie', alice);
+    await request(app).get('/api/sets/phase-group/89/bracket').set('Cookie', bob);
+
+    expect(counts.live).toBe(2);
+    expect(counts.structure).toBe(1);
   });
 
   it('404s when the phase group does not exist', async () => {

@@ -40,14 +40,12 @@ function pageSizeFor(baseCost: number, costPerRow: number): number {
 // pool in one request. The combined query it replaced cost 21-27 per set.
 const BRACKET_BASE_COST = 3;
 const BRACKET_MAX_COST_PER_SET = 7;
-const BRACKET_PER_PAGE = pageSizeFor(BRACKET_BASE_COST, BRACKET_MAX_COST_PER_SET);
 
 // The structure half is all nested objects, so it is the expensive one: 8 per
 // set in a first-phase bracket where the progression fields are null, up to
 // ~12 in a phase fed by pools where every slot resolves one.
 const STRUCTURE_BASE_COST = 3;
 const STRUCTURE_MAX_COST_PER_SET = 14;
-const STRUCTURE_PER_PAGE = pageSizeFor(STRUCTURE_BASE_COST, STRUCTURE_MAX_COST_PER_SET);
 
 // SETS_QUERY carries no progression or standing detail, so it is far cheaper —
 // but each entrant's participants list scales with team size (~10/set for
@@ -57,12 +55,10 @@ const STRUCTURE_PER_PAGE = pageSizeFor(STRUCTURE_BASE_COST, STRUCTURE_MAX_COST_P
 // actually supports, rather than at the measured one.
 const SETS_BASE_COST = 4;
 const SETS_MAX_COST_PER_SET = 24;
-const PER_PAGE = pageSizeFor(SETS_BASE_COST, SETS_MAX_COST_PER_SET);
 
 // A ceiling on sets, never on pages: page count depends on the page size in
 // use, which shrinks at runtime when start.gg rejects a page as too complex.
 const MAX_SETS = 700;
-const MAX_PAGES = Math.ceil(MAX_SETS / PER_PAGE);
 
 export interface PhaseGroupSummary {
   id: number;
@@ -107,16 +103,6 @@ setsRouter.get('/:eventId/phase-groups', async (req, res) => {
     res.status(502).json({ error: err instanceof Error ? err.message : 'Failed to load phase groups' });
   }
 });
-
-interface SetsQueryResult {
-  phaseGroup: {
-    phase: { event: { videogame: { id: number } | null } | null } | null;
-    sets: {
-      pageInfo: { totalPages: number };
-      nodes: RawSet[];
-    };
-  } | null;
-}
 
 interface RawSet {
   // Real sets have a numeric id; sets in an un-started/preview bracket come
@@ -212,17 +198,29 @@ interface RawStructureSet {
   }[];
 }
 
-interface SetsPage<N> {
-  phaseGroup: {
-    id: number;
-    displayIdentifier: string;
-    bracketType: string;
-    phase: { name: string };
-    sets: {
-      pageInfo: { total: number | null; totalPages: number };
-      nodes: N[];
-    };
-  } | null;
+// The bracket queries and the open-sets query select different fields on
+// phaseGroup itself, so the pager is generic over that header — everything it
+// actually needs is the sets connection.
+interface BracketHeader {
+  id: number;
+  displayIdentifier: string;
+  bracketType: string;
+  phase: { name: string };
+}
+
+interface OpenSetsHeader {
+  phase: { event: { videogame: { id: number } | null } | null } | null;
+}
+
+interface SetsPage<N, H> {
+  phaseGroup:
+    | (H & {
+        sets: {
+          pageInfo: { total: number | null; totalPages: number };
+          nodes: N[];
+        };
+      })
+    | null;
 }
 
 export interface BracketSlot {
@@ -281,6 +279,7 @@ const SETS_QUERY = /* GraphQL */ `
       }
       sets(page: $page, perPage: $perPage, filters: { hideEmpty: true }) {
         pageInfo {
+          total
           totalPages
         }
         nodes {
@@ -459,48 +458,45 @@ async function fetchOpenSets(accessToken: string, userId: number, phaseGroupId: 
     return cached.result;
   }
 
+  // Through the same pager as the bracket queries, so this path gets the same
+  // recovery: it was the one query left that would simply fail if start.gg
+  // ever judged a page too complex.
+  const paged = await fetchSetsPaged<RawSet, OpenSetsHeader>(accessToken, phaseGroupId, SETS_QUERY, {
+    name: 'opensets',
+    base: SETS_BASE_COST,
+    maxPerRow: SETS_MAX_COST_PER_SET,
+  });
+
   const open: OpenSet[] = [];
-  let page = 1;
-  let totalPages = 1;
-  let videogameId: number | null = null;
+  const videogameId = paged?.header.phase?.event?.videogame?.id ?? null;
 
-  while (page <= totalPages && page <= MAX_PAGES) {
-    const data = await gql<SetsQueryResult>(accessToken, SETS_QUERY, { phaseGroupId, page, perPage: PER_PAGE });
-    const pg = data.phaseGroup;
-    const sets = pg?.sets;
-    if (!sets) break;
-    if (page === 1) videogameId = pg.phase?.event?.videogame?.id ?? null;
-    totalPages = sets.pageInfo.totalPages;
-
-    for (const s of sets.nodes) {
-      if (s.state === COMPLETED_STATE) continue;
-      const entrants = s.slots
-        .map((slot) => slot.entrant)
-        .filter((e): e is NonNullable<RawSet['slots'][number]['entrant']> => e !== null)
-        .map(
-          (e): OpenSetEntrant => ({
-            id: e.id,
-            name: e.name,
-            // First participant only — a deliberate simplification for
-            // doubles/teams (there's no single coherent "team main" anyway,
-            // and the old hardcoded mains.ts lookup doesn't handle doubles
-            // either), correct as-is for singles.
-            playerId: e.participants?.[0]?.player?.id ?? null,
-          })
-        );
-      if (entrants.length !== 2) continue; // skip byes / not-yet-determined slots
-      const isPreview = typeof s.id === 'string' && s.id.startsWith('preview_');
-      open.push({
-        id: s.id,
-        isPreview,
-        isStarted: s.state === STARTED_STATE,
-        fullRoundText: s.fullRoundText,
-        identifier: s.identifier,
-        lPlacement: s.lPlacement,
-        entrants,
-      });
-    }
-    page++;
+  for (const s of paged?.nodes ?? []) {
+    if (s.state === COMPLETED_STATE) continue;
+    const entrants = s.slots
+      .map((slot) => slot.entrant)
+      .filter((e): e is NonNullable<RawSet['slots'][number]['entrant']> => e !== null)
+      .map(
+        (e): OpenSetEntrant => ({
+          id: e.id,
+          name: e.name,
+          // First participant only — a deliberate simplification for
+          // doubles/teams (there's no single coherent "team main" anyway,
+          // and the old hardcoded mains.ts lookup doesn't handle doubles
+          // either), correct as-is for singles.
+          playerId: e.participants?.[0]?.player?.id ?? null,
+        })
+      );
+    if (entrants.length !== 2) continue; // skip byes / not-yet-determined slots
+    const isPreview = typeof s.id === 'string' && s.id.startsWith('preview_');
+    open.push({
+      id: s.id,
+      isPreview,
+      isStarted: s.state === STARTED_STATE,
+      fullRoundText: s.fullRoundText,
+      identifier: s.identifier,
+      lPlacement: s.lPlacement,
+      entrants,
+    });
   }
 
   const result: OpenSetsResult = { sets: open, videogameId };
@@ -542,18 +538,18 @@ interface CostModel {
  * terminates. Restarting rather than continuing is required: pages are
  * offsets, so changing perPage mid-run would skip or repeat sets.
  */
-async function fetchSetsPaged<N>(
+async function fetchSetsPaged<N, H>(
   accessToken: string,
   phaseGroupId: string,
   query: string,
   cost: CostModel
-): Promise<{ header: NonNullable<SetsPage<N>['phaseGroup']>; nodes: N[] } | null> {
+): Promise<{ header: NonNullable<SetsPage<N, H>['phaseGroup']>; nodes: N[] } | null> {
   const costKey = `${cost.name}:${phaseGroupId}`;
   let perPage = pageSizeFor(cost.base, Math.max(cost.maxPerRow, observedCostPerSet.get(costKey) ?? 0));
 
   for (;;) {
     try {
-      let header: NonNullable<SetsPage<N>['phaseGroup']> | null = null;
+      let header: NonNullable<SetsPage<N, H>['phaseGroup']> | null = null;
       const nodes: N[] = [];
       let page = 1;
       let totalPages = 1;
@@ -562,7 +558,7 @@ async function fetchSetsPaged<N>(
       // page size would silently shrink the bracket whenever a complexity
       // retry shrank perPage — half the page size, half the sets, no error.
       while (page <= totalPages && nodes.length < MAX_SETS) {
-        const { data, complexity } = await gqlWithCost<SetsPage<N>>(accessToken, query, { phaseGroupId, page, perPage });
+        const { data, complexity } = await gqlWithCost<SetsPage<N, H>>(accessToken, query, { phaseGroupId, page, perPage });
         const pg = data.phaseGroup;
         if (!pg) break;
 
@@ -606,7 +602,7 @@ async function fetchBracketStructure(accessToken: string, phaseGroupId: string):
   // a minute instead of one every two seconds.
   let result;
   try {
-    result = await fetchSetsPaged<RawStructureSet>(
+    result = await fetchSetsPaged<RawStructureSet, BracketHeader>(
       accessToken,
       phaseGroupId,
       BRACKET_STRUCTURE_QUERY,
@@ -638,7 +634,7 @@ async function fetchBracketData(accessToken: string, userId: number, phaseGroupI
     return cached.result;
   }
 
-  const live = await fetchSetsPaged<RawLiveSet>(
+  const live = await fetchSetsPaged<RawLiveSet, BracketHeader>(
     accessToken,
     phaseGroupId,
     BRACKET_LIVE_QUERY,

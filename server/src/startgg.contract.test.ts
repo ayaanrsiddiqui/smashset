@@ -27,7 +27,13 @@ const TOURNAMENT_SLUG = 'fireslam23test';
 interface Measured {
   complexity: number | null;
   sets: number;
-  nodes: { id: number | string; state?: number; displayScore?: string | null; slots?: { entrant: { name: string } | null }[] }[];
+  nodes: {
+    id: number | string;
+    state?: number;
+    displayScore?: string | null;
+    winnerProgressionSeed?: unknown;
+    slots?: { entrant?: { name: string } | null; seed?: { progressionSource?: unknown } | null }[];
+  }[];
   error: string | null;
 }
 
@@ -91,6 +97,40 @@ async function livePhaseGroupId(): Promise<string> {
   return String(biggest.id);
 }
 
+/**
+ * A phase group in a *later* phase of some recent tournament — one whose slots
+ * were filled by an earlier phase, so seed.progressionSource actually resolves.
+ *
+ * This matters because it is the expensive case: the structure query costs ~8
+ * objects per set when those fields are null and ~12 when they are populated,
+ * and the local test bracket is single-phase, so measuring only there would
+ * check the cheap end and call the model verified.
+ */
+async function progressionFedPhaseGroupId(): Promise<string | null> {
+  const { raw } = await post(
+    `query{tournaments(query:{perPage:8,filter:{past:true,videogameIds:[1386]}}){nodes{` +
+      `events(filter:{videogameId:[1386]}){phaseGroups{id phase{phaseOrder}}}}}}`,
+    {}
+  );
+  try {
+    const body = JSON.parse(raw) as {
+      data?: { tournaments?: { nodes: { events?: { phaseGroups?: { id: number; phase?: { phaseOrder?: number } }[] }[] }[] } };
+    };
+    const events = (body.data?.tournaments?.nodes ?? []).flatMap((t) => t.events ?? []);
+    for (const event of events) {
+      const groups = event.phaseGroups ?? [];
+      const orders = [...new Set(groups.map((g) => g.phase?.phaseOrder).filter((o): o is number => typeof o === 'number'))];
+      if (orders.length < 2) continue;
+      const latest = Math.max(...orders);
+      const fed = groups.find((g) => g.phase?.phaseOrder === latest);
+      if (fed) return String(fed.id);
+    }
+  } catch {
+    // Treated the same as finding nothing — see the skip in the test below.
+  }
+  return null;
+}
+
 describe.skipIf(!ENABLED)('start.gg contract', () => {
   // Resolved once: each lookup is a request against the same rate limit the
   // tests are measuring.
@@ -119,6 +159,34 @@ describe.skipIf(!ENABLED)('start.gg contract', () => {
           `Re-derive the cost constants in server/src/routes/sets.ts before this starts rejecting requests.`
       ).toBeLessThanOrEqual(model.maxPerSet);
     }
+  }, NETWORK_TIMEOUT_MS);
+
+  it('still charges no more than the model assumes for a phase fed by pools', async () => {
+    const fedPhaseGroupId = await progressionFedPhaseGroupId();
+    if (!fedPhaseGroupId) {
+      console.warn('[contract] found no multi-phase event to measure the expensive structure case against');
+      return;
+    }
+
+    const r = await run(COST_MODEL.structure.query, { phaseGroupId: fedPhaseGroupId, page: 1, perPage: 20 });
+    expect(r.error, `structure query failed: ${r.error}`).toBeNull();
+    expect(r.sets).toBeGreaterThan(0);
+
+    const populated = r.nodes.some(
+      (n) => n.winnerProgressionSeed != null || (n.slots ?? []).some((slot) => slot.seed?.progressionSource != null)
+    );
+    if (!populated) {
+      // Measuring here would just re-check the cheap case and look like proof.
+      console.warn(`[contract] phase group ${fedPhaseGroupId} had no resolved progression; expensive case not measured`);
+      return;
+    }
+
+    const perSet = (r.complexity! - COST_MODEL.structure.base) / r.sets;
+    expect(
+      perSet,
+      `structure query costs ${perSet.toFixed(2)} objects/set on a progression-fed phase, ` +
+        `above the assumed ${COST_MODEL.structure.maxPerSet}. Re-derive STRUCTURE_MAX_COST_PER_SET.`
+    ).toBeLessThanOrEqual(COST_MODEL.structure.maxPerSet);
   }, NETWORK_TIMEOUT_MS);
 
   it('still rejects an oversized request the way the self-healing pager expects', async () => {
