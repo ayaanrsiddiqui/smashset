@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import type React from 'react';
 import { Settings } from './Settings';
 import { SignIn } from './SignIn';
 import { PoolPicker } from './PoolPicker';
@@ -44,6 +45,14 @@ const STORAGE_KEY = 'smashset.event';
 const POOL_STORAGE_KEY = 'smashset.phaseGroup';
 const POLL_MS = 4000;
 
+/**
+ * A row in the set panel. The two piles a TO searches — sets waiting to be
+ * reported and sets already finished — are different shapes, but normalising
+ * them here keeps one highlight index, one keyboard path, and one notion of
+ * which set the bracket should centre on.
+ */
+type PanelRow = { kind: 'open'; set: OpenSet } | { kind: 'completed'; set: BracketSet };
+
 export default function App() {
   // undefined = still checking; null = checked, not signed in.
   const [user, setUser] = useState<CurrentUser | null | undefined>(undefined);
@@ -66,6 +75,9 @@ export default function App() {
   const [bracketGroup, setBracketGroup] = useState<BracketGroup | null>(null);
   // Drives whether the floating set panel is expanded; see SetPanel.
   const [searchFocused, setSearchFocused] = useState(false);
+  // Tab flips the search between sets waiting to be reported and sets already
+  // finished — the "someone says I got their last result wrong" flow.
+  const [mode, setMode] = useState<'open' | 'completed'>('open');
   const [characters, setCharacters] = useState<Character[]>([]);
   const [stages, setStages] = useState<Stage[]>([]);
   const [query, setQuery] = useState('');
@@ -338,12 +350,31 @@ export default function App() {
       const active = document.activeElement;
       const inField = active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement;
 
+      // Tab swaps which pile is being searched. Intercepted everywhere except
+      // another input (the Top X field), so focus navigation still works there
+      // — and Escape below always steps back out, so this is never a dead end.
+      if (e.key === 'Tab' && !(inField && active !== searchRef.current)) {
+        e.preventDefault();
+        setMode((m) => (m === 'open' ? 'completed' : 'open'));
+        setHighlight(0);
+        setRevealed(false);
+        return;
+      }
+
       if (e.key === '/' && !inField) {
         e.preventDefault();
         searchRef.current?.focus();
         return;
       }
       if (e.key === 'Escape') {
+        // Leaving completed mode comes first, so Escape is always the way back
+        // from a Tab rather than wiping the query the TO just typed.
+        if (mode === 'completed') {
+          setMode('open');
+          setHighlight(0);
+          setRevealed(false);
+          return;
+        }
         setQuery('');
         searchRef.current?.blur();
         return;
@@ -353,8 +384,8 @@ export default function App() {
       // typing into the search box or the Top X input.
       if (!inField && /^[1-9]$/.test(e.key)) {
         e.preventDefault();
-        const pick = visibleResults[Number(e.key) - 1];
-        if (pick) selectSet(pick);
+        const pick = visibleRows[Number(e.key) - 1];
+        if (pick) openRow(pick);
         return;
       }
 
@@ -366,24 +397,26 @@ export default function App() {
       if (e.key === 'ArrowDown') {
         e.preventDefault();
         setRevealed(true);
-        setHighlight((h) => Math.min(h + 1, visibleResults.length - 1));
+        setHighlight((h) => Math.min(h + 1, visibleRows.length - 1));
       } else if (e.key === 'ArrowUp') {
         e.preventDefault();
         setRevealed(true);
         setHighlight((h) => Math.max(h - 1, 0));
       } else if (e.key === 'Enter') {
-        // With more than one result, a first Enter just reveals the
-        // highlight (and blurs, so 1-9 hotkeys stop typing into the box)
-        // instead of instantly reporting whatever's on top. Once revealed —
-        // by that Enter or by an arrow key — Enter selects like normal.
-        if (!revealed && visibleResults.length > 1) {
+        // With more than one result and nothing highlighted yet, a first
+        // Enter only reveals the highlight (and blurs, so 1-9 become hotkeys)
+        // rather than opening whatever happens to be on top. The guard is
+        // about not acting on a choice the TO can't see — so it keys off
+        // whether the highlight is showing, which means a query naming one
+        // player in completed mode goes straight through.
+        if (!showHighlight) {
           e.preventDefault();
           setRevealed(true);
           searchRef.current?.blur();
           return;
         }
-        const pick = visibleResults[highlight];
-        if (pick) selectSet(pick);
+        const pick = visibleRows[highlight];
+        if (pick) openRow(pick);
       }
     }
     window.addEventListener('keydown', onKeyDown);
@@ -391,23 +424,56 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   });
 
-  // Declared above the early returns below, because the keydown effect closes
-  // over it: on any screen that returned early, `results` was still in the
-  // temporal dead zone and an arrow key or digit threw a ReferenceError.
+  // Everything the keydown effect closes over has to be declared above the
+  // early returns below, or it sits in the temporal dead zone on any screen
+  // that returns early and a keypress throws.
+  const allBracketSets = bracketGroup?.sets ?? [];
+  const bracketById = bracketSetById(allBracketSets);
+
   const results = fuzzyMatchSets(query, sets, (s) => s.entrants.map((e) => e.name))
     .map((s) => (!s.isStarted && startedIds.has(s.id) ? { ...s, isStarted: true } : s))
     .sort((a, b) => Number(b.isStarted) - Number(a.isStarted));
+
+  // Most recently finished first. A player's own sets are ordered by the
+  // bracket anyway, but as soon as a query matches two players their chains
+  // interleave and only wall-clock can order them.
+  const completedMatches = fuzzyMatchSets(
+    query,
+    allBracketSets.filter((s) => s.state === 3),
+    (s) => s.slots.map((slot) => slot.entrant?.name ?? '')
+  )
+    .slice()
+    .sort((a, b) => (b.completedAt ?? 0) - (a.completedAt ?? 0));
 
   // Collapsed, the panel is a glance-able queue of what can be started right
   // now; expanded, it's the full search. Everything below — keyboard picks
   // included — targets whichever list is actually on screen.
   const readyToStart = results.filter((s) => !s.isStarted && !s.isPreview);
-  const panelExpanded = searchFocused || query.trim().length > 0;
-  const visibleResults = panelExpanded ? results : readyToStart;
+  // Completed mode is always a deliberate search, so the panel stays open.
+  const panelExpanded = mode === 'completed' || searchFocused || query.trim().length > 0;
+
+  const visibleRows: PanelRow[] =
+    mode === 'completed'
+      ? completedMatches.map((set) => ({ kind: 'completed' as const, set }))
+      : (panelExpanded ? results : readyToStart).map((set) => ({ kind: 'open' as const, set }));
+
+  // A query that names exactly one player pulls up that player's history, and
+  // the top row is their latest set — so highlight it without waiting for an
+  // arrow key. Two players matched (say "JL" against two tags) stays ambiguous.
+  const namesMatchingQuery = new Set(
+    query.trim()
+      ? completedMatches.flatMap((s) =>
+          s.slots
+            .map((slot) => slot.entrant?.name)
+            .filter((n): n is string => !!n && n.toLowerCase().includes(query.trim().toLowerCase()))
+        )
+      : []
+  );
+  const soleMatchedPlayer = mode === 'completed' && namesMatchingQuery.size === 1;
 
   // A single match is unambiguous, so it stays highlighted the same way it
   // always has — only an actual choice among several needs `revealed` first.
-  const showHighlight = visibleResults.length <= 1 || revealed;
+  const showHighlight = visibleRows.length <= 1 || revealed || soleMatchedPlayer;
 
   if (user === undefined) return <div className="settings-screen"><h1>SmashSet</h1></div>;
   if (user === null) return <SignIn />;
@@ -451,8 +517,11 @@ export default function App() {
 
   if (phaseGroupId === null) return <div className="settings-screen"><h1>SmashSet</h1></div>;
 
-  const allBracketSets = bracketGroup?.sets ?? [];
-  const bracketById = bracketSetById(allBracketSets);
+
+  function openRow(row: PanelRow) {
+    if (row.kind === 'open') selectSet(row.set);
+    else selectFromBracket(row.set);
+  }
 
   function selectSet(s: OpenSet) {
     setSelectedSet(s);
@@ -624,11 +693,12 @@ export default function App() {
         <Bracket
           group={bracketGroup}
           onSelectSet={selectFromBracket}
-          focusedSetId={showHighlight ? (visibleResults[highlight]?.id ?? null) : null}
+          focusedSetId={showHighlight ? (visibleRows[highlight]?.set.id ?? null) : null}
         />
       </div>
 
       <SetPanel
+        mode={mode}
         expanded={panelExpanded}
         query={query}
         searchRef={searchRef}
@@ -642,43 +712,73 @@ export default function App() {
         error={loadError ?? bracketLoadError}
         collapsedLabel={readyToStart.length === 1 ? '1 ready to start' : `${readyToStart.length} ready to start`}
       >
-        {visibleResults.map((s, i) => (
-          <li
-            key={s.id}
-            className={`${showHighlight && i === highlight ? 'active' : ''} ${s.isStarted ? 'started' : ''}`}
-            // Keeps focus in the search box, so the blur that would collapse
-            // the panel never fires between pressing and releasing on a row.
-            onMouseDown={(e) => e.preventDefault()}
-            onMouseEnter={() => {
+        {visibleRows.map((row, i) => {
+          const active = showHighlight && i === highlight;
+          // Keeps focus in the search box, so the blur that would collapse the
+          // panel never fires between pressing and releasing on a row.
+          const rowProps = {
+            onMouseDown: (e: React.MouseEvent) => e.preventDefault(),
+            onMouseEnter: () => {
               setRevealed(true);
               setHighlight(i);
-            }}
-            onClick={() => selectSet(s)}
-          >
-            {i < 9 && <span className="result-num">{i + 1}</span>}
-            <span className="entrant-names">{s.entrants.map((e) => e.name).join(' vs ')}</span>
-            <span className="round-text">
-              {s.fullRoundText}
-              {s.isPreview && ' · bracket not started'}
-              {s.isStarted && ' · started'}
-            </span>
-            {!s.isPreview && !s.isStarted && (
-              <button
-                className="start-btn"
-                disabled={startingIds.has(s.id)}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleStart(s);
-                }}
-              >
-                {startingIds.has(s.id) ? '…' : 'start'}
-              </button>
-            )}
-          </li>
-        ))}
-        {visibleResults.length === 0 && (
+            },
+            onClick: () => openRow(row),
+          };
+
+          if (row.kind === 'completed') {
+            const prior = priorResultFor(row.set);
+            return (
+              <li key={`done-${row.set.id}`} className={active ? 'active' : ''} {...rowProps}>
+                {i < 9 && <span className="result-num">{i + 1}</span>}
+                <span className="entrant-names">
+                  {prior ? (
+                    <>
+                      <strong>{prior.winnerName}</strong> def. {prior.loserName}
+                      {prior.winnerScore !== null && prior.loserScore !== null
+                        ? ` ${prior.winnerScore}–${prior.loserScore}`
+                        : ''}
+                    </>
+                  ) : (
+                    row.set.slots.map((slot) => slot.entrant?.name ?? 'TBD').join(' vs ')
+                  )}
+                </span>
+                <span className="round-text">{row.set.fullRoundText} · tap to correct</span>
+              </li>
+            );
+          }
+
+          const s = row.set;
+          return (
+            <li key={s.id} className={`${active ? 'active' : ''} ${s.isStarted ? 'started' : ''}`} {...rowProps}>
+              {i < 9 && <span className="result-num">{i + 1}</span>}
+              <span className="entrant-names">{s.entrants.map((e) => e.name).join(' vs ')}</span>
+              <span className="round-text">
+                {s.fullRoundText}
+                {s.isPreview && ' · bracket not started'}
+                {s.isStarted && ' · started'}
+              </span>
+              {!s.isPreview && !s.isStarted && (
+                <button
+                  className="start-btn"
+                  disabled={startingIds.has(s.id)}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleStart(s);
+                  }}
+                >
+                  {startingIds.has(s.id) ? '…' : 'start'}
+                </button>
+              )}
+            </li>
+          );
+        })}
+        {visibleRows.length === 0 && (
           <li className="empty">
-            {panelExpanded ? `No open sets match "${query}"` : 'Nothing ready to start'}
+            {mode === 'completed'
+              ? `No completed sets match "${query}"`
+              : panelExpanded
+                ? `No open sets match "${query}"`
+                : 'Nothing ready to start'}
           </li>
         )}
       </SetPanel>

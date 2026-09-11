@@ -1,6 +1,8 @@
 import type { ReactNode, RefObject } from 'react';
 
 interface Props {
+  /** Which pile the search is over — toggled with Tab. */
+  mode: 'open' | 'completed';
   /**
    * Expanded shows the full search results; collapsed shows only what a TO
    * needs at a glance between matches. Driven by search focus rather than a
@@ -27,6 +29,7 @@ interface Props {
  * is about 95px on a phone, which is narrower than most entrant names.
  */
 export function SetPanel({
+  mode,
   expanded,
   query,
   searchRef,
@@ -38,13 +41,13 @@ export function SetPanel({
   children,
 }: Props) {
   return (
-    <aside className={`set-panel ${expanded ? 'expanded' : 'collapsed'}`}>
+    <aside className={`set-panel ${expanded ? 'expanded' : 'collapsed'} mode-${mode}`}>
       <div className="set-panel-header">
         <input
           ref={searchRef}
           className="search-box"
           value={query}
-          placeholder="Winner's name…"
+          placeholder={mode === 'completed' ? 'Player to correct…' : "Winner's name…"}
           onFocus={onSearchFocus}
           // A click on a result blurs the input first, so collapsing here
           // would unmount the row mid-click. The row's own mousedown handler
@@ -52,7 +55,11 @@ export function SetPanel({
           onBlur={onSearchBlur}
           onChange={(e) => onQueryChange(e.target.value)}
         />
-        {!expanded && <span className="set-panel-summary">{collapsedLabel}</span>}
+        {mode === 'completed' ? (
+          <span className="set-panel-summary">Completed sets, newest first — Tab or Esc to go back</span>
+        ) : (
+          !expanded && <span className="set-panel-summary">{collapsedLabel}</span>
+        )}
       </div>
 
       {error && <p className="error set-panel-error">{error}</p>}

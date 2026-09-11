@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { fetchAccount, fetchBracket, fetchCharacters, fetchOpenSets, fetchPhaseGroups, fetchSetDetail, fetchStages, updateTopXBo5 } from './api';
 import { apiFailure, flushTimers, resetApiDefaults, seedEvent, seedPool } from './test-helpers';
+import type { BracketSet } from './types';
 
 const fetchMeMock = vi.fn();
 const logoutMock = vi.fn();
@@ -695,5 +696,137 @@ describe('App — unreachable server', () => {
     await flushTimers();
 
     expect(screen.queryByText(/could not reach the server/i)).not.toBeInTheDocument();
+  });
+});
+
+describe('App — Tab searches completed sets', () => {
+  const fetchBracketMock = vi.mocked(fetchBracket);
+
+  // Names shaped like the real ones: two players share the "JL" prefix, which
+  // is what makes the single-player rule non-trivial.
+  function completed(id: number, winner: string, loser: string, completedAt: number): BracketSet {
+    return {
+      id,
+      identifier: String.fromCharCode(64 + id),
+      round: 1,
+      fullRoundText: 'Winners Round 1',
+      state: 3,
+      winnerId: id * 10,
+      lPlacement: null,
+      completedAt,
+      winnerAdvancesToPhase: null,
+      loserAdvancesToPhase: null,
+      slots: [
+        { entrant: { id: id * 10, name: winner }, score: 2, prereqSetId: null, prereqPlacement: null, progressionOrigin: null },
+        { entrant: { id: id * 10 + 1, name: loser }, score: 0, prereqSetId: null, prereqPlacement: null, progressionOrigin: null },
+      ],
+    };
+  }
+
+  beforeEach(() => {
+    localStorage.clear();
+    seedEvent();
+    fetchMeMock.mockResolvedValue({ user: { id: 1, displayName: 'FireSlam23' } });
+    resetApiDefaults();
+    fetchBracketMock.mockResolvedValue({
+      phaseGroupId: 1,
+      phaseName: 'Bracket',
+      displayIdentifier: '1',
+      bracketType: 'DOUBLE_ELIMINATION',
+      sets: [
+        completed(3, 'JL | Zoruya', 'hwon', 100), // oldest
+        completed(1, 'JL | Zoruya', 'goodfellow', 300), // newest
+        completed(2, 'JL | FireSlam23', 'Mr. Pi', 200),
+      ],
+    });
+  });
+
+  afterEach(() => {
+    fetchMeMock.mockReset();
+    fetchBracketMock.mockReset();
+  });
+
+  function rowNames(): (string | undefined)[] {
+    return [...document.querySelectorAll('.set-panel-list li')].map((li) => li.querySelector('.entrant-names')?.textContent ?? undefined);
+  }
+
+  it('lists completed sets newest first, regardless of bracket order', async () => {
+    render(<App />);
+    await screen.findByPlaceholderText(/winner's name/i);
+
+    fireEvent.keyDown(window, { key: 'Tab' });
+
+    expect(await screen.findByPlaceholderText(/player to correct/i)).toBeInTheDocument();
+    // Deliberately not the order they arrived in, nor bracket order.
+    await waitFor(() =>
+      expect(rowNames()).toEqual([
+        'JL | Zoruya def. goodfellow 2–0',
+        'JL | FireSlam23 def. Mr. Pi 2–0',
+        'JL | Zoruya def. hwon 2–0',
+      ])
+    );
+  });
+
+  it("highlights a player's latest set when the query names exactly one of them", async () => {
+    const { container } = render(<App />);
+    await screen.findByPlaceholderText(/winner's name/i);
+
+    fireEvent.keyDown(window, { key: 'Tab' });
+    const search = await screen.findByPlaceholderText(/player to correct/i);
+    fireEvent.change(search, { target: { value: 'Zoruya' } });
+
+    // Two of their sets match, but only one player does — so the most recent
+    // is picked without an arrow key, and the bracket says which.
+    await waitFor(() => expect(rowNames()).toHaveLength(2));
+    expect(document.querySelector('.set-panel-list li.active')?.querySelector('.entrant-names')?.textContent).toBe(
+      'JL | Zoruya def. goodfellow 2–0'
+    );
+    expect((await findBracketBox(container, 'A')).className).toContain('focused');
+  });
+
+  it('stays ambiguous when the query matches two players', async () => {
+    render(<App />);
+    await screen.findByPlaceholderText(/winner's name/i);
+
+    fireEvent.keyDown(window, { key: 'Tab' });
+    const search = await screen.findByPlaceholderText(/player to correct/i);
+    fireEvent.change(search, { target: { value: 'JL' } });
+
+    await waitFor(() => expect(rowNames()).toHaveLength(3));
+    // "JL" is both JL | Zoruya and JL | FireSlam23 — picking one for the TO
+    // would be guessing, so nothing is highlighted until they choose.
+    expect(document.querySelector('.set-panel-list li.active')).toBeNull();
+  });
+
+  it('Escape leaves completed mode without throwing away the query', async () => {
+    render(<App />);
+    await screen.findByPlaceholderText(/winner's name/i);
+
+    fireEvent.keyDown(window, { key: 'Tab' });
+    const search = await screen.findByPlaceholderText(/player to correct/i);
+    fireEvent.change(search, { target: { value: 'Zoruya' } });
+
+    fireEvent.keyDown(window, { key: 'Escape' });
+
+    // Back to searching open sets, with what they typed still there — Tab is
+    // never a dead end.
+    const back = await screen.findByPlaceholderText(/winner's name/i);
+    expect((back as HTMLInputElement).value).toBe('Zoruya');
+  });
+
+  it('opens a completed set for correction when picked', async () => {
+    render(<App />);
+    await screen.findByPlaceholderText(/winner's name/i);
+
+    fireEvent.keyDown(window, { key: 'Tab' });
+    const search = await screen.findByPlaceholderText(/player to correct/i);
+    fireEvent.change(search, { target: { value: 'Zoruya' } });
+    await waitFor(() => expect(rowNames()).toHaveLength(2));
+
+    fireEvent.keyDown(window, { key: 'Enter' });
+
+    // The correction flow, pre-filled — same path as clicking it on the bracket.
+    expect(await screen.findByText(/Already reported:/)).toBeInTheDocument();
+    expect(vi.mocked(fetchSetDetail)).toHaveBeenCalledWith(1);
   });
 });
