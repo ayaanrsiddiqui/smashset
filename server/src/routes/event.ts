@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { gql, parseStartggInput } from '../startgg.js';
+import { gql, parseStartggInput, resolveShortUrl } from '../startgg.js';
 
 export const eventRouter = Router();
 
@@ -80,7 +80,11 @@ eventRouter.post('/resolve', async (req, res) => {
       return;
     }
 
-    const data = await gql<TournamentQueryResult>(accessToken, TOURNAMENT_QUERY, { slug: parsed.slug });
+    // A bare slug is whatever start.gg/<slug> serves, which is not always what
+    // tournament(slug:) returns for the same string; see resolveShortUrl.
+    const slug = (parsed.bare && (await resolveShortUrl(parsed.slug))) || parsed.slug;
+
+    const data = await gql<TournamentQueryResult>(accessToken, TOURNAMENT_QUERY, { slug });
     if (!data.tournament) {
       res.status(404).json({ error: `No tournament found for "${parsed.slug}"` });
       return;

@@ -55,17 +55,26 @@ export function Settings({ onResolved }: Props) {
     <div className="settings-screen">
       <h1>SmashSet</h1>
       <p className="subtitle">Fast set reporting for start.gg TOs</p>
-      <label htmlFor="event-input">Tournament or event URL / slug</label>
-      <input
-        id="event-input"
-        autoFocus
-        value={input}
-        placeholder="https://start.gg/my-tournament"
-        onChange={(e) => setInput(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') submit();
-        }}
-      />
+      <label htmlFor="event-input">Tournament or event</label>
+      {/* Shown as a URL because that is what it is resolved as: the server
+          asks start.gg what start.gg/<slug> serves before anything else, so
+          seeing the prefix makes a bare slug the obvious thing to type. */}
+      <div className="url-field">
+        <span className="url-prefix" aria-hidden="true">start.gg/</span>
+        <input
+          id="event-input"
+          autoFocus
+          value={input}
+          placeholder="my-tournament"
+          // A pasted full URL is folded down to its path, so the prefix never
+          // ends up lying about what the field contains. The server strips the
+          // same thing, so this changes appearance, not what gets resolved.
+          onChange={(e) => setInput(e.target.value.replace(/^\s*(https?:\/\/)?(www\.)?start\.gg\//i, ''))}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') submit();
+          }}
+        />
+      </div>
       <button onClick={submit} disabled={loading || !input.trim()}>
         {loading ? 'Loading…' : 'Load event'}
       </button>

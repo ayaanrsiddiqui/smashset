@@ -449,6 +449,39 @@
   font-size: 16px;
 }
 
+/* Prefix and field share one border so they read as a single URL bar. */
+.url-field {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  padding-left: 14px;
+  border-radius: 10px;
+  border: 2px solid #2a2e38;
+  background: #1c1f27;
+}
+
+.url-field:focus-within {
+  border-color: #5865f2;
+}
+
+.url-prefix {
+  color: #9aa0ac;
+  font-size: 16px;
+  user-select: none;
+}
+
+.settings-screen .url-field input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: none;
+  padding-left: 0;
+}
+
+.settings-screen .url-field input:focus {
+  outline: none;
+}
+
 .settings-screen button {
   padding: 12px;
   border-radius: 10px;

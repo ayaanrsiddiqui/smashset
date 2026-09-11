@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { gql, gqlWithCost, StartggComplexityError, StartggError } from './startgg.js';
+import { gql, gqlWithCost, parseStartggInput, resolveShortUrl, StartggComplexityError, StartggError } from './startgg.js';
 
 // start.gg's own responses, verbatim from live traffic where possible. The
 // self-healing pager reads specific things out of these, so a change in shape
@@ -117,5 +117,83 @@ describe('gqlWithCost', () => {
     expect(init.headers.Authorization).toBe('Bearer a-token');
     expect(init.signal).toBeInstanceOf(AbortSignal);
     expect(JSON.parse(init.body)).toEqual({ query: 'query Q {}', variables: { x: 1 } });
+  });
+});
+
+describe('parseStartggInput', () => {
+  it('marks a bare slug as bare and an explicit tournament path as not', () => {
+    // The whole point of the flag: these two strings resolve to different
+    // tournaments, so only the first may be treated as a short URL.
+    expect(parseStartggInput('supernova')).toEqual({ type: 'tournament', slug: 'supernova', bare: true });
+    expect(parseStartggInput('start.gg/tournament/supernova')).toEqual({
+      type: 'tournament',
+      slug: 'supernova',
+      bare: false,
+    });
+  });
+
+  it('strips scheme, host, trailing slash and query before deciding', () => {
+    expect(parseStartggInput('  https://www.start.gg/uva/?foo=1  ')).toEqual({
+      type: 'tournament',
+      slug: 'uva',
+      bare: true,
+    });
+  });
+
+  it('keeps a full event slug intact', () => {
+    expect(parseStartggInput('https://start.gg/tournament/supernova-2026/event/ultimate-singles')).toEqual({
+      type: 'event',
+      slug: 'tournament/supernova-2026/event/ultimate-singles',
+    });
+  });
+});
+
+describe('resolveShortUrl', () => {
+  const fetchMock = vi.fn();
+
+  beforeEach(() => {
+    vi.stubGlobal('fetch', fetchMock);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    fetchMock.mockReset();
+  });
+
+  it('returns the canonical slug the short URL redirects to', async () => {
+    // The live collision this exists for: start.gg/supernova serves Supernova
+    // 2026, while tournament(slug:"supernova") returns SuperNova 2016.
+    fetchMock.mockResolvedValue({ ok: true, url: 'https://www.start.gg/tournament/supernova-2026/events' });
+
+    expect(await resolveShortUrl('supernova')).toBe('supernova-2026');
+  });
+
+  it('returns null when start.gg does not know the slug', async () => {
+    fetchMock.mockResolvedValue({ ok: false, status: 404, url: 'https://www.start.gg/nope' });
+
+    expect(await resolveShortUrl('nope')).toBeNull();
+  });
+
+  it('returns null rather than throwing when start.gg is unreachable', async () => {
+    // The degrade that keeps a site blip from failing an event load — the
+    // caller falls back to resolving through the API.
+    fetchMock.mockRejectedValue(new Error('ETIMEDOUT'));
+
+    expect(await resolveShortUrl('supernova')).toBeNull();
+  });
+
+  it('returns null when the short URL lands somewhere that is not a tournament', async () => {
+    fetchMock.mockResolvedValue({ ok: true, url: 'https://www.start.gg/user/abc123' });
+
+    expect(await resolveShortUrl('abc123')).toBeNull();
+  });
+
+  it('refuses a slug that could not be a short URL, without making a request', async () => {
+    // The slug is interpolated into a URL path, so anything able to change the
+    // path's shape is rejected outright instead of escaped.
+    for (const bad of ['../../admin', 'a/b', 'a?b', 'http://evil.test', '']) {
+      expect(await resolveShortUrl(bad)).toBeNull();
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

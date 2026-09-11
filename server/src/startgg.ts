@@ -104,7 +104,12 @@ export async function gql<T>(accessToken: string, query: string, variables: Reco
   return (await gqlWithCost<T>(accessToken, query, variables)).data;
 }
 
-export type ParsedInput = { type: 'event'; slug: string } | { type: 'tournament'; slug: string };
+export type ParsedInput =
+  | { type: 'event'; slug: string }
+  // `bare` separates "supernova" from "tournament/supernova". Those are
+  // different tournaments, and only the first is a short URL, so only the
+  // first goes through resolveShortUrl below.
+  | { type: 'tournament'; slug: string; bare: boolean };
 
 /**
  * Accepts a full start.gg URL, a "tournament/<t-slug>/event/<e-slug>" event
@@ -125,9 +130,48 @@ export function parseStartggInput(input: string): ParsedInput {
 
   const tournamentMatch = s.match(/^tournament\/([^/]+)/);
   if (tournamentMatch) {
-    return { type: 'tournament', slug: tournamentMatch[1] };
+    return { type: 'tournament', slug: tournamentMatch[1], bare: false };
   }
 
   const bare = s.split('/')[0];
-  return { type: 'tournament', slug: bare };
+  return { type: 'tournament', slug: bare, bare: true };
+}
+
+const SHORT_URL_TIMEOUT_MS = 8_000;
+
+/**
+ * Resolves a bare slug to a canonical tournament slug the way start.gg's own
+ * short URLs do, returning null when it can't.
+ *
+ * `tournament(slug:)` accepts both canonical slugs and short URLs, so most
+ * bare input already works. It breaks when one string is both: "supernova" is
+ * SuperNova (2016)'s canonical slug *and* Supernova 2026's short URL, and the
+ * API returns the canonical match while start.gg/supernova serves the other
+ * one. Both tournaments even report shortSlug "supernova", so nothing in the
+ * response distinguishes them, and TournamentPageFilter has no slug or
+ * shortSlug field to query by instead. Following the redirect is the only
+ * authoritative resolver start.gg exposes.
+ */
+export async function resolveShortUrl(slug: string): Promise<string | null> {
+  // The slug becomes a URL path segment, so anything outside this charset is
+  // rejected rather than escaped — a real short URL never contains more.
+  if (!/^[A-Za-z0-9_-]+$/.test(slug)) return null;
+
+  try {
+    const res = await fetch(`https://start.gg/${encodeURIComponent(slug)}`, {
+      method: 'HEAD',
+      redirect: 'follow',
+      signal: AbortSignal.timeout(SHORT_URL_TIMEOUT_MS),
+    });
+    if (!res.ok) return null;
+    const canonical = new URL(res.url).pathname.match(/^\/tournament\/([^/]+)/);
+    return canonical ? canonical[1] : null;
+  } catch {
+    // A deliberate degrade, not a swallowed error: this hits start.gg's
+    // website rather than its API, and exists only to break slug/short-URL
+    // ties. When it is unreachable the caller still resolves through the API
+    // exactly as it did before this existed, so a site blip must not turn a
+    // working event load into a failure.
+    return null;
+  }
 }

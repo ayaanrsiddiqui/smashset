@@ -86,7 +86,7 @@ describe('App — sign-in gate', () => {
     fetchMeMock.mockResolvedValue({ user: { id: 1, displayName: 'FireSlam23' } });
     render(<App />);
 
-    expect(await screen.findByPlaceholderText(/start\.gg\/my-tournament/i)).toBeInTheDocument();
+    expect(await screen.findByLabelText(/tournament or event/i)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /sign in with start\.gg/i })).not.toBeInTheDocument();
   });
 

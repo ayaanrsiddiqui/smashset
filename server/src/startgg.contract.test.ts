@@ -1,6 +1,7 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { COST_MODEL } from './routes/sets.js';
 import { parseDisplayScore } from './displayScore.js';
+import { resolveShortUrl } from './startgg.js';
 
 // A contract test: it checks assumptions about an external service we do not
 // control, rather than our own logic. Every other test in this repo mocks
@@ -225,5 +226,25 @@ describe.skipIf(!ENABLED)('start.gg contract', () => {
           `${JSON.stringify([a?.entrant?.name, b?.entrant?.name])} — scores would silently disappear from the bracket`
       ).toBe(true);
     }
+  }, NETWORK_TIMEOUT_MS);
+});
+
+// Short-URL resolution leans on start.gg's website routing rather than its
+// API, because the API has no way to resolve one: tournament(slug:) conflates
+// canonical slugs with short URLs and returns the canonical match when a
+// string is both, and TournamentPageFilter has no slug field to query by.
+// That makes the redirect load-bearing, and load-bearing assumptions about
+// someone else's service belong in a check that fails when they drift.
+describe.skipIf(!ENABLED)('start.gg short URLs', () => {
+  it('redirects a short URL to its canonical tournament slug', async () => {
+    expect(await resolveShortUrl(TOURNAMENT_SLUG)).toBe('definitely-real-tournament');
+  }, NETWORK_TIMEOUT_MS);
+
+  it('still resolves a canonical slug typed without the tournament/ prefix', async () => {
+    expect(await resolveShortUrl('definitely-real-tournament')).toBe('definitely-real-tournament');
+  }, NETWORK_TIMEOUT_MS);
+
+  it('reports nothing for a slug start.gg does not know', async () => {
+    expect(await resolveShortUrl('smashset-canary-not-a-real-slug-38fa1c')).toBeNull();
   }, NETWORK_TIMEOUT_MS);
 });
