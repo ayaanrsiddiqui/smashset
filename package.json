@@ -11,7 +11,8 @@
     "test": "npm test --prefix server && npm test --prefix web",
     "typecheck": "npm run typecheck --prefix server && npm run typecheck --prefix web",
     "migrate": "npm run migrate --prefix server",
-    "verify": "npm run typecheck && npm test"
+    "verify": "npm run typecheck && npm test",
+    "migrate:prod": "npm run migrate:prod --prefix server"
   },
   "keywords": [],
   "author": "",

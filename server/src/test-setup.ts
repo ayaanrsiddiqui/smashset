@@ -2,7 +2,7 @@
 // comment on why this ordering matters) — runs before any test file via
 // vitest's setupFiles, so pool.ts/crypto.ts see a populated process.env.
 // test-env.js comes first so a local test database can override DATABASE_URL.
-import './test-env.js';
+import './local-env.js';
 import './env.js';
 
 // These tests DELETE rows. They used to run against the production database,

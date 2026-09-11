@@ -1,8 +1,5 @@
 import './env.js';
-import { runMigrations } from './db/migrate.js';
 import { createApp } from './app.js';
-
-await runMigrations();
 
 const app = createApp();
 

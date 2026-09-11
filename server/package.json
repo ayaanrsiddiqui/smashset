@@ -10,7 +10,9 @@
     "test": "vitest run",
     "migrate": "tsx src/db/migrate-cli.ts",
     "test:contract": "RUN_CONTRACT_TESTS=1 vitest run src/startgg.contract.test.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "migrate:down": "tsx src/db/migrate-cli.ts down",
+    "migrate:prod": "node dist/db/migrate-cli.js"
   },
   "keywords": [],
   "author": "",
@@ -20,6 +22,7 @@
     "cookie-parser": "^1.4.7",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
+    "node-pg-migrate": "^9.0.0",
     "pg": "^8.23.0"
   },
   "devDependencies": {

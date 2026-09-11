@@ -1,6 +1,13 @@
-import { pool } from './pool.js';
+-- Baseline: the schema as it stood when migrations were introduced, lifted
+-- verbatim from the boot-time runMigrations() this replaces.
+--
+-- Every statement is idempotent so that applying it to the already-deployed
+-- production database is a no-op, and applying it to a fresh one (CI, a local
+-- test database) builds the whole schema. That is what lets this be adopted
+-- without a separate "mark as already applied" step against production.
 
-const SCHEMA = `
+-- Up Migration
+
 CREATE TABLE IF NOT EXISTS users (
   id               SERIAL PRIMARY KEY,
   startgg_user_id  TEXT NOT NULL UNIQUE,
@@ -37,11 +44,9 @@ CREATE TABLE IF NOT EXISTS player_mains (
 -- exists (the deployed one, pre-dating top_x_bo5), so the column needs its
 -- own idempotent statement to actually reach it.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS top_x_bo5 INTEGER;
-`;
 
-// Inlined rather than a sibling .sql file — tsc only compiles .ts into dist,
-// it doesn't copy other assets, so a separate file would vanish after a
-// production build and this would 404 against its own schema at boot.
-export async function runMigrations(): Promise<void> {
-  await pool.query(SCHEMA);
-}
+-- Down Migration
+
+-- Deliberately empty. Rolling back past the baseline would mean dropping every
+-- table in the database, including live tournament data; that should be a
+-- considered act with a backup in hand, not one command away.
