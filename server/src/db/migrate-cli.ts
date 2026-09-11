@@ -3,15 +3,14 @@
 // before it serves traffic instead of starting against a schema it disagrees
 // with, and multiple replicas can't race each other to alter the same tables.
 //
-// Run via `npm run migrate` (tsx, for local and CI) or `npm run migrate:prod`
-// (compiled, for Railway's pre-deploy command).
+// Follows DATABASE_URL, which means `.env` — the local development database.
+// The test database is migrated on its own by the vitest global setup, and
+// production by Railway's pre-deploy command running `npm run migrate:prod`.
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-// Before env.js, so a local .env.test wins over the .env that points at
-// production — the same precedence the test setup relies on.
-import '../local-env.js';
 import '../env.js';
 import { runner } from 'node-pg-migrate';
+import { assertLocalDatabase } from './local-guard.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // src/db and dist/db are both one level under server/, so this resolves to
@@ -20,18 +19,11 @@ const dir = path.resolve(__dirname, '../../migrations');
 
 const databaseUrl = process.env.DATABASE_URL!;
 const host = new URL(databaseUrl).hostname;
-const isLocal = ['localhost', '127.0.0.1', '::1'].includes(host);
 
-// Migrating the wrong database is the expensive mistake here, and .env points
-// at production, so targeting anything remote has to be said out loud. Railway's
-// pre-deploy command sets ALLOW_REMOTE_MIGRATE=1 precisely because that deploy
-// does mean production.
-if (!isLocal && process.env.ALLOW_REMOTE_MIGRATE !== '1') {
-  console.error(
-    `Refusing to migrate a non-local database (${host}).\n` +
-      `Set a local DATABASE_URL (see .env.test.example), or set\n` +
-      `ALLOW_REMOTE_MIGRATE=1 if you genuinely mean to migrate ${host}.`
-  );
+try {
+  assertLocalDatabase('migrate', 'ALLOW_REMOTE_MIGRATE');
+} catch (err) {
+  console.error(err instanceof Error ? err.message : err);
   process.exit(1);
 }
 

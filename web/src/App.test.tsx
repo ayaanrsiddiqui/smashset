@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { fetchAccount, fetchBracket, fetchCharacters, fetchOpenSets, fetchPhaseGroups, fetchSetDetail, fetchStages, updateTopXBo5 } from './api';
 import { apiFailure, flushTimers, resetApiDefaults, seedEvent, seedPool } from './test-helpers';
@@ -76,6 +76,21 @@ describe('App — sign-in gate', () => {
     render(<App />);
 
     expect(await screen.findByRole('button', { name: /sign in with start\.gg/i })).toBeInTheDocument();
+  });
+
+  it('survives a keypress on a screen that has no set list', async () => {
+    // The global keydown handler closes over `results`, which is computed
+    // further down the component. On any screen that returns early it used to
+    // still be in the temporal dead zone, so an arrow key threw a
+    // ReferenceError out of a state updater and took the tree down with it.
+    fetchMeMock.mockResolvedValue({ user: null });
+    render(<App />);
+    await screen.findByRole('button', { name: /sign in with start\.gg/i });
+
+    fireEvent.keyDown(window, { key: 'ArrowDown' });
+    fireEvent.keyDown(window, { key: '1' });
+
+    expect(screen.getByRole('button', { name: /sign in with start\.gg/i })).toBeInTheDocument();
   });
 
   it('sign out calls the API and returns to the Sign In screen', async () => {
@@ -419,6 +434,47 @@ describe('App — multiple pools', () => {
     // the event itself was never touched.
     expect(await screen.findByPlaceholderText(/winner's name/i)).toBeInTheDocument();
     expect(fetchPhaseGroupsMock).toHaveBeenCalledOnce();
+  });
+
+  it("drops a slow response from the pool the TO already left", async () => {
+    // The dangerous version of this bug: the abandoned pool's sets stay on
+    // screen under the new pool's name, and a TO reports one of them.
+    const fetchOpenSetsMock = vi.mocked(fetchOpenSets);
+    let releasePoolA: (value: { sets: unknown[] }) => void = () => {};
+    const poolAHangs = new Promise<{ sets: unknown[] }>((resolve) => {
+      releasePoolA = resolve;
+    });
+    fetchOpenSetsMock.mockImplementation(((id: number) =>
+      id === 10 ? poolAHangs : Promise.resolve({ sets: [] })) as never);
+
+    render(<App />);
+    await userEvent.click(await screen.findByText('Pools A'));
+
+    // Switch to B while A's request is still in flight.
+    await userEvent.click(await screen.findByRole('button', { name: 'switch pool' }));
+    await userEvent.click(await screen.findByText('Pools B'));
+    await screen.findByPlaceholderText(/winner's name/i);
+
+    // A finally answers, with a set that belongs to the pool we left.
+    releasePoolA({
+      sets: [
+        {
+          id: 999,
+          isPreview: false,
+          isStarted: false,
+          fullRoundText: 'Pool A Round 1',
+          identifier: 'A',
+          lPlacement: null,
+          entrants: [
+            { id: 1, name: 'Left Behind' },
+            { id: 2, name: 'Should Not Show' },
+          ],
+        },
+      ],
+    });
+
+    await waitFor(() => expect(screen.queryByText(/Left Behind/)).not.toBeInTheDocument());
+    expect(screen.queryByText(/Should Not Show/)).not.toBeInTheDocument();
   });
 
   it('switching pools re-fetches bracket data scoped to the newly picked pool', async () => {

@@ -30,6 +30,10 @@ interface Props {
   topXBo5: number | null;
   videogameId: number;
   onNotify: (message: string, kind?: ToastKind) => void;
+  // Returns true when the error was a dead session and has been handled by
+  // ending it — the panel then stays quiet rather than toasting "Not signed
+  // in" at a TO who is already being returned to the sign-in screen.
+  onAuthError: (err: unknown) => boolean;
   onDone: () => void;
   onCancel: () => void;
 }
@@ -70,6 +74,7 @@ export function ReportPanel({
   topXBo5,
   videogameId,
   onNotify,
+  onAuthError,
   onDone,
   onCancel,
 }: Props) {
@@ -433,6 +438,7 @@ export function ReportPanel({
       });
       onDone();
     } catch (err) {
+      if (onAuthError(err)) return;
       onNotify(err instanceof Error ? err.message : 'Failed to report set', 'error');
     } finally {
       submittingRef.current = false;

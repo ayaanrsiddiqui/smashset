@@ -95,6 +95,14 @@ export default function App() {
   const [showHelp, setShowHelp] = useState(false);
   const [showAccount, setShowAccount] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
+  // Mirrors phaseGroupId for async continuations that need to know whether the
+  // TO switched pool while they were awaiting — a ref because a closure
+  // captured at click time would still see the old value.
+  const poolRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    poolRef.current = phaseGroupId;
+  }, [phaseGroupId]);
 
   useEffect(() => {
     fetchMe()
@@ -185,6 +193,7 @@ export default function App() {
       await updateTopXBo5(value);
     } catch (err) {
       setAccount((prev) => (prev ? { ...prev, topXBo5: previous } : prev));
+      if (handledAuthError(err)) return;
       notify(err instanceof Error ? err.message : 'Failed to save preference', 'error');
     }
   }
@@ -235,12 +244,21 @@ export default function App() {
 
   useEffect(() => {
     if (!event) return;
+    // On failure these deliberately keep whatever they already hold. Emptying
+    // the roster would silently disable character and stage entry for the rest
+    // of the event over one blip, with nothing on screen to explain it.
     fetchCharacters(event.videogame.id)
       .then(({ characters }) => setCharacters(characters))
-      .catch(() => setCharacters([]));
+      .catch((err) => {
+        if (handledAuthError(err)) return;
+        notify('Could not load the character list — character picks may be unavailable.', 'error');
+      });
     fetchStages(event.videogame.id)
       .then(({ stages }) => setStages(stages))
-      .catch(() => setStages([]));
+      .catch((err) => {
+        if (handledAuthError(err)) return;
+        notify('Could not load the stage list — stage picks may be unavailable.', 'error');
+      });
   }, [event]);
 
   // `cancelled` covers both halves of the same problem: the interval stops
@@ -251,14 +269,18 @@ export default function App() {
     if (!user || phaseGroupId === null || selectedSet || pickingPool) return;
     const id = phaseGroupId;
     let cancelled = false;
+    // setInterval doesn't wait for the previous tick, so a slow response can
+    // land after a faster later one. Only the newest response may write state.
+    let seq = 0;
     const run = async () => {
+      const mine = ++seq;
       try {
         const { sets } = await fetchOpenSets(id);
-        if (cancelled) return;
+        if (cancelled || mine !== seq) return;
         setSets(sets);
         setLoadError(null);
       } catch (err) {
-        if (cancelled || handledAuthError(err)) return;
+        if (cancelled || mine !== seq || handledAuthError(err)) return;
         setLoadError(err instanceof Error ? err.message : 'Failed to load sets');
       }
     };
@@ -278,14 +300,16 @@ export default function App() {
     if (!user || phaseGroupId === null || selectedSet || pickingPool) return;
     const id = phaseGroupId;
     let cancelled = false;
+    let seq = 0;
     const run = async () => {
+      const mine = ++seq;
       try {
         const group = await fetchBracket(id);
-        if (cancelled) return;
+        if (cancelled || mine !== seq) return;
         setBracketGroup(group);
         setBracketLoadError(null);
       } catch (err) {
-        if (cancelled || handledAuthError(err)) return;
+        if (cancelled || mine !== seq || handledAuthError(err)) return;
         setBracketLoadError(err instanceof Error ? err.message : 'Failed to load completed/not-ready sets');
       }
     };
@@ -366,6 +390,17 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   });
 
+  // Declared above the early returns below, because the keydown effect closes
+  // over it: on any screen that returned early, `results` was still in the
+  // temporal dead zone and an arrow key or digit threw a ReferenceError.
+  const results = fuzzyMatchSets(query, sets, (s) => s.entrants.map((e) => e.name))
+    .map((s) => (!s.isStarted && startedIds.has(s.id) ? { ...s, isStarted: true } : s))
+    .sort((a, b) => Number(b.isStarted) - Number(a.isStarted));
+
+  // A single match is unambiguous, so it stays highlighted the same way it
+  // always has — only an actual choice among several needs `revealed` first.
+  const showHighlight = results.length <= 1 || revealed;
+
   if (user === undefined) return <div className="settings-screen"><h1>SmashSet</h1></div>;
   if (user === null) return <SignIn />;
   if (!event) return <Settings onResolved={handleResolved} />;
@@ -408,14 +443,6 @@ export default function App() {
 
   if (phaseGroupId === null) return <div className="settings-screen"><h1>SmashSet</h1></div>;
 
-  const results = fuzzyMatchSets(query, sets, (s) => s.entrants.map((e) => e.name))
-    .map((s) => (!s.isStarted && startedIds.has(s.id) ? { ...s, isStarted: true } : s))
-    .sort((a, b) => Number(b.isStarted) - Number(a.isStarted));
-
-  // A single match is unambiguous, so it stays highlighted the same way it
-  // always has — only an actual choice among several needs `revealed` first.
-  const showHighlight = results.length <= 1 || revealed;
-
   const allBracketSets = bracketGroup?.sets ?? [];
   const bracketById = bracketSetById(allBracketSets);
   const completedSets = allBracketSets.filter((s) => s.state === 3).sort((a, b) => compareIdentifiers(a.identifier, b.identifier));
@@ -433,10 +460,18 @@ export default function App() {
   // already in state by the time ReportPanel's useState initializers read
   // it on mount (they only ever consult their initial value once).
   async function selectFromBracket(bs: BracketSet) {
+    // The detail fetch below is a round trip during which the TO can switch
+    // pool or event. Without this, a slow response would open the report
+    // screen for a set belonging to a bracket they already left.
+    const openedFor = phaseGroupId;
+
     if (bs.state === 3) {
       try {
-        setPriorDetail(await fetchSetDetail(bs.id));
-      } catch {
+        const detail = await fetchSetDetail(bs.id);
+        if (poolRef.current !== openedFor) return;
+        setPriorDetail(detail);
+      } catch (err) {
+        if (poolRef.current !== openedFor || handledAuthError(err)) return;
         // Still opens — just without the pre-fill, same as if start.gg had
         // no game records for this set at all (e.g. a quick-reported one).
         setPriorDetail(null);
@@ -476,6 +511,7 @@ export default function App() {
       await startSet(s.id);
       setStartedIds((prev) => new Set(prev).add(s.id));
     } catch (err) {
+      if (handledAuthError(err)) return;
       notify(err instanceof Error ? err.message : 'Failed to start set', 'error');
     } finally {
       setStartingIds((prev) => {
@@ -525,6 +561,7 @@ export default function App() {
           topXBo5={topX}
           videogameId={event.videogame.id}
           onNotify={notify}
+          onAuthError={handledAuthError}
           onDone={() => {
             notify(`Reported ${selectedSet.entrants.map((e) => e.name).join(' vs ')}`, 'success');
             // Clearing selectedSet re-arms both poll effects, which refresh
