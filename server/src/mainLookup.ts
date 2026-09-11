@@ -167,6 +167,14 @@ export async function computePlayerMain(accessToken: string, playerId: number, v
 // concurrently.
 const mainsInFlight = new Map<string, Promise<void>>();
 
+// A successful lookup writes a row, which stops sets.ts asking again — but a
+// failed one leaves no trace, so every poll re-fired the whole uncached set
+// four seconds later. Under a rate limit that is self-reinforcing: the
+// failures are what keep the requests coming. Remembering the failure for a
+// cooldown turns a permanent storm into one retry a minute.
+const FAILURE_COOLDOWN_MS = 60_000;
+const mainsFailedAt = new Map<string, number>();
+
 // Fire-and-forget — deliberately returns void, not the task's Promise, so
 // it's structurally impossible for a caller to accidentally await it and
 // block a request on a start.gg round trip. This is the first genuinely
@@ -176,8 +184,15 @@ export function ensureMainComputed(accessToken: string, playerId: number, videog
   const key = `${playerId}:${videogameId}`;
   if (mainsInFlight.has(key)) return;
 
+  const failedAt = mainsFailedAt.get(key);
+  if (failedAt !== undefined && Date.now() - failedAt < FAILURE_COOLDOWN_MS) return;
+
   const task = computePlayerMain(accessToken, playerId, videogameId)
+    .then(() => {
+      mainsFailedAt.delete(key);
+    })
     .catch((err) => {
+      mainsFailedAt.set(key, Date.now());
       console.error(`[mains] failed to compute main for player ${playerId} (videogame ${videogameId}):`, err);
     })
     .finally(() => {

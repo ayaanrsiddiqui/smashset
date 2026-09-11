@@ -1,12 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { fetchAccount, fetchBracket, fetchCharacters, fetchPhaseGroups, fetchSetDetail, fetchStages, updateTopXBo5 } from './api';
+import { fetchAccount, fetchBracket, fetchCharacters, fetchOpenSets, fetchPhaseGroups, fetchSetDetail, fetchStages, updateTopXBo5 } from './api';
+import { apiFailure, flushTimers, resetApiDefaults, seedEvent, seedPool } from './test-helpers';
 
 const fetchMeMock = vi.fn();
 const logoutMock = vi.fn();
 
-vi.mock('./api', () => ({
+// Spreads the real module so ApiError stays a real class — App's 401 handling
+// does an instanceof against it, which a stubbed-out module would break.
+vi.mock('./api', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./api')>()),
   fetchMe: (...args: unknown[]) => fetchMeMock(...args),
   logout: (...args: unknown[]) => logoutMock(...args),
   resolveEvent: vi.fn(),
@@ -76,16 +80,7 @@ describe('App — sign-in gate', () => {
 
   it('sign out calls the API and returns to the Sign In screen', async () => {
     fetchMeMock.mockResolvedValue({ user: { id: 1, displayName: 'FireSlam23' } });
-    localStorage.setItem(
-      'smashset.event',
-      JSON.stringify({
-        id: 1,
-        name: 'small bracket',
-        slug: 'tournament/x/event/small-bracket',
-        videogame: { id: 1, name: 'Melee' },
-        tournament: { id: 1, name: 'x' },
-      })
-    );
+    seedEvent();
     render(<App />);
 
     // Sign out lives inside the account modal now, alongside the other
@@ -102,16 +97,7 @@ describe('App — sign-in gate', () => {
 describe('App — help modal', () => {
   beforeEach(() => {
     localStorage.clear();
-    localStorage.setItem(
-      'smashset.event',
-      JSON.stringify({
-        id: 1,
-        name: 'small bracket',
-        slug: 'tournament/x/event/small-bracket',
-        videogame: { id: 1, name: 'Melee' },
-        tournament: { id: 1, name: 'x' },
-      })
-    );
+    seedEvent();
     fetchMeMock.mockResolvedValue({ user: { id: 1, displayName: 'FireSlam23' } });
   });
 
@@ -150,16 +136,7 @@ describe('App — account modal', () => {
 
   beforeEach(() => {
     localStorage.clear();
-    localStorage.setItem(
-      'smashset.event',
-      JSON.stringify({
-        id: 1,
-        name: 'small bracket',
-        slug: 'tournament/x/event/small-bracket',
-        videogame: { id: 1, name: 'Melee' },
-        tournament: { id: 1, name: 'x' },
-      })
-    );
+    seedEvent();
     fetchMeMock.mockResolvedValue({ user: { id: 1, displayName: 'FireSlam23' } });
     fetchAccountMock.mockResolvedValue({ displayName: 'FireSlam23', startggSlug: 'user/abc', topXBo5: null });
     updateTopXBo5Mock.mockResolvedValue({ topXBo5: 17 });
@@ -208,29 +185,9 @@ describe('App — completed / not-ready sections', () => {
 
   beforeEach(() => {
     localStorage.clear();
-    localStorage.setItem(
-      'smashset.event',
-      JSON.stringify({
-        id: 1,
-        name: 'small bracket',
-        slug: 'tournament/x/event/small-bracket',
-        videogame: { id: 1, name: 'Melee' },
-        tournament: { id: 1, name: 'x' },
-      })
-    );
+    seedEvent();
     fetchMeMock.mockResolvedValue({ user: { id: 1, displayName: 'FireSlam23' } });
-    // The account-modal describe block above resets this mock's
-    // implementation (not just its call history) in its own afterEach —
-    // it's the same shared vi.fn() instance across the whole file, so it
-    // needs a fresh resolution here too, not just in that earlier block.
-    // Same reasoning for the three below: this block's own afterEach resets
-    // them (since a test later in this same block might need a different
-    // value), so each test starts from a known-good default here rather
-    // than whatever the previous test in this block left behind.
-    fetchAccountMock.mockResolvedValue({ displayName: 'FireSlam23', startggSlug: null, topXBo5: null });
-    fetchSetDetailMock.mockResolvedValue({ games: [] });
-    fetchCharactersMock.mockResolvedValue({ characters: [] });
-    fetchStagesMock.mockResolvedValue({ stages: [] });
+    resetApiDefaults();
   });
 
   afterEach(() => {
@@ -415,17 +372,9 @@ describe('App — multiple pools', () => {
 
   beforeEach(() => {
     localStorage.clear();
-    localStorage.setItem(
-      'smashset.event',
-      JSON.stringify({
-        id: 1,
-        name: 'Big event',
-        slug: 'tournament/x/event/big-event',
-        videogame: { id: 1, name: 'Melee' },
-        tournament: { id: 1, name: 'x' },
-      })
-    );
+    seedEvent();
     fetchMeMock.mockResolvedValue({ user: { id: 1, displayName: 'FireSlam23' } });
+    resetApiDefaults();
     fetchPhaseGroupsMock.mockResolvedValue({
       phaseGroups: [
         { id: 10, displayIdentifier: 'A', phaseName: 'Pools', bracketType: 'ROUND_ROBIN' },
@@ -433,13 +382,6 @@ describe('App — multiple pools', () => {
       ],
     });
     fetchBracketMock.mockResolvedValue({ phaseGroupId: 10, phaseName: 'Pools', displayIdentifier: 'A', bracketType: 'ROUND_ROBIN', sets: [] });
-    // Earlier blocks above reset these in their own afterEach (same shared
-    // vi.fn() instances across the whole file) — re-establish their
-    // defaults here too, same reasoning as everywhere else in this file.
-    vi.mocked(fetchAccount).mockResolvedValue({ displayName: 'FireSlam23', startggSlug: null, topXBo5: null });
-    vi.mocked(fetchCharacters).mockResolvedValue({ characters: [] });
-    vi.mocked(fetchStages).mockResolvedValue({ stages: [] });
-    vi.mocked(fetchSetDetail).mockResolvedValue({ games: [] });
   });
 
   afterEach(() => {
@@ -490,5 +432,120 @@ describe('App — multiple pools', () => {
 
     await screen.findByPlaceholderText(/winner's name/i);
     expect(fetchBracketMock).toHaveBeenLastCalledWith(20);
+  });
+});
+
+describe('App — session teardown', () => {
+  const fetchOpenSetsMock = vi.mocked(fetchOpenSets);
+  const fetchBracketMock = vi.mocked(fetchBracket);
+
+  beforeEach(() => {
+    localStorage.clear();
+    seedEvent();
+    seedPool();
+    fetchMeMock.mockResolvedValue({ user: { id: 1, displayName: 'FireSlam23' } });
+    logoutMock.mockResolvedValue({ ok: true });
+    resetApiDefaults();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    fetchMeMock.mockReset();
+    logoutMock.mockReset();
+    fetchOpenSetsMock.mockReset();
+    fetchBracketMock.mockReset();
+  });
+
+  it('stops polling start.gg once the user signs out', async () => {
+    // Everything here is driven by advancing fake timers rather than
+    // userEvent/waitFor: both of those wait on real timers, which are faked
+    // for this test, so they never resolve.
+    vi.useFakeTimers();
+    render(<App />);
+    await flushTimers();
+
+    // Establishes that polling is genuinely running first, so the flat call
+    // count after signing out means it stopped rather than never started.
+    const before = fetchOpenSetsMock.mock.calls.length;
+    expect(before).toBeGreaterThan(0);
+    await vi.advanceTimersByTimeAsync(12000);
+    expect(fetchOpenSetsMock.mock.calls.length).toBeGreaterThan(before);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Account' }));
+    await flushTimers();
+    fireEvent.click(screen.getByRole('button', { name: 'sign out' }));
+    await flushTimers();
+    expect(screen.getByRole('button', { name: /sign in with start\.gg/i })).toBeInTheDocument();
+
+    const openCalls = fetchOpenSetsMock.mock.calls.length;
+    const bracketCalls = fetchBracketMock.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(20000);
+
+    expect(fetchOpenSetsMock).toHaveBeenCalledTimes(openCalls);
+    expect(fetchBracketMock).toHaveBeenCalledTimes(bracketCalls);
+  });
+
+  it('forgets the event and pool on sign-out, so the next person does not land in them', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await screen.findByPlaceholderText(/winner's name/i);
+    await user.click(screen.getByRole('button', { name: 'Account' }));
+    await user.click(await screen.findByRole('button', { name: /sign out/i }));
+    await screen.findByRole('button', { name: /sign in with start\.gg/i });
+
+    expect(localStorage.getItem('smashset.event')).toBeNull();
+    expect(localStorage.getItem('smashset.phaseGroup')).toBeNull();
+  });
+
+  it('returns to sign-in when a poll comes back 401 instead of retrying it forever', async () => {
+    fetchOpenSetsMock.mockRejectedValue(apiFailure(401, 'Not signed in'));
+    render(<App />);
+
+    expect(await screen.findByRole('button', { name: /sign in with start\.gg/i })).toBeInTheDocument();
+  });
+});
+
+describe('App — unreachable server', () => {
+  const fetchOpenSetsMock = vi.mocked(fetchOpenSets);
+
+  beforeEach(() => {
+    localStorage.clear();
+    seedEvent();
+    seedPool();
+    fetchMeMock.mockResolvedValue({ user: { id: 1, displayName: 'FireSlam23' } });
+    resetApiDefaults();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    fetchMeMock.mockReset();
+    fetchOpenSetsMock.mockReset();
+  });
+
+  it('shows a timeout as an error without signing the TO out mid-tournament', async () => {
+    fetchOpenSetsMock.mockRejectedValue(apiFailure(0, 'Timed out reaching the server. Check your connection.'));
+    render(<App />);
+
+    expect(await screen.findByText(/timed out reaching the server/i)).toBeInTheDocument();
+    // Only a 401 ends the session. A flaky connection must not throw a TO
+    // back to the sign-in screen in the middle of running a bracket.
+    expect(screen.queryByRole('button', { name: /sign in with start\.gg/i })).not.toBeInTheDocument();
+    expect(localStorage.getItem('smashset.event')).not.toBeNull();
+  });
+
+  it('clears the error once the connection recovers', async () => {
+    vi.useFakeTimers();
+    fetchOpenSetsMock.mockRejectedValueOnce(apiFailure(0));
+    render(<App />);
+    await flushTimers();
+    expect(screen.getByText(/could not reach the server/i)).toBeInTheDocument();
+
+    // The poll 4s later succeeds — a transient failure must not leave a
+    // permanent error banner sitting over a working list.
+    await vi.advanceTimersByTimeAsync(4000);
+    await flushTimers();
+
+    expect(screen.queryByText(/could not reach the server/i)).not.toBeInTheDocument();
   });
 });

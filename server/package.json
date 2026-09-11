@@ -7,7 +7,10 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc -p tsconfig.build.json",
     "start": "node dist/index.js",
-    "test": "vitest run"
+    "test": "vitest run",
+    "migrate": "tsx src/db/migrate-cli.ts",
+    "test:contract": "RUN_CONTRACT_TESTS=1 vitest run src/startgg.contract.test.ts",
+    "typecheck": "tsc --noEmit"
   },
   "keywords": [],
   "author": "",

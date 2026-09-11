@@ -1,0 +1,48 @@
+name: start.gg contract canary
+
+# Every other test in this repo mocks start.gg, so none of them can notice
+# start.gg changing underneath us. This one talks to the real API and checks
+# the assumptions the app is built on: how much a query costs, that an
+# oversized request is still rejected with a parseable object count, and that
+# a score string still parses.
+#
+# It is deliberately NOT part of CI and does not gate anything — start.gg being
+# down or rate limiting us is not a reason to block a merge. It runs on a
+# schedule and shouts when reality drifts.
+on:
+  schedule:
+    # 13:17 UTC daily. Off the hour on purpose: scheduled jobs bunch up on
+    # round times and get queued.
+    - cron: '17 13 * * *'
+  workflow_dispatch:
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    env:
+      RUN_CONTRACT_TESTS: '1'
+      STARTGG_API_KEY: ${{ secrets.STARTGG_API_KEY }}
+      # The contract test never touches Postgres, but env.ts validates the full
+      # set at import. A DATABASE_URL that is never connected to is fine — the
+      # pg Pool only dials on first query.
+      DATABASE_URL: postgres://unused:unused@localhost:5432/unused
+      SESSION_SECRET: canary-session-secret-not-a-real-one
+      TOKEN_ENCRYPTION_KEY: 00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff
+      APP_BASE_URL: http://localhost:3001
+      STARTGG_OAUTH_CLIENT_ID: canary-placeholder
+      STARTGG_OAUTH_CLIENT_SECRET: canary-placeholder
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+
+      - name: Install
+        run: npm ci --prefix server
+
+      - name: Check start.gg still behaves the way the app assumes
+        run: npm run test:contract --prefix server

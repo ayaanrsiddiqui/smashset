@@ -16,7 +16,10 @@ const VIDEOGAME_ID = 1386; // Super Smash Bros. Ultimate
 
 describe('db/mains', () => {
   afterAll(async () => {
-    await pool.query('DELETE FROM player_mains WHERE player_id < 0');
+    // Scoped to this file's own id range: three test files share one
+    // database and vitest runs them in parallel, so a blanket delete of
+    // every negative player id wipes the others' rows mid-test.
+    await pool.query('DELETE FROM player_mains WHERE player_id BETWEEN -99 AND -1');
     await closeTestPool();
   });
 

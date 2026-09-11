@@ -59,4 +59,48 @@ describe('api req() wrapper (via fetchMe/logout/resolveEvent)', () => {
 
     await expect(fetchMe()).rejects.toThrow('Request failed (500)');
   });
+
+  it('carries the HTTP status on the thrown error, so a dead session is distinguishable', async () => {
+    fetchMock.mockResolvedValue({ ok: false, status: 401, json: async () => ({ error: 'Not signed in' }) });
+
+    await expect(fetchMe()).rejects.toMatchObject({ status: 401 });
+  });
+
+  it('sends an abort signal so a request cannot hang forever', async () => {
+    fetchMock.mockResolvedValue({ ok: true, json: async () => ({ user: null }) });
+
+    await fetchMe();
+
+    const [, init] = fetchMock.mock.calls[0];
+    expect(init.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it('reports a timed-out request instead of leaving the caller waiting', async () => {
+    const timeout = new Error('The operation was aborted due to timeout');
+    timeout.name = 'TimeoutError';
+    fetchMock.mockRejectedValue(timeout);
+
+    await expect(fetchMe()).rejects.toThrow(/timed out/i);
+    // Status 0, not 401 — nothing here means the session went away.
+    await expect(fetchMe()).rejects.toMatchObject({ status: 0 });
+  });
+
+  it('reports an unreachable server rather than surfacing a raw fetch rejection', async () => {
+    fetchMock.mockRejectedValue(new TypeError('Failed to fetch'));
+
+    await expect(fetchMe()).rejects.toThrow(/could not reach/i);
+  });
+
+  it('does not turn a non-JSON error body into a parser error', async () => {
+    // What a gateway or rate-limit page actually looks like: HTML, not JSON.
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 502,
+      json: async () => {
+        throw new SyntaxError('Unexpected token < in JSON at position 0');
+      },
+    });
+
+    await expect(fetchMe()).rejects.toThrow('Request failed (502)');
+  });
 });

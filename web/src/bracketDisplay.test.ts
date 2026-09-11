@@ -98,8 +98,19 @@ describe('priorResultFor', () => {
     expect(priorResultFor(s)).toBeNull();
   });
 
-  it('returns null (defensively) for a "completed" set missing a winnerId or a score', () => {
+  it('returns null (defensively) for a "completed" set with no winnerId', () => {
     expect(priorResultFor(set({ state: 3, winnerId: null, slots: [slot(101, 2), slot(102, 0)] }))).toBeNull();
-    expect(priorResultFor(set({ state: 3, winnerId: 101, slots: [slot(101, null), slot(102, 0)] }))).toBeNull();
+  });
+
+  it('still reports a scoreless result, so a disqualification keeps its overwrite warning', () => {
+    // start.gg gives a DQ a real winner but no score at all. Dropping the
+    // warning here would leave a TO overwriting a recorded result with no
+    // indication one existed — and a DQ is among the likeliest to be corrected.
+    expect(priorResultFor(set({ state: 3, winnerId: 101, slots: [slot(101, null), slot(102, null)] }))).toEqual({
+      winnerName: 'P101',
+      loserName: 'P102',
+      winnerScore: null,
+      loserScore: null,
+    });
   });
 });

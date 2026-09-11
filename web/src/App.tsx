@@ -18,6 +18,7 @@ import {
   fetchAccount,
   updateTopXBo5,
   logout,
+  ApiError,
 } from './api';
 import { fuzzyMatchSets } from './fuzzy';
 import { bracketSetById, isNotReady, priorResultFor, slotLabel } from './bracketDisplay';
@@ -105,7 +106,11 @@ export default function App() {
     if (!user) return;
     fetchAccount()
       .then(setAccount)
-      .catch(() => setAccountError(true));
+      .catch((err) => {
+        if (handledAuthError(err)) return;
+        setAccountError(true);
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
   function handleResolved(e: EventInfo) {
@@ -117,18 +122,23 @@ export default function App() {
     if (event) localStorage.setItem(POOL_STORAGE_KEY, JSON.stringify({ eventId: event.id, phaseGroupId: id }));
     setPhaseGroupIdState(id);
     setPickingPool(false);
+    // Drop the pool being switched away from, so its sets aren't briefly
+    // listed — and reportable — under the newly chosen one.
+    setSets([]);
+    setBracketGroup(null);
   }
 
   // The event picker (Settings) already resolves an event; this resolves
   // which of its pools/brackets to actually work with — skipped entirely
   // (auto-picked) when there's only one, which is the common case.
   useEffect(() => {
-    if (!event) return;
+    if (!user || !event) return;
     setPhaseGroups(null);
     setPhaseGroupIdState(null);
     fetchPhaseGroups(event.id)
       .then(({ phaseGroups }) => {
         setPhaseGroups(phaseGroups);
+        setLoadError(null);
         if (phaseGroups.length === 1) {
           pickPool(phaseGroups[0].id);
           return;
@@ -145,9 +155,17 @@ export default function App() {
           // nothing had been saved, so PoolPicker shows as usual.
         }
       })
-      .catch((err) => setLoadError(err instanceof Error ? err.message : 'Failed to load phase groups'));
+      .catch((err) => {
+        if (handledAuthError(err)) return;
+        // An empty list is the one pre-list state that renders something the
+        // TO can act on (the message below, plus a way back). Leaving
+        // phaseGroups null would strand them on a blank splash screen with
+        // the error set but nothing rendering it.
+        setLoadError(err instanceof Error ? err.message : 'Failed to load phase groups');
+        setPhaseGroups([]);
+      });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [event]);
+  }, [user, event]);
 
   // The one place a toast gets shown and cleared — every call site below
   // (and ReportPanel, via the onNotify prop) goes through this instead of
@@ -171,32 +189,48 @@ export default function App() {
     }
   }
 
+  // Everything scoped to a signed-in session, cleared together. Leaving the
+  // event and pool behind would drop the next person to sign in on this
+  // device straight into the previous TO's tournament, and leaving
+  // phaseGroupId set would keep both polls running against it.
+  // Deliberately does NOT touch localStorage. A session can end without the TO
+  // choosing it — an expired cookie mid-tournament — and making them re-find
+  // their event after signing back in would be its own small disaster.
+  // Forgetting the event is specific to signing out; see handleSignOut.
+  function endSession() {
+    setUser(null);
+    setEvent(null);
+    setPhaseGroups(null);
+    setPhaseGroupIdState(null);
+    setSets([]);
+    setBracketGroup(null);
+    setSelectedSet(null);
+    setAccount(null);
+  }
+
   function handleSignOut() {
     setShowAccount(false);
-    logout().finally(() => setUser(null));
+    // Signing out is a choice, so the remembered event and pool go too —
+    // otherwise the next person to sign in on a shared venue device lands
+    // straight in the previous TO's tournament.
+    localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(POOL_STORAGE_KEY);
+    // Local state flips first so the UI can't sit on a live-looking session
+    // while a slow logout round trip is still in the air.
+    endSession();
+    logout().catch(() => {});
   }
 
-  async function refreshSets(phaseGroupId: number) {
-    try {
-      const { sets } = await fetchOpenSets(phaseGroupId);
-      setSets(sets);
-      setLoadError(null);
-    } catch (err) {
-      setLoadError(err instanceof Error ? err.message : 'Failed to load sets');
+  // A 401 means the session is gone server-side — expired, revoked, or signed
+  // out on another device. Returning to sign-in is the only thing a TO can
+  // act on, and it stops the polls that would otherwise retry the same 401
+  // every few seconds for as long as the tab stays open.
+  function handledAuthError(err: unknown): boolean {
+    if (err instanceof ApiError && err.status === 401) {
+      endSession();
+      return true;
     }
-  }
-
-  // Polled separately from refreshSets (different endpoint, different
-  // shape) but on the same cadence — powers the read-only Completed/Not
-  // ready sections below, which the fast-path open-sets list can't (it
-  // deliberately excludes both categories).
-  async function refreshBracket(phaseGroupId: number) {
-    try {
-      setBracketGroup(await fetchBracket(phaseGroupId));
-      setBracketLoadError(null);
-    } catch (err) {
-      setBracketLoadError(err instanceof Error ? err.message : 'Failed to load completed/not-ready sets');
-    }
+    return false;
   }
 
   useEffect(() => {
@@ -209,21 +243,60 @@ export default function App() {
       .catch(() => setStages([]));
   }, [event]);
 
+  // `cancelled` covers both halves of the same problem: the interval stops
+  // when the effect tears down, and a response already in flight at that
+  // moment is dropped instead of writing the old pool's sets over the new
+  // pool's — or writing anything at all once the session has ended.
   useEffect(() => {
-    if (phaseGroupId === null || selectedSet) return;
-    refreshSets(phaseGroupId);
-    const interval = setInterval(() => refreshSets(phaseGroupId), POLL_MS);
-    return () => clearInterval(interval);
+    if (!user || phaseGroupId === null || selectedSet || pickingPool) return;
+    const id = phaseGroupId;
+    let cancelled = false;
+    const run = async () => {
+      try {
+        const { sets } = await fetchOpenSets(id);
+        if (cancelled) return;
+        setSets(sets);
+        setLoadError(null);
+      } catch (err) {
+        if (cancelled || handledAuthError(err)) return;
+        setLoadError(err instanceof Error ? err.message : 'Failed to load sets');
+      }
+    };
+    run();
+    const interval = setInterval(run, POLL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phaseGroupId, selectedSet]);
+  }, [user, phaseGroupId, selectedSet, pickingPool]);
 
+  // Polled separately from the open-sets list (different endpoint, different
+  // shape) but on the same cadence — powers the read-only Completed/Not ready
+  // sections below, which the fast-path list can't (it excludes both).
   useEffect(() => {
-    if (phaseGroupId === null || selectedSet) return;
-    refreshBracket(phaseGroupId);
-    const interval = setInterval(() => refreshBracket(phaseGroupId), POLL_MS);
-    return () => clearInterval(interval);
+    if (!user || phaseGroupId === null || selectedSet || pickingPool) return;
+    const id = phaseGroupId;
+    let cancelled = false;
+    const run = async () => {
+      try {
+        const group = await fetchBracket(id);
+        if (cancelled) return;
+        setBracketGroup(group);
+        setBracketLoadError(null);
+      } catch (err) {
+        if (cancelled || handledAuthError(err)) return;
+        setBracketLoadError(err instanceof Error ? err.message : 'Failed to load completed/not-ready sets');
+      }
+    };
+    run();
+    const interval = setInterval(run, POLL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phaseGroupId, selectedSet]);
+  }, [user, phaseGroupId, selectedSet, pickingPool]);
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
@@ -301,6 +374,13 @@ export default function App() {
     localStorage.removeItem(STORAGE_KEY);
     localStorage.removeItem(POOL_STORAGE_KEY);
     setEvent(null);
+    // The pool belongs to the event being abandoned. Without clearing it both
+    // polls keep running against it from the event picker, and its sets stay
+    // rendered — and reportable — under whatever event is chosen next.
+    setPhaseGroups(null);
+    setPhaseGroupIdState(null);
+    setSets([]);
+    setBracketGroup(null);
   }
 
   if (phaseGroups === null) return <div className="settings-screen"><h1>SmashSet</h1></div>;
@@ -309,7 +389,7 @@ export default function App() {
     return (
       <div className="settings-screen">
         <h1>SmashSet</h1>
-        <p className="error">This event has no brackets yet.</p>
+        <p className="error">{loadError ?? 'This event has no brackets yet.'}</p>
         <button onClick={backToEventPicker}>back</button>
       </div>
     );
@@ -427,6 +507,12 @@ export default function App() {
     return (
       <div className="app-shell">
         <ReportPanel
+          // Remounts when the set changes so the score/character initializers
+          // re-read priorDetail. Without it, clicking a second completed set
+          // while the first one's detail fetch is still in flight leaves the
+          // panel showing the new set's players pre-filled with the old set's
+          // games — one confirm away from reporting the wrong result.
+          key={selectedSet.id}
           set={selectedSet}
           // Search-query match wins when there is one (the usual reporting
           // flow); otherwise, correcting an already-decided set should
@@ -441,11 +527,12 @@ export default function App() {
           onNotify={notify}
           onDone={() => {
             notify(`Reported ${selectedSet.entrants.map((e) => e.name).join(' vs ')}`, 'success');
+            // Clearing selectedSet re-arms both poll effects, which refresh
+            // immediately — calling them here too just doubled every report's
+            // start.gg traffic.
             setSelectedSet(null);
             setPriorDetail(null);
             setQuery('');
-            refreshSets(phaseGroupId);
-            refreshBracket(phaseGroupId);
           }}
           onCancel={() => {
             setSelectedSet(null);

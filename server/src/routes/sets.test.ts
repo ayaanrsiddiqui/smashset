@@ -8,8 +8,13 @@ import { SESSION_COOKIE_NAME } from '../middleware/auth.js';
 import { closeTestPool } from '../test-helpers.js';
 
 const gqlMock = vi.fn();
-vi.mock('../startgg.js', () => ({
+// Only the two request functions are stubbed; the real error classes are kept
+// so the bracket pager's instanceof check against StartggComplexityError still
+// means something in tests.
+vi.mock('../startgg.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../startgg.js')>()),
   gql: (...args: unknown[]) => gqlMock(...args),
+  gqlWithCost: async (...args: unknown[]) => ({ data: await gqlMock(...args), complexity: null }),
 }));
 
 // Imported after the mock is registered so app.js's import graph — sets.js ->
@@ -17,6 +22,7 @@ vi.mock('../startgg.js', () => ({
 // mocked gql instead of hitting start.gg for real. Same ordering
 // middleware/auth.test.ts already uses, for the same reason.
 const { createApp } = await import('../app.js');
+const { StartggComplexityError } = await import('../startgg.js');
 const app = createApp();
 
 const PREFIX = `test-sets-route-${Date.now()}-`;
@@ -89,11 +95,11 @@ describe('GET /phase-group/:phaseGroupId/open-sets — auto-main integration', (
     // Users cleanup + closeTestPool() happen once, in the last describe
     // block in this file (below) — the pool is a shared module-level
     // singleton, so closing it here would break that later block.
-    await pool.query('DELETE FROM player_mains WHERE player_id < 0');
+    await pool.query('DELETE FROM player_mains WHERE player_id = ANY($1)', [[CACHED_PLAYER_ID, UNCACHED_PLAYER_ID]]);
   });
 
   it('attaches suggestedMain (with confidence) for a cached player, omits it for an uncached one, and includes playerId', async () => {
-    await pool.query('DELETE FROM player_mains WHERE player_id < 0');
+    await pool.query('DELETE FROM player_mains WHERE player_id = ANY($1)', [[CACHED_PLAYER_ID, UNCACHED_PLAYER_ID]]);
     await pool.query(
       `INSERT INTO player_mains (player_id, videogame_id, character_id, games_tallied, sets_considered)
        VALUES ($1, $2, $3, $4, $5)`,
@@ -126,7 +132,7 @@ describe('GET /phase-group/:phaseGroupId/open-sets — auto-main integration', (
   });
 
   it('a background lookup for a real uncached player actually lands in the database as a tombstone when it has no history', async () => {
-    await pool.query('DELETE FROM player_mains WHERE player_id < 0');
+    await pool.query('DELETE FROM player_mains WHERE player_id = ANY($1)', [[CACHED_PLAYER_ID, UNCACHED_PLAYER_ID]]);
     gqlMock.mockImplementation((_token: unknown, query: string) => {
       if (query.includes('PhaseGroupOpenSets')) return Promise.resolve(openSetsFixture());
       if (query.includes('PlayerMainHistory')) return Promise.resolve(emptyPlayerHistory());
@@ -148,7 +154,7 @@ describe('GET /phase-group/:phaseGroupId/open-sets — auto-main integration', (
   });
 
   it('a pre-existing tombstone (confirmed no main) is distinguishable on the wire from "still computing"', async () => {
-    await pool.query('DELETE FROM player_mains WHERE player_id < 0');
+    await pool.query('DELETE FROM player_mains WHERE player_id = ANY($1)', [[CACHED_PLAYER_ID, UNCACHED_PLAYER_ID]]);
     await pool.query(
       `INSERT INTO player_mains (player_id, videogame_id, character_id, games_tallied, sets_considered)
        VALUES ($1, $2, NULL, 0, 5)`,
@@ -173,7 +179,7 @@ describe('GET /phase-group/:phaseGroupId/open-sets — auto-main integration', (
   });
 
   it('does not block the HTTP response on the background lookup', async () => {
-    await pool.query('DELETE FROM player_mains WHERE player_id < 0');
+    await pool.query('DELETE FROM player_mains WHERE player_id = ANY($1)', [[CACHED_PLAYER_ID, UNCACHED_PLAYER_ID]]);
     const releasers: ((v: unknown) => void)[] = [];
     const pendingPlayerHistory = () =>
       new Promise((resolve) => {
@@ -204,6 +210,10 @@ describe('GET /phase-group/:phaseGroupId/open-sets — auto-main integration', (
   });
 });
 
+// The bracket endpoint now makes two queries with different shapes: a cheap
+// "live" one it polls, and an expensive "structure" one for cross-phase wiring
+// on a slower clock. Scores arrive as start.gg's rendered displayScore string
+// rather than a standing object, since a scalar costs a fraction as much.
 function bracketFixture() {
   return {
     phaseGroup: {
@@ -212,10 +222,10 @@ function bracketFixture() {
       bracketType: 'DOUBLE_ELIMINATION',
       phase: { name: 'Bracket' },
       sets: {
-        pageInfo: { totalPages: 1 },
+        pageInfo: { total: 3, totalPages: 1 },
         nodes: [
           {
-            // Completed: both slots resolved, real scores, a winner.
+            // Completed: both slots resolved, a real score, a winner.
             id: 7001,
             identifier: 'A',
             round: 1,
@@ -223,32 +233,10 @@ function bracketFixture() {
             state: 3,
             winnerId: 8001,
             lPlacement: 9,
-            // This set's winner qualifies straight into a later "Top 8"
-            // phase (a pool's terminal match); its loser's placement isn't
-            // itself seeded anywhere further.
-            winnerProgressionSeed: { phase: { name: 'Top 8' } },
-            loserProgressionSeed: null,
+            displayScore: 'Winner Player 2 - Loser Player 0',
             slots: [
-              {
-                entrant: { id: 8001, name: 'Winner Player' },
-                prereqType: 'seed',
-                prereqId: '111',
-                prereqPlacement: null,
-                standing: { stats: { score: { value: 2 } } },
-                // Freshly seeded into this phaseGroup, and that seed
-                // itself came from a pool in an earlier phase.
-                seed: { progressionSource: { originPhase: { name: 'Pools' }, originPhaseGroup: { displayIdentifier: 'Pool B' } } },
-              },
-              {
-                entrant: { id: 8002, name: 'Loser Player' },
-                prereqType: 'seed',
-                prereqId: '112',
-                prereqPlacement: null,
-                standing: { stats: { score: { value: 0 } } },
-                // Seeded directly from the event's initial registration —
-                // no earlier phase to have progressed from.
-                seed: { progressionSource: null },
-              },
+              { entrant: { id: 8001, name: 'Winner Player' }, prereqType: 'seed', prereqId: '111', prereqPlacement: null },
+              { entrant: { id: 8002, name: 'Loser Player' }, prereqType: 'seed', prereqId: '112', prereqPlacement: null },
             ],
           },
           {
@@ -260,25 +248,10 @@ function bracketFixture() {
             state: 1,
             winnerId: null,
             lPlacement: null,
-            winnerProgressionSeed: null,
-            loserProgressionSeed: null,
+            displayScore: null,
             slots: [
-              {
-                entrant: { id: 8001, name: 'Winner Player' },
-                prereqType: 'set',
-                prereqId: '7001',
-                prereqPlacement: 1,
-                standing: { stats: { score: { value: null } } },
-                seed: null,
-              },
-              {
-                entrant: null,
-                prereqType: 'set',
-                prereqId: '7099',
-                prereqPlacement: 1,
-                standing: null,
-                seed: null,
-              },
+              { entrant: { id: 8001, name: 'Winner Player' }, prereqType: 'set', prereqId: '7001', prereqPlacement: 1 },
+              { entrant: null, prereqType: 'set', prereqId: '7099', prereqPlacement: 1 },
             ],
           },
           {
@@ -291,10 +264,40 @@ function bracketFixture() {
             state: 1,
             winnerId: null,
             lPlacement: null,
-            winnerProgressionSeed: null,
-            loserProgressionSeed: null,
-            slots: [{ entrant: { id: 8005, name: 'Orphan' }, prereqType: 'seed', prereqId: '115', prereqPlacement: null, standing: null, seed: null }],
+            displayScore: null,
+            slots: [{ entrant: { id: 8005, name: 'Orphan' }, prereqType: 'seed', prereqId: '115', prereqPlacement: null }],
           },
+        ],
+      },
+    },
+  };
+}
+
+function structureFixture() {
+  return {
+    phaseGroup: {
+      id: 1,
+      displayIdentifier: '1',
+      bracketType: 'DOUBLE_ELIMINATION',
+      phase: { name: 'Bracket' },
+      sets: {
+        pageInfo: { total: 3, totalPages: 1 },
+        nodes: [
+          {
+            id: 7001,
+            // This set's winner qualifies straight into a later "Top 8" phase
+            // (a pool's terminal match); its loser goes no further.
+            winnerProgressionSeed: { phase: { name: 'Top 8' } },
+            loserProgressionSeed: null,
+            slots: [
+              // Winner Player's seed here came from a pool in an earlier phase.
+              { seed: { progressionSource: { originPhase: { name: 'Pools' }, originPhaseGroup: { displayIdentifier: 'Pool B' } } } },
+              // Loser Player entered directly — no earlier phase to arrive from.
+              { seed: { progressionSource: null } },
+            ],
+          },
+          { id: 7002, winnerProgressionSeed: null, loserProgressionSeed: null, slots: [{ seed: null }, { seed: null }] },
+          { id: 7004, winnerProgressionSeed: null, loserProgressionSeed: null, slots: [{ seed: null }] },
         ],
       },
     },
@@ -309,7 +312,7 @@ function poolFixture() {
       bracketType: 'ROUND_ROBIN',
       phase: { name: 'Pools' },
       sets: {
-        pageInfo: { totalPages: 1 },
+        pageInfo: { total: 1, totalPages: 1 },
         nodes: [
           {
             id: 7003,
@@ -319,15 +322,26 @@ function poolFixture() {
             state: 1,
             winnerId: null,
             lPlacement: null,
-            winnerProgressionSeed: null,
-            loserProgressionSeed: null,
+            displayScore: null,
             slots: [
-              { entrant: { id: 8003, name: 'Pool Player 1' }, prereqType: 'seed', prereqId: '113', prereqPlacement: null, standing: null, seed: null },
-              { entrant: { id: 8004, name: 'Pool Player 2' }, prereqType: 'seed', prereqId: '114', prereqPlacement: null, standing: null, seed: null },
+              { entrant: { id: 8003, name: 'Pool Player 1' }, prereqType: 'seed', prereqId: '113', prereqPlacement: null },
+              { entrant: { id: 8004, name: 'Pool Player 2' }, prereqType: 'seed', prereqId: '114', prereqPlacement: null },
             ],
           },
         ],
       },
+    },
+  };
+}
+
+function emptyStructure(id: number, displayIdentifier: string, bracketType: string, phaseName: string) {
+  return {
+    phaseGroup: {
+      id,
+      displayIdentifier,
+      bracketType,
+      phase: { name: phaseName },
+      sets: { pageInfo: { total: 0, totalPages: 1 }, nodes: [] },
     },
   };
 }
@@ -366,6 +380,7 @@ describe('GET /phase-group/:phaseGroupId/bracket', () => {
   it("returns one phase group's full bracket — completed scores, TBD slots via prereqSetId/prereqPlacement, and cross-phase progression links", async () => {
     gqlMock.mockImplementation((_token: unknown, query: string) => {
       if (query.includes('PhaseGroupBracket')) return Promise.resolve(bracketFixture());
+      if (query.includes('PhaseGroupProgression')) return Promise.resolve(structureFixture());
       throw new Error(`unexpected query in test: ${query}`);
     });
     const cookie = await makeSignedInCookie('bracket-basic');
@@ -401,6 +416,9 @@ describe('GET /phase-group/:phaseGroupId/bracket', () => {
   it('scopes strictly to the requested phaseGroupId — a different pool never leaks into the response', async () => {
     gqlMock.mockImplementation((_token: unknown, query: string, variables: Record<string, unknown>) => {
       if (query.includes('PhaseGroupBracket') && variables.phaseGroupId === '2') return Promise.resolve(poolFixture());
+      if (query.includes('PhaseGroupProgression') && variables.phaseGroupId === '2') {
+        return Promise.resolve(emptyStructure(2, 'Pool A', 'ROUND_ROBIN', 'Pools'));
+      }
       throw new Error(`unexpected query/variables in test: ${query} ${JSON.stringify(variables)}`);
     });
     const cookie = await makeSignedInCookie('bracket-scoped');
@@ -410,6 +428,74 @@ describe('GET /phase-group/:phaseGroupId/bracket', () => {
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ phaseGroupId: 2, phaseName: 'Pools', displayIdentifier: 'Pool A', bracketType: 'ROUND_ROBIN' });
     expect(res.body.sets.map((s: ResponseBracketSet) => s.id)).toEqual([7003]);
+  });
+
+  it('recovers from a query-complexity rejection by retrying with a strictly smaller page', async () => {
+    const perPages: number[] = [];
+    gqlMock.mockImplementation((_token: unknown, query: string, variables: Record<string, unknown>) => {
+      if (query.includes('PhaseGroupProgression')) return Promise.resolve(structureFixture());
+      if (!query.includes('PhaseGroupBracket')) throw new Error(`unexpected query in test: ${query}`);
+      // Only the live query's page sizes are under test here.
+      const perPage = variables.perPage as number;
+      perPages.push(perPage);
+      // Stands in for a pool whose sets are pricier than the measured
+      // ceiling, so the first page start.gg would accept is much smaller than
+      // the one the cost model picked.
+      if (perPage > 10) {
+        throw new StartggComplexityError(
+          'Your query complexity is too high. A maximum of 1000 objects may be returned by each request. (actual: 1350)',
+          1350
+        );
+      }
+      return Promise.resolve(bracketFixture());
+    });
+    const cookie = await makeSignedInCookie('bracket-complexity');
+
+    const res = await request(app).get('/api/sets/phase-group/42/bracket').set('Cookie', cookie);
+
+    expect(res.status).toBe(200);
+    expect(res.body.sets).toHaveLength(2);
+    expect(perPages.length).toBeGreaterThan(1);
+    // Every retry asks for strictly fewer sets than the last, which is what
+    // makes this terminate rather than loop on the same rejected page size.
+    for (let i = 1; i < perPages.length; i++) expect(perPages[i]).toBeLessThan(perPages[i - 1]);
+    expect(perPages[perPages.length - 1]).toBeLessThanOrEqual(10);
+  });
+
+  it('gives up rather than looping when no page size is small enough', async () => {
+    gqlMock.mockImplementation((_token: unknown, query: string) => {
+      if (query.includes('PhaseGroupProgression')) return Promise.resolve(structureFixture());
+      if (!query.includes('PhaseGroupBracket')) throw new Error(`unexpected query in test: ${query}`);
+      throw new StartggComplexityError('Your query complexity is too high. (actual: 5000)', 5000);
+    });
+    const cookie = await makeSignedInCookie('bracket-complexity-hopeless');
+
+    const res = await request(app).get('/api/sets/phase-group/43/bracket').set('Cookie', cookie);
+
+    expect(res.status).toBe(502);
+  });
+
+  it('caches per user — a repeat fetch is served locally, but another user still goes to start.gg', async () => {
+    gqlMock.mockImplementation((_token: unknown, query: string) => {
+      if (query.includes('PhaseGroupBracket')) return Promise.resolve(bracketFixture());
+      if (query.includes('PhaseGroupProgression')) return Promise.resolve(structureFixture());
+      throw new Error(`unexpected query in test: ${query}`);
+    });
+    const alice = await makeSignedInCookie('bracket-cache-alice');
+    const bob = await makeSignedInCookie('bracket-cache-bob');
+
+    await request(app).get('/api/sets/phase-group/77/bracket').set('Cookie', alice);
+    const afterAlice = gqlMock.mock.calls.length;
+    expect(afterAlice).toBeGreaterThan(0);
+
+    // Alice again, same pool, well inside the TTL — no second trip upstream.
+    await request(app).get('/api/sets/phase-group/77/bracket').set('Cookie', alice);
+    expect(gqlMock.mock.calls.length).toBe(afterAlice);
+
+    // Bob must not be answered from Alice's entry: start.gg decides per token
+    // which tournaments are visible, so his request goes out under his own.
+    await request(app).get('/api/sets/phase-group/77/bracket').set('Cookie', bob);
+    expect(gqlMock.mock.calls.length).toBeGreaterThan(afterAlice);
   });
 
   it('404s when the phase group does not exist', async () => {

@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { gql } from '../startgg.js';
 import { parseScoreShorthand } from '../scoreParser.js';
+import { invalidateSetCaches } from './sets.js';
 
 export const reportRouter = Router();
 
@@ -107,6 +108,9 @@ reportRouter.post('/', async (req, res) => {
       winnerId: body.winnerEntrantId,
       gameData,
     });
+    // Without this the set the TO just reported keeps coming back as open
+    // until the cache expires, so it stays in the list they are working from.
+    invalidateSetCaches();
     res.json({ result: data, games });
   } catch (err) {
     res.status(502).json({ error: err instanceof Error ? err.message : 'Failed to report set' });

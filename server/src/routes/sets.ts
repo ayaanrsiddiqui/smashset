@@ -1,26 +1,68 @@
 import { Router } from 'express';
-import { gql } from '../startgg.js';
+import { gql, gqlWithCost, StartggComplexityError } from '../startgg.js';
 import { getPlayerMains } from '../db/mains.js';
 import { ensureMainComputed } from '../mainLookup.js';
+import { parseDisplayScore } from '../displayScore.js';
 
 export const setsRouter = Router();
 
 const COMPLETED_STATE = 3;
 const STARTED_STATE = 2; // ActivityState.ACTIVE — someone's actively playing this set
-const PER_PAGE = 75;
-const MAX_PAGES = 12;
-// BRACKET_QUERY's per-set payload is much heavier than SETS_QUERY's (full
-// slot/prereq/progression detail vs. just entrants) — start.gg caps each
-// request at 1000 "objects" of query complexity, and 75 sets' worth of that
-// heavier shape alone already exceeds it (confirmed live: actual 1340 at
-// perPage 75, ~18 complexity/set). 50/page stays safely under that. Both
-// queries are now scoped to a single phaseGroup rather than a whole event
-// (see fetchPhaseGroups below), so MAX_PAGES no longer needs to cover a
-// potentially huge multi-pool event — a single pool comfortably fits well
-// under the old ~900-set ceiling.
-const BRACKET_PER_PAGE = 50;
-const BRACKET_MAX_PAGES = 10;
-const CACHE_TTL_MS = 4000;
+// Both of these are deliberately shorter than the client's 4s poll, so every
+// poll goes upstream and nothing a TO sees is stale by design. That is
+// affordable because each fetch is now a single cheap request (see the
+// live/structure split below); these exist only to collapse bursts, such as
+// two requests arriving together. A TO's own report or start is reflected
+// immediately regardless, via invalidateSetCaches.
+const OPEN_SETS_CACHE_TTL_MS = 2_000;
+const BRACKET_CACHE_TTL_MS = 2_000;
+// The exception: cross-phase wiring is the one expensive query left, and it
+// only changes when an upstream pool finishes, so it gets a much slower clock.
+const STRUCTURE_CACHE_TTL_MS = 60_000;
+
+// start.gg rejects any request whose response would exceed 1000 objects. The
+// cost tracks rows actually *returned*, not the perPage asked for, so page
+// size is the lever. Each query below states its measured worst-case cost per
+// row and derives its page size from that, rather than hardcoding a number —
+// a bare constant is what broke here before, when new fields were added to
+// BRACKET_QUERY and silently pushed 50 sets past the cap.
+const COMPLEXITY_BUDGET = 900;
+
+function pageSizeFor(baseCost: number, costPerRow: number): number {
+  return Math.max(1, Math.floor((COMPLEXITY_BUDGET - baseCost) / costPerRow));
+}
+
+// Measured live against real brackets on 2026-09-11, and the reason the
+// bracket query is split in two. start.gg charges per object, not per field —
+// `entrant { id }` and `entrant { id name }` cost exactly the same — so the
+// live half, which is scalars plus the two slots and their entrants, settles
+// at ~6 per set no matter how many fields it asks for. That fits any realistic
+// pool in one request. The combined query it replaced cost 21-27 per set.
+const BRACKET_BASE_COST = 3;
+const BRACKET_MAX_COST_PER_SET = 7;
+const BRACKET_PER_PAGE = pageSizeFor(BRACKET_BASE_COST, BRACKET_MAX_COST_PER_SET);
+
+// The structure half is all nested objects, so it is the expensive one: 8 per
+// set in a first-phase bracket where the progression fields are null, up to
+// ~12 in a phase fed by pools where every slot resolves one.
+const STRUCTURE_BASE_COST = 3;
+const STRUCTURE_MAX_COST_PER_SET = 14;
+const STRUCTURE_PER_PAGE = pageSizeFor(STRUCTURE_BASE_COST, STRUCTURE_MAX_COST_PER_SET);
+
+// SETS_QUERY carries no progression or standing detail, so it is far cheaper —
+// but each entrant's participants list scales with team size (~10/set for
+// singles, ~17 for a 3-player team). This is also the one query that does not
+// go through fetchSetsPaged, so a rejection here has no recovery path: the
+// assumed worst case is deliberately set well above any format the app
+// actually supports, rather than at the measured one.
+const SETS_BASE_COST = 4;
+const SETS_MAX_COST_PER_SET = 24;
+const PER_PAGE = pageSizeFor(SETS_BASE_COST, SETS_MAX_COST_PER_SET);
+
+// A ceiling on sets, never on pages: page count depends on the page size in
+// use, which shrinks at runtime when start.gg rejects a page as too complex.
+const MAX_SETS = 700;
+const MAX_PAGES = Math.ceil(MAX_SETS / PER_PAGE);
 
 export interface PhaseGroupSummary {
   id: number;
@@ -116,7 +158,11 @@ export interface OpenSet {
   entrants: OpenSetEntrant[];
 }
 
-interface RawBracketSet {
+// The half of a bracket that changes while a tournament runs. Everything here
+// is either a scalar on the set or one of its two slots/entrants, which is why
+// it costs ~6 objects per set against the ~21-27 the single combined query
+// used to — see BRACKET_LIVE_QUERY.
+interface RawLiveSet {
   id: number | string;
   identifier: string;
   round: number;
@@ -124,12 +170,9 @@ interface RawBracketSet {
   state: number;
   winnerId: number | null;
   lPlacement: number | null;
-  // Present only on a set whose winner/loser placement is itself seeded
-  // into a *later* phase (a pool's terminal matches feeding the next
-  // bracket) — null for a set whose result only matters within this same
-  // phaseGroup.
-  winnerProgressionSeed: { phase: { name: string } } | null;
-  loserProgressionSeed: { phase: { name: string } } | null;
+  // Rendered result string ("Name 3 - Other 1", or "DQ"), parsed into per-slot
+  // scores. A scalar, unlike the standing.stats.score objects it replaces.
+  displayScore: string | null;
   slots: {
     entrant: { id: number; name: string } | null;
     // "set" | "seed" | "bye" — only "set" ever resolves to another node in
@@ -141,7 +184,21 @@ interface RawBracketSet {
     // Final's two slots are both prereqPlacement 1 — winner of Winners
     // Final, winner of Losers Final).
     prereqPlacement: number | null;
-    standing: { stats: { score: { value: number | null } | null } | null } | null;
+  }[];
+}
+
+// The cross-phase wiring, which is a property of how the bracket was built
+// rather than of how it is going. Fetched on its own slow clock because it is
+// the expensive half — every field here is a nested object.
+interface RawStructureSet {
+  id: number | string;
+  // Present only on a set whose winner/loser placement is itself seeded
+  // into a *later* phase (a pool's terminal matches feeding the next
+  // bracket) — null for a set whose result only matters within this same
+  // phaseGroup.
+  winnerProgressionSeed: { phase: { name: string } } | null;
+  loserProgressionSeed: { phase: { name: string } } | null;
+  slots: {
     // Only meaningful when prereqType is "seed" — the seed this slot was
     // freshly filled from, whose progressionSource (present only if that
     // seed was itself produced by an earlier phase, e.g. a pool feeding a
@@ -155,15 +212,15 @@ interface RawBracketSet {
   }[];
 }
 
-interface BracketQueryResult {
+interface SetsPage<N> {
   phaseGroup: {
     id: number;
     displayIdentifier: string;
     bracketType: string;
     phase: { name: string };
     sets: {
-      pageInfo: { totalPages: number };
-      nodes: RawBracketSet[];
+      pageInfo: { total: number | null; totalPages: number };
+      nodes: N[];
     };
   } | null;
 }
@@ -259,14 +316,20 @@ const START_SET_MUTATION = /* GraphQL */ `
   }
 `;
 
-// Unlike SETS_QUERY above, deliberately no filters.hideEmpty and no skipping
-// of completed/placeholder sets below — this powers the full bracket
-// (completed scores, and not-yet-reachable "winner of X" slots), which needs
-// the whole tree, not just what's currently reportable. No sortType either,
-// for the same eventual-consistency caution as SETS_QUERY — this endpoint
-// doesn't depend on API return order since every consumer sorts by round/
-// identifier itself.
-const BRACKET_QUERY = /* GraphQL */ `
+// Split in two on purpose. start.gg charges per object returned, and the two
+// halves of a bracket have very different shapes and very different refresh
+// needs: what is happening right now is almost all scalars, while the
+// cross-phase wiring is all nested objects but barely changes.
+//
+// Neither uses filters.hideEmpty or skips completed sets — the bracket needs
+// the whole tree, including not-yet-reachable "winner of X" slots. No sortType
+// either, for the same eventual-consistency caution as SETS_QUERY; every
+// consumer sorts by round/identifier itself.
+
+// ~6 objects per set, so a pool of any realistic size comes back in a single
+// request. displayScore stands in for standing.stats.score, which alone cost
+// 10 objects per set — about half of what a bracket page used to cost.
+const BRACKET_LIVE_QUERY = /* GraphQL */ `
   query PhaseGroupBracket($phaseGroupId: ID!, $page: Int!, $perPage: Int!) {
     phaseGroup(id: $phaseGroupId) {
       id
@@ -277,6 +340,7 @@ const BRACKET_QUERY = /* GraphQL */ `
       }
       sets(page: $page, perPage: $perPage) {
         pageInfo {
+          total
           totalPages
         }
         nodes {
@@ -287,6 +351,42 @@ const BRACKET_QUERY = /* GraphQL */ `
           state
           winnerId
           lPlacement
+          displayScore
+          slots {
+            entrant {
+              id
+              name
+            }
+            prereqType
+            prereqId
+            prereqPlacement
+          }
+        }
+      }
+    }
+  }
+`;
+
+// 8-12 objects per set — the expensive half, and the reason it is not polled.
+// It is not perfectly static: a phase fed by pools gains progressionSource
+// entries as those pools finish, so it refreshes on its own slow clock rather
+// than being fetched once and kept forever.
+const BRACKET_STRUCTURE_QUERY = /* GraphQL */ `
+  query PhaseGroupProgression($phaseGroupId: ID!, $page: Int!, $perPage: Int!) {
+    phaseGroup(id: $phaseGroupId) {
+      id
+      displayIdentifier
+      bracketType
+      phase {
+        name
+      }
+      sets(page: $page, perPage: $perPage) {
+        pageInfo {
+          total
+          totalPages
+        }
+        nodes {
+          id
           winnerProgressionSeed {
             phase {
               name
@@ -298,13 +398,6 @@ const BRACKET_QUERY = /* GraphQL */ `
             }
           }
           slots {
-            entrant {
-              id
-              name
-            }
-            prereqType
-            prereqId
-            prereqPlacement
             seed {
               progressionSource {
                 originPhase {
@@ -315,19 +408,25 @@ const BRACKET_QUERY = /* GraphQL */ `
                 }
               }
             }
-            standing {
-              stats {
-                score {
-                  value
-                }
-              }
-            }
           }
         }
       }
     }
   }
 `;
+
+// Exported for the start.gg contract canary (src/startgg.contract.test.ts),
+// which re-measures these against the live API on a schedule. Every number
+// here came from a real measurement, and a measurement that lives only in a
+// comment is exactly how the query-complexity outage happened — encoding it
+// somewhere a scheduled job can check is the point.
+export const COST_MODEL = {
+  budget: COMPLEXITY_BUDGET,
+  cap: 1000, // start.gg's own hard limit, which `budget` stays under
+  live: { base: BRACKET_BASE_COST, maxPerSet: BRACKET_MAX_COST_PER_SET, query: BRACKET_LIVE_QUERY },
+  structure: { base: STRUCTURE_BASE_COST, maxPerSet: STRUCTURE_MAX_COST_PER_SET, query: BRACKET_STRUCTURE_QUERY },
+  openSets: { base: SETS_BASE_COST, maxPerSet: SETS_MAX_COST_PER_SET, query: SETS_QUERY },
+} as const;
 
 interface OpenSetsResult {
   sets: OpenSet[];
@@ -336,9 +435,27 @@ interface OpenSetsResult {
 
 const cache = new Map<string, { at: number; result: OpenSetsResult }>();
 
-async function fetchOpenSets(accessToken: string, phaseGroupId: string): Promise<OpenSetsResult> {
-  const cached = cache.get(phaseGroupId);
-  if (cached && Date.now() - cached.at < CACHE_TTL_MS) {
+// Keyed by user as well as pool. These responses are fetched with one user's
+// start.gg token, and start.gg decides per token which tournaments are
+// visible — so a pool-only key would let one TO's cached bracket answer
+// another TO's request for a tournament start.gg would not have shown them.
+function cacheKey(userId: number, phaseGroupId: string): string {
+  return `${userId}:${phaseGroupId}`;
+}
+
+// Cleared wholesale on any mutation: reporting or starting a set changes what
+// every viewer's list and bracket should show, and a TO mutates a handful of
+// times a minute — far too rarely for the extra refetch to cost anything next
+// to serving a result the TO already knows is out of date.
+export function invalidateSetCaches(): void {
+  cache.clear();
+  bracketCache.clear();
+}
+
+async function fetchOpenSets(accessToken: string, userId: number, phaseGroupId: string): Promise<OpenSetsResult> {
+  const key = cacheKey(userId, phaseGroupId);
+  const cached = cache.get(key);
+  if (cached && Date.now() - cached.at < OPEN_SETS_CACHE_TTL_MS) {
     return cached.result;
   }
 
@@ -387,7 +504,7 @@ async function fetchOpenSets(accessToken: string, phaseGroupId: string): Promise
   }
 
   const result: OpenSetsResult = { sets: open, videogameId };
-  cache.set(phaseGroupId, { at: Date.now(), result });
+  cache.set(key, { at: Date.now(), result });
   return result;
 }
 
@@ -396,65 +513,195 @@ async function fetchOpenSets(accessToken: string, phaseGroupId: string): Promise
 // open-sets poll), so it shouldn't share a TTL clock or a key namespace with it.
 const bracketCache = new Map<string, { at: number; result: BracketGroup | null }>();
 
-async function fetchBracketData(accessToken: string, phaseGroupId: string): Promise<BracketGroup | null> {
-  const cached = bracketCache.get(phaseGroupId);
-  if (cached && Date.now() - cached.at < CACHE_TTL_MS) {
+// Progression wiring, on its own much slower clock — it is the expensive half
+// and barely changes. Shared across users: unlike the caches above this holds
+// no entrant or result data, only which phase a slot came from or goes to.
+const structureCache = new Map<string, { at: number; result: Map<string, RawStructureSet> }>();
+
+// The worst per-set cost actually seen, per query and phase group. start.gg
+// reports what every response cost, so this is a measurement rather than an
+// estimate. Only ever raised: a pool that turns out pricier than its measured
+// ceiling permanently shrinks its own page size instead of failing twice.
+const observedCostPerSet = new Map<string, number>();
+
+interface CostModel {
+  /** Namespaces the learned cost, so two queries don't overwrite each other. */
+  name: string;
+  base: number;
+  maxPerRow: number;
+}
+
+/**
+ * Pages through a phaseGroup.sets query, shrinking the page and starting over
+ * if start.gg rejects one as too complex.
+ *
+ * The rejection carries the exact object count the response would have been,
+ * so the real per-row cost is recoverable rather than guessed. That figure is
+ * a floor — a page that returned fewer rows than asked for reads low — so the
+ * next attempt is also forced strictly smaller, which is what guarantees this
+ * terminates. Restarting rather than continuing is required: pages are
+ * offsets, so changing perPage mid-run would skip or repeat sets.
+ */
+async function fetchSetsPaged<N>(
+  accessToken: string,
+  phaseGroupId: string,
+  query: string,
+  cost: CostModel
+): Promise<{ header: NonNullable<SetsPage<N>['phaseGroup']>; nodes: N[] } | null> {
+  const costKey = `${cost.name}:${phaseGroupId}`;
+  let perPage = pageSizeFor(cost.base, Math.max(cost.maxPerRow, observedCostPerSet.get(costKey) ?? 0));
+
+  for (;;) {
+    try {
+      let header: NonNullable<SetsPage<N>['phaseGroup']> | null = null;
+      const nodes: N[] = [];
+      let page = 1;
+      let totalPages = 1;
+
+      // Bounded by sets, not pages. A page ceiling computed from the nominal
+      // page size would silently shrink the bracket whenever a complexity
+      // retry shrank perPage — half the page size, half the sets, no error.
+      while (page <= totalPages && nodes.length < MAX_SETS) {
+        const { data, complexity } = await gqlWithCost<SetsPage<N>>(accessToken, query, { phaseGroupId, page, perPage });
+        const pg = data.phaseGroup;
+        if (!pg) break;
+
+        if (complexity !== null && pg.sets.nodes.length > 0) {
+          const perSet = Math.ceil((complexity - cost.base) / pg.sets.nodes.length);
+          observedCostPerSet.set(costKey, Math.max(observedCostPerSet.get(costKey) ?? 0, perSet));
+        }
+        if (page === 1 && (pg.sets.pageInfo.total ?? 0) > MAX_SETS) {
+          console.warn(
+            `[bracket] phaseGroup ${phaseGroupId} has ${pg.sets.pageInfo.total} sets; only the first ${MAX_SETS} will load`
+          );
+        }
+        if (!header) header = pg;
+        totalPages = pg.sets.pageInfo.totalPages;
+        nodes.push(...pg.sets.nodes);
+        page++;
+      }
+
+      return header ? { header, nodes } : null;
+    } catch (err) {
+      if (!(err instanceof StartggComplexityError) || perPage <= 1) throw err;
+      const measured = Math.max(1, Math.ceil((err.actual - cost.base) / perPage));
+      observedCostPerSet.set(costKey, Math.max(observedCostPerSet.get(costKey) ?? 0, measured));
+      perPage = Math.max(1, Math.min(pageSizeFor(cost.base, measured), perPage - 1));
+    }
+  }
+}
+
+async function fetchBracketStructure(accessToken: string, phaseGroupId: string): Promise<Map<string, RawStructureSet>> {
+  const cached = structureCache.get(phaseGroupId);
+  if (cached && Date.now() - cached.at < STRUCTURE_CACHE_TTL_MS) {
     return cached.result;
   }
 
-  let group: BracketGroup | null = null;
-  let page = 1;
-  let totalPages = 1;
-
-  while (page <= totalPages && page <= BRACKET_MAX_PAGES) {
-    const data = await gql<BracketQueryResult>(accessToken, BRACKET_QUERY, { phaseGroupId, page, perPage: BRACKET_PER_PAGE });
-    const pg = data.phaseGroup;
-    if (!pg) break;
-    if (!group) {
-      group = { phaseGroupId: pg.id, phaseName: pg.phase.name, displayIdentifier: pg.displayIdentifier, bracketType: pg.bracketType, sets: [] };
-    }
-    totalPages = pg.sets.pageInfo.totalPages;
-
-    for (const s of pg.sets.nodes) {
-      // Defensive: this app only deals in 1v1 sets; skip anything else
-      // rather than let a malformed node reach the frontend's layout code.
-      if (s.slots.length !== 2) continue;
-
-      const slots = s.slots.map((slot): BracketSlot => {
-        const origin = slot.seed?.progressionSource;
-        return {
-          entrant: slot.entrant,
-          score: slot.standing?.stats?.score?.value ?? null,
-          prereqSetId: slot.prereqType === 'set' ? slot.prereqId : null,
-          prereqPlacement: slot.prereqPlacement === 1 || slot.prereqPlacement === 2 ? slot.prereqPlacement : null,
-          progressionOrigin: origin?.originPhase ? { phaseName: origin.originPhase.name, poolName: origin.originPhaseGroup?.displayIdentifier ?? null } : null,
-        };
-      }) as [BracketSlot, BracketSlot];
-
-      group.sets.push({
-        id: s.id,
-        identifier: s.identifier,
-        round: s.round,
-        fullRoundText: s.fullRoundText,
-        state: s.state,
-        winnerId: s.winnerId,
-        lPlacement: s.lPlacement,
-        slots,
-        winnerAdvancesToPhase: s.winnerProgressionSeed?.phase.name ?? null,
-        loserAdvancesToPhase: s.loserProgressionSeed?.phase.name ?? null,
-      });
-    }
-    page++;
+  // Cross-phase links are decoration on a bracket that renders correctly
+  // without them, so a failure here must never take the bracket down with it.
+  // What it must also not do is retry on every bracket poll: this query is the
+  // expensive one, and the bracket polls 30x more often than this cache
+  // expires. So a failure keeps serving the last good map (or nothing) and is
+  // cached like any other result, which caps a start.gg outage at one attempt
+  // a minute instead of one every two seconds.
+  let result;
+  try {
+    result = await fetchSetsPaged<RawStructureSet>(
+      accessToken,
+      phaseGroupId,
+      BRACKET_STRUCTURE_QUERY,
+      { name: 'structure', base: STRUCTURE_BASE_COST, maxPerRow: STRUCTURE_MAX_COST_PER_SET }
+    );
+  } catch (err) {
+    console.error(`[bracket] progression lookup failed for phaseGroup ${phaseGroupId}:`, err);
+    result = null;
   }
 
-  bracketCache.set(phaseGroupId, { at: Date.now(), result: group });
+  // A null result means the query errored or the phase group came back empty;
+  // either way the previous map is better information than an empty one.
+  if (!result) {
+    const fallback = cached?.result ?? new Map<string, RawStructureSet>();
+    structureCache.set(phaseGroupId, { at: Date.now(), result: fallback });
+    return fallback;
+  }
+
+  const byId = new Map<string, RawStructureSet>();
+  for (const node of result.nodes) byId.set(String(node.id), node);
+  structureCache.set(phaseGroupId, { at: Date.now(), result: byId });
+  return byId;
+}
+
+async function fetchBracketData(accessToken: string, userId: number, phaseGroupId: string): Promise<BracketGroup | null> {
+  const key = cacheKey(userId, phaseGroupId);
+  const cached = bracketCache.get(key);
+  if (cached && Date.now() - cached.at < BRACKET_CACHE_TTL_MS) {
+    return cached.result;
+  }
+
+  const live = await fetchSetsPaged<RawLiveSet>(
+    accessToken,
+    phaseGroupId,
+    BRACKET_LIVE_QUERY,
+    { name: 'live', base: BRACKET_BASE_COST, maxPerRow: BRACKET_MAX_COST_PER_SET }
+  );
+  if (!live) {
+    bracketCache.set(key, { at: Date.now(), result: null });
+    return null;
+  }
+
+  const structure = await fetchBracketStructure(accessToken, phaseGroupId);
+  const pg = live.header;
+  const group: BracketGroup = {
+    phaseGroupId: pg.id,
+    phaseName: pg.phase.name,
+    displayIdentifier: pg.displayIdentifier,
+    bracketType: pg.bracketType,
+    sets: [],
+  };
+
+  for (const s of live.nodes) {
+    // Defensive: this app only deals in 1v1 sets; skip anything else
+    // rather than let a malformed node reach the frontend's layout code.
+    if (s.slots.length !== 2) continue;
+
+    const wiring = structure.get(String(s.id));
+    const scores = parseDisplayScore(s.displayScore, s.slots[0].entrant?.name, s.slots[1].entrant?.name);
+
+    const slots = s.slots.map((slot, i): BracketSlot => {
+      const origin = wiring?.slots?.[i]?.seed?.progressionSource;
+      return {
+        entrant: slot.entrant,
+        score: scores[i],
+        prereqSetId: slot.prereqType === 'set' ? slot.prereqId : null,
+        prereqPlacement: slot.prereqPlacement === 1 || slot.prereqPlacement === 2 ? slot.prereqPlacement : null,
+        progressionOrigin: origin?.originPhase
+          ? { phaseName: origin.originPhase.name, poolName: origin.originPhaseGroup?.displayIdentifier ?? null }
+          : null,
+      };
+    }) as [BracketSlot, BracketSlot];
+
+    group.sets.push({
+      id: s.id,
+      identifier: s.identifier,
+      round: s.round,
+      fullRoundText: s.fullRoundText,
+      state: s.state,
+      winnerId: s.winnerId,
+      lPlacement: s.lPlacement,
+      slots,
+      winnerAdvancesToPhase: wiring?.winnerProgressionSeed?.phase.name ?? null,
+      loserAdvancesToPhase: wiring?.loserProgressionSeed?.phase.name ?? null,
+    });
+  }
+
+  bracketCache.set(key, { at: Date.now(), result: group });
   return group;
 }
 
 setsRouter.get('/phase-group/:phaseGroupId/bracket', async (req, res) => {
   const { phaseGroupId } = req.params;
   try {
-    const group = await fetchBracketData(req.user!.accessToken, phaseGroupId);
+    const group = await fetchBracketData(req.user!.accessToken, req.user!.id, phaseGroupId);
     if (!group) {
       res.status(404).json({ error: 'Phase group not found' });
       return;
@@ -468,7 +715,7 @@ setsRouter.get('/phase-group/:phaseGroupId/bracket', async (req, res) => {
 setsRouter.get('/phase-group/:phaseGroupId/open-sets', async (req, res) => {
   const { phaseGroupId } = req.params;
   try {
-    const { sets, videogameId } = await fetchOpenSets(req.user!.accessToken, phaseGroupId);
+    const { sets, videogameId } = await fetchOpenSets(req.user!.accessToken, req.user!.id, phaseGroupId);
 
     const playerIds = [...new Set(sets.flatMap((s) => s.entrants.map((e) => e.playerId)).filter((id): id is number => id !== null))];
 
@@ -531,7 +778,7 @@ setsRouter.post('/:setId/start', async (req, res) => {
   }
   try {
     await gql<{ markSetInProgress: { id: number } | null }>(req.user!.accessToken, START_SET_MUTATION, { setId });
-    cache.clear(); // force the next open-sets fetch to pick up the new state
+    invalidateSetCaches(); // force the next fetch to pick up the new state
     res.json({ ok: true });
   } catch (err) {
     res.status(502).json({ error: err instanceof Error ? err.message : 'Failed to start set' });

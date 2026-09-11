@@ -32,7 +32,7 @@ async function makeSignedInCookie(): Promise<string> {
 
 describe('POST /api/mains', () => {
   afterAll(async () => {
-    await pool.query('DELETE FROM player_mains WHERE player_id < 0');
+    await pool.query('DELETE FROM player_mains WHERE player_id = $1', [PLAYER_ID]);
     await pool.query('DELETE FROM users WHERE startgg_user_id LIKE $1', [`${PREFIX}%`]);
     await closeTestPool();
   });

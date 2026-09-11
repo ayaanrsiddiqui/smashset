@@ -1,0 +1,74 @@
+name: CI
+
+# Gates the deploy. Railway auto-deploys `main`, and its "Wait for CI" setting
+# is on, so a red run here means the change does not reach smashset.gg.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+
+    # An ephemeral database per run. Local `npm test` currently points at the
+    # production Postgres, which is why the suite has to run files serially and
+    # delete only its own rows; CI gets a throwaway instead.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: smashset_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/smashset_test
+      # Throwaway values: nothing in the suite talks to start.gg or issues a
+      # real session, but env.ts validates all of these at import time.
+      SESSION_SECRET: ci-session-secret-not-a-real-one
+      TOKEN_ENCRYPTION_KEY: 00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff
+      APP_BASE_URL: http://localhost:3001
+      STARTGG_OAUTH_CLIENT_ID: ci-placeholder
+      STARTGG_OAUTH_CLIENT_SECRET: ci-placeholder
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            server/package-lock.json
+            web/package-lock.json
+
+      - name: Install
+        run: npm run install:all
+
+      - name: Apply schema
+        run: npm run migrate
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      # Catches anything that typechecks but won't actually build for prod —
+      # the Vite build runs `tsc -b`, a different config from `tsc --noEmit`.
+      - name: Build
+        run: npm run build --prefix server && npm run build --prefix web

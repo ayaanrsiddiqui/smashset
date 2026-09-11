@@ -1,5 +1,17 @@
-import { describe, expect, it } from 'vitest';
-import { tallyMainCharacter, type RawPlayerSet } from './mainLookup.js';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { ensureMainComputed, tallyMainCharacter, type RawPlayerSet } from './mainLookup.js';
+
+const gqlMock = vi.fn();
+vi.mock('./startgg.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./startgg.js')>()),
+  gql: (...args: unknown[]) => gqlMock(...args),
+}));
+
+const upsertPlayerMainMock = vi.fn();
+vi.mock('./db/mains.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./db/mains.js')>()),
+  upsertPlayerMain: (...args: unknown[]) => upsertPlayerMainMock(...args),
+}));
 
 const PLAYER_ID = 1000;
 
@@ -81,5 +93,39 @@ describe('tallyMainCharacter', () => {
     const result = tallyMainCharacter(sets, PLAYER_ID);
     expect(result?.characterId).not.toBe(999);
     expect(result).toEqual({ characterId: 10, gamesTallied: 3 });
+  });
+});
+
+describe('ensureMainComputed — failure backoff', () => {
+  beforeEach(() => {
+    gqlMock.mockReset();
+    upsertPlayerMainMock.mockReset();
+  });
+
+  it('does not re-fire a failed lookup on the next poll', async () => {
+    gqlMock.mockRejectedValue(new Error('rate limited'));
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    ensureMainComputed('token', 4242, 1386);
+    await vi.waitFor(() => expect(errors).toHaveBeenCalled());
+    expect(gqlMock).toHaveBeenCalledTimes(1);
+
+    // A failed lookup writes no row, so every later poll asks again — which
+    // is what turned a rate limit into a storm that sustained itself.
+    ensureMainComputed('token', 4242, 1386);
+    ensureMainComputed('token', 4242, 1386);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(gqlMock).toHaveBeenCalledTimes(1);
+    errors.mockRestore();
+  });
+
+  it('still looks up a player whose lookup has not failed', async () => {
+    gqlMock.mockResolvedValue({ player: { sets: { nodes: [] } } });
+
+    ensureMainComputed('token', 4343, 1386);
+    await vi.waitFor(() => expect(upsertPlayerMainMock).toHaveBeenCalled());
+
+    expect(gqlMock).toHaveBeenCalledTimes(1);
   });
 });

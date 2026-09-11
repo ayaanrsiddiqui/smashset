@@ -7,7 +7,11 @@
     "dev": "concurrently -n server,web -c green,cyan \"npm run dev --prefix server\" \"npm run dev --prefix web\"",
     "install:all": "npm install --prefix server && npm install --prefix web",
     "build": "npm run install:all && npm run build --prefix server && npm run build --prefix web",
-    "start": "npm start --prefix server"
+    "start": "npm start --prefix server",
+    "test": "npm test --prefix server && npm test --prefix web",
+    "typecheck": "npm run typecheck --prefix server && npm run typecheck --prefix web",
+    "migrate": "npm run migrate --prefix server",
+    "verify": "npm run typecheck && npm test"
   },
   "keywords": [],
   "author": "",

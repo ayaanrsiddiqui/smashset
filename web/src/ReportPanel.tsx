@@ -683,8 +683,11 @@ export function ReportPanel({
 
       {priorResult && (
         <p className="prior-result">
-          Already reported: <strong>{priorResult.winnerName}</strong> def. {priorResult.loserName}{' '}
-          {priorResult.winnerScore}–{priorResult.loserScore} — reporting below will overwrite this.
+          Already reported: <strong>{priorResult.winnerName}</strong> def. {priorResult.loserName}
+          {priorResult.winnerScore !== null && priorResult.loserScore !== null
+            ? ` ${priorResult.winnerScore}–${priorResult.loserScore}`
+            : ''}{' '}
+          — reporting below will overwrite this.
         </p>
       )}
 

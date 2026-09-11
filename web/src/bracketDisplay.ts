@@ -29,7 +29,11 @@ export function priorResultFor(s: BracketSet): PriorResult | null {
   const [a, b] = s.slots;
   const winner = a.entrant?.id === s.winnerId ? a : b;
   const loser = winner === a ? b : a;
-  if (!winner.entrant || !loser.entrant || winner.score === null || loser.score === null) return null;
+  // Scores are deliberately not required. A disqualification has a real winner
+  // but no score at all (start.gg reports it as the bare string "DQ"), and the
+  // overwrite warning matters most there — it is the result a TO is most
+  // likely to be correcting.
+  if (!winner.entrant || !loser.entrant) return null;
   return {
     winnerName: winner.entrant.name,
     loserName: loser.entrant.name,

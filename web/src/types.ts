@@ -111,8 +111,9 @@ export interface BracketGroup {
 export interface PriorResult {
   winnerName: string;
   loserName: string;
-  winnerScore: number;
-  loserScore: number;
+  // Null for a disqualification, which has a winner but no score.
+  winnerScore: number | null;
+  loserScore: number | null;
 }
 
 export interface SetDetailGame {

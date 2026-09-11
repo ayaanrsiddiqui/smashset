@@ -1,12 +1,58 @@
 import type { AccountDetails, BracketGroup, Character, CurrentUser, EventInfo, OpenSet, PhaseGroupSummary, SetDetail, Stage } from './types';
 
+export class ApiError extends Error {
+  // Assigned explicitly rather than as a constructor parameter property: the
+  // web build runs with erasableSyntaxOnly, which rejects syntax that needs a
+  // runtime transform.
+  status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.status = status;
+  }
+}
+
+// Venue wifi drops connections without closing them, and a fetch with no
+// timeout waits forever — the poll that issued it never completes and never
+// retries, so the screen just stops updating with nothing to show for it.
+// Longer than the server's own 20s upstream timeout, on purpose. If the client
+// gave up first, a report that actually succeeded would surface as a failure
+// and a TO would report it again.
+const REQUEST_TIMEOUT_MS = 25_000;
+
 async function req<T>(url: string, opts?: RequestInit): Promise<T> {
-  // Same-origin requests already send cookies by default, but being
-  // explicit removes any ambiguity now that the session cookie matters.
-  const res = await fetch(url, { ...opts, credentials: 'include' });
-  const body = await res.json();
+  let res: Response;
+  try {
+    // Same-origin requests already send cookies by default, but being
+    // explicit removes any ambiguity now that the session cookie matters.
+    res = await fetch(url, { ...opts, credentials: 'include', signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
+  } catch (err) {
+    // Status 0: the request never got an answer at all, so there is no HTTP
+    // status to report and nothing here should look like a signed-out 401.
+    const timedOut = err instanceof Error && err.name === 'TimeoutError';
+    throw new ApiError(
+      timedOut ? 'Timed out reaching the server. Check your connection.' : 'Could not reach the server. Check your connection.',
+      0
+    );
+  }
+  // Gateway errors and rate-limit pages aren't JSON, so parsing before the
+  // status check would throw a parser error and lose the status with it —
+  // and the status is what tells a dead session apart from a failed request.
+  let body: { error?: string } | null = null;
+  let parsed = true;
+  try {
+    body = (await res.json()) as { error?: string } | null;
+  } catch {
+    parsed = false;
+  }
+
   if (!res.ok) {
-    throw new Error(body?.error ?? `Request failed (${res.status})`);
+    throw new ApiError(body?.error ?? `Request failed (${res.status})`, res.status);
+  }
+  // A 200 that isn't JSON is a captive portal or a proxy interstitial, not
+  // data. Returning it would hand callers null to destructure.
+  if (!parsed) {
+    throw new ApiError('Got an unexpected response from the network. Check your connection.', 0);
   }
   return body as T;
 }
