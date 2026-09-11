@@ -48,5 +48,14 @@ export function createApp() {
     app.use(express.static(path.resolve(__dirname, '../../web/dist')));
   }
 
+  // Last: anything a route threw without handling. Without this Express
+  // answers with an HTML stack trace, which the client cannot parse and which
+  // leaks internals outside production.
+  app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+    console.error('[unhandled]', err);
+    if (res.headersSent) return;
+    res.status(500).json({ error: 'Something went wrong on our end. Try again.' });
+  });
+
   return app;
 }

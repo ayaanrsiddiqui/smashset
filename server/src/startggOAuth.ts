@@ -74,6 +74,19 @@ export async function exchangeCodeForTokens(code: string): Promise<TokenResult> 
   return toTokenResult((await res.json()) as TokenResponse);
 }
 
+// Carries the HTTP status so callers can tell a refresh token start.gg has
+// actually rejected (400/401) from start.gg merely being unavailable. Without
+// that distinction the only safe-looking option is to destroy the session,
+// which turns a momentary outage into a TO being signed out mid-tournament.
+export class StartggOAuthError extends Error {
+  status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.status = status;
+  }
+}
+
 export async function refreshAccessToken(refreshToken: string): Promise<TokenResult> {
   const res = await fetch(REFRESH_URL, {
     method: 'POST',
@@ -86,7 +99,7 @@ export async function refreshAccessToken(refreshToken: string): Promise<TokenRes
     }),
   });
   if (!res.ok) {
-    throw new Error(`start.gg token refresh failed (${res.status}): ${await res.text()}`);
+    throw new StartggOAuthError(`start.gg token refresh failed (${res.status}): ${await res.text()}`, res.status);
   }
   return toTokenResult((await res.json()) as TokenResponse);
 }

@@ -75,7 +75,16 @@ authRouter.get('/callback', async (req, res) => {
 
 authRouter.post('/logout', async (req, res) => {
   const sessionId = req.signedCookies?.[SESSION_COOKIE_NAME];
-  if (sessionId) await deleteSession(sessionId);
+  // Cookie first: if deleting the row throws, this used to leave both the
+  // cookie and the session row intact while the UI showed signed-out — so the
+  // next page load was quietly signed back in.
   res.clearCookie(SESSION_COOKIE_NAME);
+  try {
+    if (sessionId) await deleteSession(sessionId);
+  } catch (err) {
+    console.error('[auth] failed to delete session on logout:', err);
+    res.status(500).json({ error: 'Signed out on this device, but the session could not be ended on the server.' });
+    return;
+  }
   res.json({ ok: true });
 });

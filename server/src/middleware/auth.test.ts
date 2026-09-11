@@ -6,13 +6,18 @@ import { createSession, getSessionWithUser } from '../db/sessions.js';
 import { closeTestPool } from '../test-helpers.js';
 
 const refreshAccessTokenMock = vi.fn();
-vi.mock('../startggOAuth.js', () => ({
+// Spreads the real module so StartggOAuthError stays a real class — the
+// refresh-failure handling does an instanceof against it to tell a rejected
+// refresh token from start.gg simply being down.
+vi.mock('../startggOAuth.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../startggOAuth.js')>()),
   refreshAccessToken: (...args: unknown[]) => refreshAccessTokenMock(...args),
 }));
 
 // Imported after the mock is registered so resolveSessionUser/requireAuth
 // pick up the mocked refreshAccessToken instead of hitting start.gg for real.
 const { resolveSessionUser, requireAuth, SESSION_COOKIE_NAME } = await import('./auth.js');
+const { StartggOAuthError } = await import('../startggOAuth.js');
 
 const PREFIX = `test-auth-mw-${Date.now()}-`;
 const idFor = (label: string) => `${PREFIX}${label}`;
@@ -115,7 +120,10 @@ describe('resolveSessionUser', () => {
   it('deletes the session and clears the cookie when the refresh token is dead', async () => {
     const user = await makeTestUser('dead-refresh', 0.5);
     const session = await createSession(user.id);
-    refreshAccessTokenMock.mockRejectedValue(new Error('start.gg token refresh failed (401)'));
+    // A status, not a message: the old plain Error meant any failure —
+    // including a 500 — looked identical to a dead token, and the session was
+    // destroyed either way.
+    refreshAccessTokenMock.mockRejectedValue(new StartggOAuthError('start.gg token refresh failed (401)', 401));
     const res = fakeRes();
 
     const result = await resolveSessionUser(fakeReq(session.id), res);
@@ -145,6 +153,39 @@ describe('resolveSessionUser', () => {
     await resolveSessionUser(fakeReq(session.id), res);
 
     expect(res.cookie).not.toHaveBeenCalled();
+  });
+});
+
+describe('resolveSessionUser — refresh failures', () => {
+  afterEach(() => {
+    refreshAccessTokenMock.mockReset();
+  });
+
+  it('keeps the session and serves the request on the current token when start.gg is merely unavailable', async () => {
+    // Refreshes begin a day before the token expires, so a failure here says
+    // nothing about whether the session is still good. Ending it would sign a
+    // TO out mid-tournament over a start.gg hiccup.
+    refreshAccessTokenMock.mockRejectedValue(new StartggOAuthError('start.gg token refresh failed (500): boom', 500));
+    const user = await makeTestUser('refresh-transient', 12); // inside the margin, not expired
+    const session = await createSession(user.id);
+    const res = fakeRes();
+
+    const resolved = await resolveSessionUser(fakeReq(session.id), res);
+
+    expect(resolved).not.toBeNull();
+    expect(resolved!.accessToken).toBe('access-refresh-transient');
+    expect(res.clearCookie).not.toHaveBeenCalled();
+    expect(await getSessionWithUser(session.id)).not.toBeNull();
+  });
+
+  it('ends the session when the current token has genuinely expired and cannot be renewed', async () => {
+    refreshAccessTokenMock.mockRejectedValue(new StartggOAuthError('start.gg token refresh failed (503)', 503));
+    const user = await makeTestUser('refresh-expired', -1); // already past expiry
+    const session = await createSession(user.id);
+    const res = fakeRes();
+
+    expect(await resolveSessionUser(fakeReq(session.id), res)).toBeNull();
+    expect(await getSessionWithUser(session.id)).toBeNull();
   });
 });
 

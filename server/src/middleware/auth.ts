@@ -1,7 +1,7 @@
 import type { Request, Response, NextFunction } from 'express';
 import { getSessionWithUser, touchSessionExpiry, isPastHalfLife, deleteSession } from '../db/sessions.js';
 import { updateUserTokens } from '../db/users.js';
-import { refreshAccessToken } from '../startggOAuth.js';
+import { refreshAccessToken, StartggOAuthError } from '../startggOAuth.js';
 
 export interface AuthUser {
   id: number;
@@ -54,13 +54,24 @@ export async function resolveSessionUser(req: Request, res: Response): Promise<A
       session.user.refreshToken,
       session.user.tokenExpiresAt
     );
-  } catch {
-    // Refresh token is dead (revoked/expired) — the session can't be
-    // resurrected, so kill it now instead of failing the same way on every
-    // subsequent request.
-    await deleteSession(sessionId);
-    res.clearCookie(SESSION_COOKIE);
-    return null;
+  } catch (err) {
+    // Only start.gg actually rejecting the refresh token means the session is
+    // unrecoverable. Anything else — a 500, a rate limit, a dropped
+    // connection — is temporary, and destroying the session over it would
+    // sign a TO out mid-tournament because start.gg hiccupped.
+    const rejected = err instanceof StartggOAuthError && (err.status === 400 || err.status === 401);
+    // Refreshes start a day before the token actually expires (see
+    // REFRESH_MARGIN_MS), so the current one is almost always still usable.
+    const currentTokenStillValid = session.user.tokenExpiresAt.getTime() > Date.now();
+
+    if (rejected || !currentTokenStillValid) {
+      await deleteSession(sessionId);
+      res.clearCookie(SESSION_COOKIE);
+      return null;
+    }
+
+    console.warn(`[auth] token refresh failed for user ${session.user.id}; continuing on the current token:`, err);
+    accessToken = session.user.accessToken;
   }
 
   if (isPastHalfLife(session.sessionExpiresAt)) {
