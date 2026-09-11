@@ -21,6 +21,7 @@ function set(overrides: Partial<BracketSet> & { slots: [BracketSlot, BracketSlot
     state: 1,
     winnerId: null,
     lPlacement: null,
+    completedAt: null,
     winnerAdvancesToPhase: null,
     loserAdvancesToPhase: null,
     ...overrides,

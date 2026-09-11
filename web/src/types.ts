@@ -90,6 +90,8 @@ export interface BracketSet {
   state: number;
   winnerId: number | null;
   lPlacement: number | null;
+  // Unix seconds, null until finished — orders completed sets most-recent-first.
+  completedAt: number | null;
   slots: [BracketSlot, BracketSlot];
   // The later phase this set's winner/loser placement advances into, if
   // any (a pool's terminal matches) — null when this set's result only

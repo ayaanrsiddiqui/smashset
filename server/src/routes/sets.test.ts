@@ -274,6 +274,7 @@ function bracketFixture() {
             winnerId: 8001,
             lPlacement: 9,
             displayScore: 'Winner Player 2 - Loser Player 0',
+            completedAt: 1789000000,
             slots: [
               { entrant: { id: 8001, name: 'Winner Player' }, prereqType: 'seed', prereqId: '111', prereqPlacement: null },
               { entrant: { id: 8002, name: 'Loser Player' }, prereqType: 'seed', prereqId: '112', prereqPlacement: null },
@@ -289,6 +290,7 @@ function bracketFixture() {
             winnerId: null,
             lPlacement: null,
             displayScore: null,
+            completedAt: null,
             slots: [
               { entrant: { id: 8001, name: 'Winner Player' }, prereqType: 'set', prereqId: '7001', prereqPlacement: 1 },
               { entrant: null, prereqType: 'set', prereqId: '7099', prereqPlacement: 1 },
@@ -305,6 +307,7 @@ function bracketFixture() {
             winnerId: null,
             lPlacement: null,
             displayScore: null,
+            completedAt: null,
             slots: [{ entrant: { id: 8005, name: 'Orphan' }, prereqType: 'seed', prereqId: '115', prereqPlacement: null }],
           },
         ],
@@ -363,6 +366,7 @@ function poolFixture() {
             winnerId: null,
             lPlacement: null,
             displayScore: null,
+            completedAt: null,
             slots: [
               { entrant: { id: 8003, name: 'Pool Player 1' }, prereqType: 'seed', prereqId: '113', prereqPlacement: null },
               { entrant: { id: 8004, name: 'Pool Player 2' }, prereqType: 'seed', prereqId: '114', prereqPlacement: null },

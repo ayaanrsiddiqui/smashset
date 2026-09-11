@@ -33,6 +33,7 @@ function set(
     state: 1,
     winnerId: null,
     lPlacement: null,
+    completedAt: null,
     slots,
     winnerAdvancesToPhase: null,
     loserAdvancesToPhase: null,

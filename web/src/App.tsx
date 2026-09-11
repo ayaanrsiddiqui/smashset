@@ -6,6 +6,7 @@ import { ReportPanel } from './ReportPanel';
 import { HelpModal } from './HelpModal';
 import { AccountModal } from './AccountModal';
 import { Bracket } from './Bracket';
+import { SetPanel } from './SetPanel';
 import {
   startSet,
   fetchBracket,
@@ -21,8 +22,7 @@ import {
   ApiError,
 } from './api';
 import { fuzzyMatchSets } from './fuzzy';
-import { bracketSetById, isNotReady, priorResultFor, slotLabel } from './bracketDisplay';
-import { compareIdentifiers } from './identifierOrder';
+import { bracketSetById, priorResultFor } from './bracketDisplay';
 import type {
   AccountDetails,
   BracketGroup,
@@ -64,7 +64,8 @@ export default function App() {
   const [pickingPool, setPickingPool] = useState(false);
   const [sets, setSets] = useState<OpenSet[]>([]);
   const [bracketGroup, setBracketGroup] = useState<BracketGroup | null>(null);
-  const [view, setView] = useState<'list' | 'bracket'>('list');
+  // Drives whether the floating set panel is expanded; see SetPanel.
+  const [searchFocused, setSearchFocused] = useState(false);
   const [characters, setCharacters] = useState<Character[]>([]);
   const [stages, setStages] = useState<Stage[]>([]);
   const [query, setQuery] = useState('');
@@ -332,7 +333,7 @@ export default function App() {
       // search screen underneath it. The bracket view has no search box or
       // numbered results to target, so these shortcuts are meaningless (and
       // would silently steal focus/keys) while it's showing.
-      if (selectedSet || showHelp || showAccount || view === 'bracket') return;
+      if (selectedSet || showHelp || showAccount) return;
 
       const active = document.activeElement;
       const inField = active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement;
@@ -352,7 +353,7 @@ export default function App() {
       // typing into the search box or the Top X input.
       if (!inField && /^[1-9]$/.test(e.key)) {
         e.preventDefault();
-        const pick = results[Number(e.key) - 1];
+        const pick = visibleResults[Number(e.key) - 1];
         if (pick) selectSet(pick);
         return;
       }
@@ -365,7 +366,7 @@ export default function App() {
       if (e.key === 'ArrowDown') {
         e.preventDefault();
         setRevealed(true);
-        setHighlight((h) => Math.min(h + 1, results.length - 1));
+        setHighlight((h) => Math.min(h + 1, visibleResults.length - 1));
       } else if (e.key === 'ArrowUp') {
         e.preventDefault();
         setRevealed(true);
@@ -375,13 +376,13 @@ export default function App() {
         // highlight (and blurs, so 1-9 hotkeys stop typing into the box)
         // instead of instantly reporting whatever's on top. Once revealed —
         // by that Enter or by an arrow key — Enter selects like normal.
-        if (!revealed && results.length > 1) {
+        if (!revealed && visibleResults.length > 1) {
           e.preventDefault();
           setRevealed(true);
           searchRef.current?.blur();
           return;
         }
-        const pick = results[highlight];
+        const pick = visibleResults[highlight];
         if (pick) selectSet(pick);
       }
     }
@@ -397,9 +398,16 @@ export default function App() {
     .map((s) => (!s.isStarted && startedIds.has(s.id) ? { ...s, isStarted: true } : s))
     .sort((a, b) => Number(b.isStarted) - Number(a.isStarted));
 
+  // Collapsed, the panel is a glance-able queue of what can be started right
+  // now; expanded, it's the full search. Everything below — keyboard picks
+  // included — targets whichever list is actually on screen.
+  const readyToStart = results.filter((s) => !s.isStarted && !s.isPreview);
+  const panelExpanded = searchFocused || query.trim().length > 0;
+  const visibleResults = panelExpanded ? results : readyToStart;
+
   // A single match is unambiguous, so it stays highlighted the same way it
   // always has — only an actual choice among several needs `revealed` first.
-  const showHighlight = results.length <= 1 || revealed;
+  const showHighlight = visibleResults.length <= 1 || revealed;
 
   if (user === undefined) return <div className="settings-screen"><h1>SmashSet</h1></div>;
   if (user === null) return <SignIn />;
@@ -445,8 +453,6 @@ export default function App() {
 
   const allBracketSets = bracketGroup?.sets ?? [];
   const bracketById = bracketSetById(allBracketSets);
-  const completedSets = allBracketSets.filter((s) => s.state === 3).sort((a, b) => compareIdentifiers(a.identifier, b.identifier));
-  const notReadySets = allBracketSets.filter(isNotReady).sort((a, b) => compareIdentifiers(a.identifier, b.identifier));
 
   function selectSet(s: OpenSet) {
     setSelectedSet(s);
@@ -581,7 +587,7 @@ export default function App() {
   }
 
   return (
-    <div className="app-shell">
+    <div className="app-shell unified">
       <header className="app-header">
         <span className="event-name">{event.name}</span>
         <div className="header-controls">
@@ -614,113 +620,68 @@ export default function App() {
         </div>
       </header>
 
-      <div className="segmented-toggle">
-        <button type="button" className={view === 'list' ? 'selected' : ''} onClick={() => setView('list')}>
-          List
-        </button>
-        <button type="button" className={view === 'bracket' ? 'selected' : ''} onClick={() => setView('bracket')}>
-          Bracket
-        </button>
+      <div className="bracket-stage">
+        <Bracket
+          group={bracketGroup}
+          onSelectSet={selectFromBracket}
+          focusedSetId={showHighlight ? (visibleResults[highlight]?.id ?? null) : null}
+        />
       </div>
 
-      {view === 'list' ? (
-        <>
-          <input
-            ref={searchRef}
-            className="search-box"
-            autoFocus
-            value={query}
-            placeholder="Winner's name… (press / to focus, 1-9 to pick)"
-            onChange={(e) => {
-              setQuery(e.target.value);
-              setHighlight(0);
-              setRevealed(false);
+      <SetPanel
+        expanded={panelExpanded}
+        query={query}
+        searchRef={searchRef}
+        onQueryChange={(value) => {
+          setQuery(value);
+          setHighlight(0);
+          setRevealed(false);
+        }}
+        onSearchFocus={() => setSearchFocused(true)}
+        onSearchBlur={() => setSearchFocused(false)}
+        error={loadError ?? bracketLoadError}
+        collapsedLabel={readyToStart.length === 1 ? '1 ready to start' : `${readyToStart.length} ready to start`}
+      >
+        {visibleResults.map((s, i) => (
+          <li
+            key={s.id}
+            className={`${showHighlight && i === highlight ? 'active' : ''} ${s.isStarted ? 'started' : ''}`}
+            // Keeps focus in the search box, so the blur that would collapse
+            // the panel never fires between pressing and releasing on a row.
+            onMouseDown={(e) => e.preventDefault()}
+            onMouseEnter={() => {
+              setRevealed(true);
+              setHighlight(i);
             }}
-          />
-
-          {loadError && <p className="error">{loadError}</p>}
-
-          <ul className="results-list">
-            {results.map((s, i) => (
-              <li
-                key={s.id}
-                className={`${showHighlight && i === highlight ? 'active' : ''} ${s.isStarted ? 'started' : ''}`}
-                onMouseEnter={() => {
-                  setRevealed(true);
-                  setHighlight(i);
+            onClick={() => selectSet(s)}
+          >
+            {i < 9 && <span className="result-num">{i + 1}</span>}
+            <span className="entrant-names">{s.entrants.map((e) => e.name).join(' vs ')}</span>
+            <span className="round-text">
+              {s.fullRoundText}
+              {s.isPreview && ' · bracket not started'}
+              {s.isStarted && ' · started'}
+            </span>
+            {!s.isPreview && !s.isStarted && (
+              <button
+                className="start-btn"
+                disabled={startingIds.has(s.id)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleStart(s);
                 }}
-                onClick={() => selectSet(s)}
               >
-                {i < 9 && <span className="result-num">{i + 1}</span>}
-                <span className="entrant-names">{s.entrants.map((e) => e.name).join(' vs ')}</span>
-                <span className="round-text">
-                  {s.fullRoundText}
-                  {s.isPreview && ' · bracket not started'}
-                  {s.isStarted && ' · started'}
-                </span>
-                {!s.isPreview && !s.isStarted && (
-                  <button
-                    className="start-btn"
-                    disabled={startingIds.has(s.id)}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleStart(s);
-                    }}
-                  >
-                    {startingIds.has(s.id) ? '…' : 'start'}
-                  </button>
-                )}
-              </li>
-            ))}
-            {results.length === 0 && <li className="empty">No open sets match "{query}"</li>}
-          </ul>
-
-          {bracketLoadError && <p className="error">{bracketLoadError}</p>}
-
-          {completedSets.length > 0 && (
-            <details className="set-section">
-              <summary>Completed ({completedSets.length})</summary>
-              <ul className="results-list">
-                {completedSets.map((s) => {
-                  const [a, b] = s.slots;
-                  const winner = a.entrant?.id === s.winnerId ? a : b;
-                  const loser = winner === a ? b : a;
-                  return (
-                    <li key={s.id} onClick={() => selectFromBracket(s)}>
-                      <span className="entrant-names">
-                        <strong>{winner.entrant?.name}</strong> def. {loser.entrant?.name}
-                        {winner.score !== null && loser.score !== null ? ` ${winner.score}–${loser.score}` : ''}
-                      </span>
-                      <span className="round-text">{s.fullRoundText} · tap to correct</span>
-                    </li>
-                  );
-                })}
-              </ul>
-            </details>
-          )}
-
-          {notReadySets.length > 0 && (
-            <details className="set-section">
-              <summary>Not ready ({notReadySets.length})</summary>
-              <ul className="results-list">
-                {notReadySets.map((s) => (
-                  <li key={s.id} className="readonly">
-                    <span className="entrant-names">
-                      {slotLabel(s.slots[0], bracketById)} vs {slotLabel(s.slots[1], bracketById)}
-                    </span>
-                    <span className="round-text">{s.fullRoundText}</span>
-                  </li>
-                ))}
-              </ul>
-            </details>
-          )}
-        </>
-      ) : (
-        <>
-          {bracketLoadError && <p className="error">{bracketLoadError}</p>}
-          <Bracket group={bracketGroup} onSelectSet={selectFromBracket} />
-        </>
-      )}
+                {startingIds.has(s.id) ? '…' : 'start'}
+              </button>
+            )}
+          </li>
+        ))}
+        {visibleResults.length === 0 && (
+          <li className="empty">
+            {panelExpanded ? `No open sets match "${query}"` : 'Nothing ready to start'}
+          </li>
+        )}
+      </SetPanel>
 
       {toast && <div className={`toast toast-${toast.kind}`}>{toast.message}</div>}
       {showHelp && <HelpModal onClose={() => setShowHelp(false)} />}

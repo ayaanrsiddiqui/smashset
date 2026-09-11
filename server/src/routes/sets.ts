@@ -159,6 +159,9 @@ interface RawLiveSet {
   // Rendered result string ("Name 3 - Other 1", or "DQ"), parsed into per-slot
   // scores. A scalar, unlike the standing.stats.score objects it replaces.
   displayScore: string | null;
+  // Unix seconds, set only once a set is actually finished — so it doubles as
+  // a completion marker. Free: a scalar on the node costs nothing.
+  completedAt: number | null;
   slots: {
     entrant: { id: number; name: string } | null;
     // "set" | "seed" | "bye" — only "set" ever resolves to another node in
@@ -245,6 +248,9 @@ export interface BracketSet {
   state: number;
   winnerId: number | null;
   lPlacement: number | null;
+  // Unix seconds, null until the set is finished. Lets the client order
+  // completed sets most-recent-first when a TO searches for one to correct.
+  completedAt: number | null;
   slots: [BracketSlot, BracketSlot];
   // The later phase this set's winner/loser placement advances into, if
   // any (a pool's terminal matches) — null when this set's result is only
@@ -351,6 +357,7 @@ const BRACKET_LIVE_QUERY = /* GraphQL */ `
           winnerId
           lPlacement
           displayScore
+          completedAt
           slots {
             entrant {
               id
@@ -684,6 +691,7 @@ async function fetchBracketData(accessToken: string, userId: number, phaseGroupI
       state: s.state,
       winnerId: s.winnerId,
       lPlacement: s.lPlacement,
+      completedAt: s.completedAt,
       slots,
       winnerAdvancesToPhase: wiring?.winnerProgressionSeed?.phase.name ?? null,
       loserAdvancesToPhase: wiring?.loserProgressionSeed?.phase.name ?? null,

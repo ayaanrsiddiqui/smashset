@@ -205,10 +205,10 @@
 }
 
 .bracket-scroll {
-  width: 100vw;
-  margin-left: calc(50% - 50vw);
-  overflow-x: auto;
+  /* The stage below owns scrolling now; this is just the canvas wrapper. */
   padding: 4px 20px 24px;
+  width: max-content;
+  min-width: 100%;
 }
 
 .bracket-canvas {
@@ -1614,4 +1614,162 @@ kbd {
   .help-mini-search-cursor {
     animation: none;
   }
+}
+
+
+/* ---- Unified bracket view -------------------------------------------------
+   The bracket is the page, and the set list floats over it. One panel
+   component docks to the right edge on a wide screen and to the bottom edge
+   on a narrow one: 22% of a 390px phone is ~95px, narrower than most entrant
+   names, so the side dock is not something a phone can inherit.            */
+
+.app-shell.unified {
+  max-width: none;
+  height: 100dvh;
+  padding: 0;
+  gap: 0;
+  overflow: hidden;
+}
+
+.app-shell.unified .app-header {
+  flex: none;
+  padding: 12px 16px;
+  border-bottom: 1px solid #22252d;
+}
+
+.bracket-stage {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.set-panel {
+  position: fixed;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  background: #171a21;
+  border: 1px solid #2a2e38;
+  border-radius: 12px;
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+}
+
+.set-panel-header {
+  flex: none;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border-bottom: 1px solid #22252d;
+}
+
+.set-panel .search-box {
+  margin: 0;
+  width: 100%;
+}
+
+.set-panel-summary {
+  font-size: 12px;
+  color: #9aa0ac;
+  padding-left: 2px;
+}
+
+.set-panel-error {
+  margin: 8px 10px 0;
+  font-size: 13px;
+}
+
+.set-panel-list {
+  margin: 0;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+
+/* Wide: dock right, full height. Collapsed only needs to be as tall as the
+   ready-to-start queue, so it stops short rather than covering the bracket. */
+@media (min-width: 901px) {
+  .set-panel {
+    top: 68px;
+    right: 16px;
+    bottom: 16px;
+    width: clamp(260px, 22vw, 380px);
+  }
+
+  .set-panel.collapsed {
+    bottom: auto;
+    max-height: min(46vh, 420px);
+  }
+
+  /* Keeps the rightmost bracket column reachable instead of parked under the
+     panel forever. */
+  .bracket-stage {
+    padding-right: clamp(276px, 23vw, 400px);
+  }
+}
+
+/* Narrow: dock bottom, full width — a bottom sheet. */
+@media (max-width: 900px) {
+  .set-panel {
+    left: 8px;
+    right: 8px;
+    bottom: 8px;
+    max-height: 62vh;
+  }
+
+  .set-panel.collapsed {
+    max-height: 40vh;
+  }
+
+  .bracket-stage {
+    padding-bottom: 44vh;
+  }
+}
+
+/* The set highlighted in the list, marked on the bracket too. */
+.bracket-box.focused {
+  outline: 2px solid #6c8cff;
+  outline-offset: 2px;
+  box-shadow: 0 0 0 6px rgba(108, 140, 255, 0.18);
+}
+
+/* The row layout that works in a 640px column doesn't fit a ~280px panel, so
+   inside the panel a row stacks its round label under the names instead of
+   fighting for the same line. */
+.set-panel-list li {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  grid-template-areas:
+    "num name action"
+    "num round action";
+  column-gap: 10px;
+  row-gap: 2px;
+  align-items: center;
+  padding: 10px 12px;
+  font-size: 15px;
+}
+
+.set-panel-list li.empty {
+  display: block;
+  font-size: 14px;
+}
+
+.set-panel-list .result-num {
+  grid-area: num;
+}
+
+.set-panel-list .entrant-names {
+  grid-area: name;
+  line-height: 1.25;
+}
+
+.set-panel-list .round-text {
+  grid-area: round;
+  font-size: 12px;
+}
+
+.set-panel-list .start-btn {
+  grid-area: action;
 }

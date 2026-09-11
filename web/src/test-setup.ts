@@ -35,3 +35,10 @@ if (typeof window !== 'undefined' && typeof window.matchMedia === 'undefined') {
       dispatchEvent: () => false,
     }) as MediaQueryList;
 }
+
+// jsdom has no scrolling at all, so Element.scrollBy is missing. The bracket
+// centres the highlighted set with it; a no-op keeps that path runnable in
+// tests, which still assert the resulting highlight.
+if (typeof Element !== 'undefined' && typeof Element.prototype.scrollBy !== 'function') {
+  Element.prototype.scrollBy = function scrollBy() {};
+}

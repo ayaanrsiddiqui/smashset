@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react';
 import { layoutBracket, BOX_HEIGHT, BOX_WIDTH, LINK_WIDTH } from './bracketLayout';
 import { bracketSetById, isOpenable, isWinnerSlot, slotLabel } from './bracketDisplay';
 import { compareIdentifiers } from './identifierOrder';
@@ -14,23 +15,59 @@ const LINK_STUB = 20;
 interface Props {
   group: BracketGroup | null;
   onSelectSet: (s: BracketSet) => void;
+  /**
+   * The set currently highlighted in the list — scrolled into view and marked
+   * here, so the list and the bracket are two views of one selection rather
+   * than two things sharing a screen.
+   */
+  focusedSetId?: number | string | null;
 }
 
-export function Bracket({ group, onSelectSet }: Props) {
+export function Bracket({ group, onSelectSet, focusedSetId }: Props) {
   if (!group) {
     return <p className="bracket-empty">No bracket data yet.</p>;
   }
   return ELIMINATION_TYPES.has(group.bracketType) ? (
-    <BracketTree sets={group.sets} onSelectSet={onSelectSet} />
+    <BracketTree sets={group.sets} onSelectSet={onSelectSet} focusedSetId={focusedSetId} />
   ) : (
     <FallbackList sets={group.sets} />
   );
 }
 
-function BracketTree({ sets, onSelectSet }: { sets: BracketSet[]; onSelectSet: (s: BracketSet) => void }) {
+function BracketTree({
+  sets,
+  onSelectSet,
+  focusedSetId,
+}: {
+  sets: BracketSet[];
+  onSelectSet: (s: BracketSet) => void;
+  focusedSetId?: number | string | null;
+}) {
   const layout = layoutBracket(sets);
   const byId = bracketSetById(sets);
   const boxById = new Map(layout.boxes.map((b) => [String(b.set.id), b]));
+  const focusedRef = useRef<HTMLDivElement | null>(null);
+
+  // Centre the highlighted set in the part of the stage that isn't behind the
+  // floating panel. The stage reserves that space as padding (see App.css), so
+  // subtracting it here keeps the set clear of the panel on both dock edges.
+  useEffect(() => {
+    const box = focusedRef.current;
+    const stage = box?.closest('.bracket-stage') as HTMLElement | null;
+    if (!box || !stage) return;
+
+    const style = getComputedStyle(stage);
+    const visibleWidth = stage.clientWidth - (parseFloat(style.paddingRight) || 0);
+    const visibleHeight = stage.clientHeight - (parseFloat(style.paddingBottom) || 0);
+    const boxRect = box.getBoundingClientRect();
+    const stageRect = stage.getBoundingClientRect();
+
+    stage.scrollBy({
+      left: boxRect.left + boxRect.width / 2 - (stageRect.left + visibleWidth / 2),
+      top: boxRect.top + boxRect.height / 2 - (stageRect.top + visibleHeight / 2),
+      behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
+    });
+  }, [focusedSetId]);
 
   if (layout.boxes.length === 0) {
     return <p className="bracket-empty">No bracket data yet.</p>;
@@ -69,10 +106,12 @@ function BracketTree({ sets, onSelectSet }: { sets: BracketSet[]; onSelectSet: (
 
         {layout.boxes.map(({ set: s, x, y, links }) => {
           const clickable = isOpenable(s);
+          const focused = focusedSetId != null && String(s.id) === String(focusedSetId);
           return (
             <div key={s.id}>
               <div
-                className={`bracket-box${clickable ? ' clickable' : ''}`}
+                ref={focused ? focusedRef : undefined}
+                className={`bracket-box${clickable ? ' clickable' : ''}${focused ? ' focused' : ''}`}
                 style={{ left: x, top: y, width: BOX_WIDTH, height: BOX_HEIGHT }}
                 onClick={clickable ? () => onSelectSet(s) : undefined}
               >

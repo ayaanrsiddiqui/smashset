@@ -36,6 +36,24 @@ vi.mock('./api', async (importOriginal) => ({
 // Imported after the mock is registered so App picks up the mocked ./api.
 const { default: App } = await import('./App');
 
+/**
+ * Waits for a set to appear on the bracket canvas and returns its box.
+ *
+ * The bracket arrives from its own poll, separate from the one that renders
+ * the panel — so the search box existing does not mean the bracket does yet.
+ */
+function findBracketBox(container: HTMLElement, identifier: string): Promise<HTMLElement> {
+  return waitFor(() => bracketBox(container, identifier));
+}
+
+/** Finds a set on the bracket canvas by its identifier badge. */
+function bracketBox(container: HTMLElement, identifier: string): HTMLElement {
+  const badge = Array.from(container.querySelectorAll('.bracket-badge')).find((b) => b.textContent === identifier);
+  const box = badge?.closest('.bracket-box');
+  if (!box) throw new Error(`no bracket box with identifier "${identifier}"`);
+  return box as HTMLElement;
+}
+
 describe('App — sign-in gate', () => {
   beforeEach(() => {
     localStorage.clear();
@@ -191,7 +209,7 @@ describe('App — account modal', () => {
   });
 });
 
-describe('App — completed / not-ready sections', () => {
+describe('App — completed and not-ready sets on the bracket', () => {
   const fetchBracketMock = vi.mocked(fetchBracket);
   const fetchAccountMock = vi.mocked(fetchAccount);
   const fetchSetDetailMock = vi.mocked(fetchSetDetail);
@@ -229,6 +247,7 @@ describe('App — completed / not-ready sections', () => {
           state: 3,
           winnerId: 101,
           lPlacement: 9,
+          completedAt: null,
           winnerAdvancesToPhase: null,
           loserAdvancesToPhase: null,
           slots: [
@@ -244,6 +263,7 @@ describe('App — completed / not-ready sections', () => {
           state: 1,
           winnerId: null,
           lPlacement: null,
+          completedAt: null,
           winnerAdvancesToPhase: null,
           loserAdvancesToPhase: null,
           slots: [
@@ -256,28 +276,101 @@ describe('App — completed / not-ready sections', () => {
       ],
     });
 
-    render(<App />);
+    const { container } = render(<App />);
+    await screen.findByPlaceholderText(/winner's name/i);
 
-    await userEvent.click(await screen.findByText('Completed (1)'));
-    // A custom matcher, not a plain string, because the winner's name sits
-    // inside a nested <strong> — getByText's default matching only looks at
-    // an element's own direct text-node children, which would otherwise
-    // never see the full composed sentence as one string.
-    expect(
-      screen.getByText((_content, element) => element?.textContent === 'Winner Player def. Loser Player 2–0')
-    ).toBeInTheDocument();
+    // Completed: both names, the winner's score marked as won.
+    const completed = await findBracketBox(container, 'A');
+    expect(completed.textContent).toContain('Winner Player');
+    expect(completed.textContent).toContain('Loser Player');
+    expect(completed.querySelector('.bracket-score.won')?.textContent).toBe('2');
+    expect(completed.querySelector('.bracket-score.lost')?.textContent).toBe('0');
 
-    await userEvent.click(screen.getByText('Not ready (1)'));
-    expect(screen.getByText('Winner Player vs TBD')).toBeInTheDocument();
+    // Not ready: the empty slot resolves to TBD, since its prereq set (999)
+    // isn't in the response.
+    const notReady = await findBracketBox(container, 'C');
+    expect(notReady.textContent).toContain('Winner Player');
+    expect(notReady.textContent).toContain('TBD');
   });
 
-  it('renders neither section when there is nothing completed or not-ready', async () => {
+  it('marks the set highlighted in the list on the bracket too', async () => {
+    // The point of the unified view: the list and the bracket are two views of
+    // one selection, so highlighting in one marks it in the other.
+    vi.mocked(fetchOpenSets).mockResolvedValue({
+      sets: [
+        {
+          id: 1,
+          isPreview: false,
+          isStarted: false,
+          fullRoundText: 'Winners Round 1',
+          identifier: 'A',
+          lPlacement: null,
+          entrants: [
+            { id: 101, name: 'Winner Player' },
+            { id: 102, name: 'Loser Player' },
+          ],
+        },
+      ],
+    });
+    fetchBracketMock.mockResolvedValue({
+      phaseGroupId: 1,
+      phaseName: 'Bracket',
+      displayIdentifier: '1',
+      bracketType: 'DOUBLE_ELIMINATION',
+      sets: [
+        {
+          id: 1,
+          identifier: 'A',
+          round: 1,
+          fullRoundText: 'Winners Round 1',
+          state: 1,
+          winnerId: null,
+          lPlacement: null,
+          completedAt: null,
+          winnerAdvancesToPhase: null,
+          loserAdvancesToPhase: null,
+          slots: [
+            { entrant: { id: 101, name: 'Winner Player' }, score: null, prereqSetId: null, prereqPlacement: null, progressionOrigin: null },
+            { entrant: { id: 102, name: 'Loser Player' }, score: null, prereqSetId: null, prereqPlacement: null, progressionOrigin: null },
+          ],
+        },
+        {
+          id: 2,
+          identifier: 'B',
+          round: 1,
+          fullRoundText: 'Winners Round 1',
+          state: 1,
+          winnerId: null,
+          lPlacement: null,
+          completedAt: null,
+          winnerAdvancesToPhase: null,
+          loserAdvancesToPhase: null,
+          slots: [
+            { entrant: { id: 103, name: 'Other One' }, score: null, prereqSetId: null, prereqPlacement: null, progressionOrigin: null },
+            { entrant: { id: 104, name: 'Other Two' }, score: null, prereqSetId: null, prereqPlacement: null, progressionOrigin: null },
+          ],
+        },
+      ],
+    });
+
+    const { container } = render(<App />);
+    await screen.findByPlaceholderText(/winner's name/i);
+
+    // A single ready-to-start set is unambiguous, so it highlights without
+    // anyone pressing anything — and the bracket says which one it is.
+    await waitFor(() => expect(bracketBox(container, 'A').className).toContain('focused'));
+    expect(bracketBox(container, 'B').className).not.toContain('focused');
+  });
+
+  it('says so plainly when the bracket has no sets at all', async () => {
     fetchBracketMock.mockResolvedValue({ phaseGroupId: 1, phaseName: 'Bracket', displayIdentifier: '1', bracketType: 'DOUBLE_ELIMINATION', sets: [] });
-    render(<App />);
+    const { container } = render(<App />);
 
     await screen.findByPlaceholderText(/winner's name/i);
-    expect(screen.queryByText(/^Completed/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/^Not ready/)).not.toBeInTheDocument();
+    expect(container.querySelectorAll('.bracket-box')).toHaveLength(0);
+    // The panel collapses to its ready-to-start summary rather than vanishing.
+    expect(container.querySelector('.set-panel-summary')?.textContent).toMatch(/ready to start/i);
+    expect(container.querySelector('.set-panel')?.className).toContain('collapsed');
   });
 
   it('clicking a completed set opens it for correction, defaulting to its actual winner and showing what was already reported', async () => {
@@ -295,6 +388,7 @@ describe('App — completed / not-ready sections', () => {
           state: 3,
           winnerId: 101,
           lPlacement: 9,
+          completedAt: null,
           winnerAdvancesToPhase: null,
           loserAdvancesToPhase: null,
           slots: [
@@ -306,11 +400,9 @@ describe('App — completed / not-ready sections', () => {
     });
 
     const { container } = render(<App />);
+    await screen.findByPlaceholderText(/winner's name/i);
 
-    await userEvent.click(await screen.findByText('Completed (1)'));
-    await userEvent.click(
-      screen.getByText((_content, element) => element?.textContent === 'Winner Player def. Loser Player 2–0')
-    );
+    await userEvent.click(await findBracketBox(container, 'A'));
 
     // Lands in the same ReportPanel flow the list uses — round label present…
     expect(await screen.findByText('Winners Round 1 · A')).toBeInTheDocument();
@@ -339,6 +431,7 @@ describe('App — completed / not-ready sections', () => {
           state: 3,
           winnerId: 101,
           lPlacement: 9,
+          completedAt: null,
           winnerAdvancesToPhase: null,
           loserAdvancesToPhase: null,
           slots: [
@@ -363,11 +456,9 @@ describe('App — completed / not-ready sections', () => {
     });
 
     const { container } = render(<App />);
+    await screen.findByPlaceholderText(/winner's name/i);
 
-    await userEvent.click(await screen.findByText('Completed (1)'));
-    await userEvent.click(
-      screen.getByText((_content, element) => element?.textContent === 'Winner Player def. Loser Player 2–0')
-    );
+    await userEvent.click(await findBracketBox(container, 'A'));
 
     expect(fetchSetDetailMock).toHaveBeenCalledWith(1);
     // The score entry reflects the real 2-game history (both won by the
@@ -465,6 +556,7 @@ describe('App — multiple pools', () => {
           fullRoundText: 'Pool A Round 1',
           identifier: 'A',
           lPlacement: null,
+          completedAt: null,
           entrants: [
             { id: 1, name: 'Left Behind' },
             { id: 2, name: 'Should Not Show' },
