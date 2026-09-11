@@ -15,6 +15,7 @@ interface SessionUserRow {
   access_token: string;
   refresh_token: string;
   token_expires_at: Date;
+  top_x_bo5: number | null;
 }
 
 export interface SessionWithUser {
@@ -35,6 +36,7 @@ function fromRow(row: SessionUserRow): SessionWithUser {
       accessToken: decrypt(row.access_token),
       refreshToken: decrypt(row.refresh_token),
       tokenExpiresAt: row.token_expires_at,
+      topXBo5: row.top_x_bo5,
     },
   };
 }

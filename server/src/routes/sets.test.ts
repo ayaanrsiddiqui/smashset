@@ -48,8 +48,8 @@ const CACHED_CHARACTER_ID = 1338;
 
 function openSetsFixture() {
   return {
-    event: {
-      videogame: { id: VIDEOGAME_ID },
+    phaseGroup: {
+      phase: { event: { videogame: { id: VIDEOGAME_ID } } },
       sets: {
         pageInfo: { totalPages: 1 },
         nodes: [
@@ -76,21 +76,23 @@ const emptyPlayerHistory = () => ({ player: { sets: { nodes: [] } } });
 interface ResponseEntrant {
   id: number;
   name: string;
-  suggestedMainCharacterId?: number;
+  playerId?: number;
+  suggestedMain?: { characterId: number | null; gamesTallied: number; setsConsidered: number };
 }
 
-describe('GET /:eventId/open-sets — auto-main integration', () => {
+describe('GET /phase-group/:phaseGroupId/open-sets — auto-main integration', () => {
   afterEach(() => {
     gqlMock.mockReset();
   });
 
   afterAll(async () => {
+    // Users cleanup + closeTestPool() happen once, in the last describe
+    // block in this file (below) — the pool is a shared module-level
+    // singleton, so closing it here would break that later block.
     await pool.query('DELETE FROM player_mains WHERE player_id < 0');
-    await pool.query('DELETE FROM users WHERE startgg_user_id LIKE $1', [`${PREFIX}%`]);
-    await closeTestPool();
   });
 
-  it('attaches suggestedMainCharacterId for a cached player, omits it for an uncached one, and never leaks playerId', async () => {
+  it('attaches suggestedMain (with confidence) for a cached player, omits it for an uncached one, and includes playerId', async () => {
     await pool.query('DELETE FROM player_mains WHERE player_id < 0');
     await pool.query(
       `INSERT INTO player_mains (player_id, videogame_id, character_id, games_tallied, sets_considered)
@@ -98,25 +100,24 @@ describe('GET /:eventId/open-sets — auto-main integration', () => {
       [CACHED_PLAYER_ID, VIDEOGAME_ID, CACHED_CHARACTER_ID, 6, 10]
     );
     gqlMock.mockImplementation((_token: unknown, query: string) => {
-      if (query.includes('EventOpenSets')) return Promise.resolve(openSetsFixture());
+      if (query.includes('PhaseGroupOpenSets')) return Promise.resolve(openSetsFixture());
       if (query.includes('PlayerMainHistory')) return Promise.resolve(emptyPlayerHistory());
       throw new Error(`unexpected query in test: ${query}`);
     });
     const cookie = await makeSignedInCookie('attach');
-    const eventId = nextTestEventId++; // each test gets its own eventId so fetchOpenSets' 4s cache never crosses tests
+    const phaseGroupId = nextTestEventId++; // each test gets its own id so fetchOpenSets' 4s cache never crosses tests
 
-    const res = await request(app).get(`/api/sets/${eventId}/open-sets`).set('Cookie', cookie);
+    const res = await request(app).get(`/api/sets/phase-group/${phaseGroupId}/open-sets`).set('Cookie', cookie);
 
     expect(res.status).toBe(200);
     const entrants: ResponseEntrant[] = res.body.sets[0].entrants;
     expect(entrants).toHaveLength(2);
     const cached = entrants.find((e) => e.name === 'Cached Player')!;
     const uncached = entrants.find((e) => e.name === 'Uncached Player')!;
-    expect(cached.suggestedMainCharacterId).toBe(CACHED_CHARACTER_ID);
-    expect(uncached.suggestedMainCharacterId).toBeUndefined();
-    for (const e of entrants) {
-      expect(e).not.toHaveProperty('playerId');
-    }
+    expect(cached.suggestedMain).toEqual({ characterId: CACHED_CHARACTER_ID, gamesTallied: 6, setsConsidered: 10 });
+    expect(uncached.suggestedMain).toBeUndefined(); // still computing, not "checked and found nothing"
+    expect(cached.playerId).toBe(CACHED_PLAYER_ID);
+    expect(uncached.playerId).toBe(UNCACHED_PLAYER_ID);
 
     // One call for the open-sets query itself, one for the uncached player's
     // background history lookup — not two of the latter, since the cached
@@ -127,14 +128,14 @@ describe('GET /:eventId/open-sets — auto-main integration', () => {
   it('a background lookup for a real uncached player actually lands in the database as a tombstone when it has no history', async () => {
     await pool.query('DELETE FROM player_mains WHERE player_id < 0');
     gqlMock.mockImplementation((_token: unknown, query: string) => {
-      if (query.includes('EventOpenSets')) return Promise.resolve(openSetsFixture());
+      if (query.includes('PhaseGroupOpenSets')) return Promise.resolve(openSetsFixture());
       if (query.includes('PlayerMainHistory')) return Promise.resolve(emptyPlayerHistory());
       throw new Error(`unexpected query in test: ${query}`);
     });
     const cookie = await makeSignedInCookie('lands-in-db');
-    const eventId = nextTestEventId++;
+    const phaseGroupId = nextTestEventId++;
 
-    await request(app).get(`/api/sets/${eventId}/open-sets`).set('Cookie', cookie);
+    await request(app).get(`/api/sets/phase-group/${phaseGroupId}/open-sets`).set('Cookie', cookie);
 
     await vi.waitFor(async () => {
       const { rows } = await pool.query('SELECT character_id FROM player_mains WHERE player_id = $1 AND videogame_id = $2', [
@@ -146,6 +147,31 @@ describe('GET /:eventId/open-sets — auto-main integration', () => {
     });
   });
 
+  it('a pre-existing tombstone (confirmed no main) is distinguishable on the wire from "still computing"', async () => {
+    await pool.query('DELETE FROM player_mains WHERE player_id < 0');
+    await pool.query(
+      `INSERT INTO player_mains (player_id, videogame_id, character_id, games_tallied, sets_considered)
+       VALUES ($1, $2, NULL, 0, 5)`,
+      [CACHED_PLAYER_ID, VIDEOGAME_ID]
+    );
+    gqlMock.mockImplementation((_token: unknown, query: string) => {
+      if (query.includes('PhaseGroupOpenSets')) return Promise.resolve(openSetsFixture());
+      if (query.includes('PlayerMainHistory')) return Promise.resolve(emptyPlayerHistory());
+      throw new Error(`unexpected query in test: ${query}`);
+    });
+    const cookie = await makeSignedInCookie('tombstone-wire-shape');
+    const phaseGroupId = nextTestEventId++;
+
+    const res = await request(app).get(`/api/sets/phase-group/${phaseGroupId}/open-sets`).set('Cookie', cookie);
+
+    const entrants: ResponseEntrant[] = res.body.sets[0].entrants;
+    const cached = entrants.find((e) => e.name === 'Cached Player')!;
+    // Present (not undefined) with characterId: null — "checked, no dominant
+    // character" — as opposed to the uncached entrant a few tests up, whose
+    // suggestedMain is undefined entirely because nothing has run yet.
+    expect(cached.suggestedMain).toEqual({ characterId: null, gamesTallied: 0, setsConsidered: 5 });
+  });
+
   it('does not block the HTTP response on the background lookup', async () => {
     await pool.query('DELETE FROM player_mains WHERE player_id < 0');
     const releasers: ((v: unknown) => void)[] = [];
@@ -154,7 +180,7 @@ describe('GET /:eventId/open-sets — auto-main integration', () => {
         releasers.push(resolve);
       });
     gqlMock.mockImplementation((_token: unknown, query: string) => {
-      if (query.includes('EventOpenSets')) return Promise.resolve(openSetsFixture());
+      if (query.includes('PhaseGroupOpenSets')) return Promise.resolve(openSetsFixture());
       // Both entrants are uncached at this point (player_mains was just
       // cleared above), so both trigger a background lookup — every one of
       // them stays pending until released below.
@@ -162,18 +188,367 @@ describe('GET /:eventId/open-sets — auto-main integration', () => {
       throw new Error(`unexpected query in test: ${query}`);
     });
     const cookie = await makeSignedInCookie('non-blocking');
-    const eventId = nextTestEventId++;
+    const phaseGroupId = nextTestEventId++;
 
     // If ensureMainComputed were accidentally awaited in the route handler,
     // this request would hang forever (the PlayerMainHistory mocks never
     // resolve until released below) and the test would time out — a direct,
     // automated proof of "must not block," not just an argument for it.
-    const res = await request(app).get(`/api/sets/${eventId}/open-sets`).set('Cookie', cookie);
+    const res = await request(app).get(`/api/sets/phase-group/${phaseGroupId}/open-sets`).set('Cookie', cookie);
     expect(res.status).toBe(200);
 
     // Release the pending mocks so both background tasks finish and their
     // in-flight tracking entries don't leak into later tests.
     for (const release of releasers) release(emptyPlayerHistory());
     await vi.waitFor(() => expect(gqlMock).toHaveBeenCalledTimes(1 + releasers.length));
+  });
+});
+
+function bracketFixture() {
+  return {
+    phaseGroup: {
+      id: 1,
+      displayIdentifier: '1',
+      bracketType: 'DOUBLE_ELIMINATION',
+      phase: { name: 'Bracket' },
+      sets: {
+        pageInfo: { totalPages: 1 },
+        nodes: [
+          {
+            // Completed: both slots resolved, real scores, a winner.
+            id: 7001,
+            identifier: 'A',
+            round: 1,
+            fullRoundText: 'Winners Round 1',
+            state: 3,
+            winnerId: 8001,
+            lPlacement: 9,
+            // This set's winner qualifies straight into a later "Top 8"
+            // phase (a pool's terminal match); its loser's placement isn't
+            // itself seeded anywhere further.
+            winnerProgressionSeed: { phase: { name: 'Top 8' } },
+            loserProgressionSeed: null,
+            slots: [
+              {
+                entrant: { id: 8001, name: 'Winner Player' },
+                prereqType: 'seed',
+                prereqId: '111',
+                prereqPlacement: null,
+                standing: { stats: { score: { value: 2 } } },
+                // Freshly seeded into this phaseGroup, and that seed
+                // itself came from a pool in an earlier phase.
+                seed: { progressionSource: { originPhase: { name: 'Pools' }, originPhaseGroup: { displayIdentifier: 'Pool B' } } },
+              },
+              {
+                entrant: { id: 8002, name: 'Loser Player' },
+                prereqType: 'seed',
+                prereqId: '112',
+                prereqPlacement: null,
+                standing: { stats: { score: { value: 0 } } },
+                // Seeded directly from the event's initial registration —
+                // no earlier phase to have progressed from.
+                seed: { progressionSource: null },
+              },
+            ],
+          },
+          {
+            // Not ready: one slot still TBD, fed by set 7001's winner.
+            id: 7002,
+            identifier: 'C',
+            round: 2,
+            fullRoundText: 'Winners Quarter-Final',
+            state: 1,
+            winnerId: null,
+            lPlacement: null,
+            winnerProgressionSeed: null,
+            loserProgressionSeed: null,
+            slots: [
+              {
+                entrant: { id: 8001, name: 'Winner Player' },
+                prereqType: 'set',
+                prereqId: '7001',
+                prereqPlacement: 1,
+                standing: { stats: { score: { value: null } } },
+                seed: null,
+              },
+              {
+                entrant: null,
+                prereqType: 'set',
+                prereqId: '7099',
+                prereqPlacement: 1,
+                standing: null,
+                seed: null,
+              },
+            ],
+          },
+          {
+            // Malformed — not a 1v1 set (only one slot) — must be dropped,
+            // not crash.
+            id: 7004,
+            identifier: 'Z',
+            round: 1,
+            fullRoundText: 'Round 1',
+            state: 1,
+            winnerId: null,
+            lPlacement: null,
+            winnerProgressionSeed: null,
+            loserProgressionSeed: null,
+            slots: [{ entrant: { id: 8005, name: 'Orphan' }, prereqType: 'seed', prereqId: '115', prereqPlacement: null, standing: null, seed: null }],
+          },
+        ],
+      },
+    },
+  };
+}
+
+function poolFixture() {
+  return {
+    phaseGroup: {
+      id: 2,
+      displayIdentifier: 'Pool A',
+      bracketType: 'ROUND_ROBIN',
+      phase: { name: 'Pools' },
+      sets: {
+        pageInfo: { totalPages: 1 },
+        nodes: [
+          {
+            id: 7003,
+            identifier: 'A',
+            round: 1,
+            fullRoundText: 'Round 1',
+            state: 1,
+            winnerId: null,
+            lPlacement: null,
+            winnerProgressionSeed: null,
+            loserProgressionSeed: null,
+            slots: [
+              { entrant: { id: 8003, name: 'Pool Player 1' }, prereqType: 'seed', prereqId: '113', prereqPlacement: null, standing: null, seed: null },
+              { entrant: { id: 8004, name: 'Pool Player 2' }, prereqType: 'seed', prereqId: '114', prereqPlacement: null, standing: null, seed: null },
+            ],
+          },
+        ],
+      },
+    },
+  };
+}
+
+interface ResponseSlot {
+  entrant: { id: number; name: string } | null;
+  score: number | null;
+  prereqSetId: string | null;
+  prereqPlacement: 1 | 2 | null;
+  progressionOrigin: { phaseName: string; poolName: string | null } | null;
+}
+interface ResponseBracketSet {
+  id: number | string;
+  identifier: string;
+  round: number;
+  fullRoundText: string;
+  state: number;
+  winnerId: number | null;
+  slots: ResponseSlot[];
+  winnerAdvancesToPhase: string | null;
+  loserAdvancesToPhase: string | null;
+}
+interface ResponseBracketGroup {
+  phaseGroupId: number;
+  phaseName: string;
+  displayIdentifier: string;
+  bracketType: string;
+  sets: ResponseBracketSet[];
+}
+
+describe('GET /phase-group/:phaseGroupId/bracket', () => {
+  afterEach(() => {
+    gqlMock.mockReset();
+  });
+
+  it("returns one phase group's full bracket — completed scores, TBD slots via prereqSetId/prereqPlacement, and cross-phase progression links", async () => {
+    gqlMock.mockImplementation((_token: unknown, query: string) => {
+      if (query.includes('PhaseGroupBracket')) return Promise.resolve(bracketFixture());
+      throw new Error(`unexpected query in test: ${query}`);
+    });
+    const cookie = await makeSignedInCookie('bracket-basic');
+
+    const res = await request(app).get('/api/sets/phase-group/1/bracket').set('Cookie', cookie);
+
+    expect(res.status).toBe(200);
+    const group: ResponseBracketGroup = res.body;
+    expect(group).toMatchObject({ phaseGroupId: 1, phaseName: 'Bracket', displayIdentifier: '1', bracketType: 'DOUBLE_ELIMINATION' });
+
+    // The malformed (only 1 slot) node never surfaces.
+    expect(group.sets.find((s) => s.id === 7004)).toBeUndefined();
+    expect(group.sets).toHaveLength(2);
+
+    const completed = group.sets.find((s) => s.id === 7001)!;
+    expect(completed.state).toBe(3);
+    expect(completed.winnerId).toBe(8001);
+    expect(completed.slots[0]).toMatchObject({ entrant: { id: 8001, name: 'Winner Player' }, score: 2, prereqSetId: null });
+    expect(completed.slots[1]).toMatchObject({ entrant: { id: 8002, name: 'Loser Player' }, score: 0, prereqSetId: null });
+    // This set's winner is itself a seed feeding a later "Top 8" phase.
+    expect(completed.winnerAdvancesToPhase).toBe('Top 8');
+    expect(completed.loserAdvancesToPhase).toBeNull();
+    // Winner Player's own seed here came from an earlier pools phase…
+    expect(completed.slots[0].progressionOrigin).toEqual({ phaseName: 'Pools', poolName: 'Pool B' });
+    // …while Loser Player entered directly (no progressionSource at all).
+    expect(completed.slots[1].progressionOrigin).toBeNull();
+
+    const notReady = group.sets.find((s) => s.id === 7002)!;
+    expect(notReady.slots[0]).toMatchObject({ entrant: { id: 8001, name: 'Winner Player' }, prereqSetId: '7001', prereqPlacement: 1 });
+    expect(notReady.slots[1]).toMatchObject({ entrant: null, prereqSetId: '7099', prereqPlacement: 1 });
+  });
+
+  it('scopes strictly to the requested phaseGroupId — a different pool never leaks into the response', async () => {
+    gqlMock.mockImplementation((_token: unknown, query: string, variables: Record<string, unknown>) => {
+      if (query.includes('PhaseGroupBracket') && variables.phaseGroupId === '2') return Promise.resolve(poolFixture());
+      throw new Error(`unexpected query/variables in test: ${query} ${JSON.stringify(variables)}`);
+    });
+    const cookie = await makeSignedInCookie('bracket-scoped');
+
+    const res = await request(app).get('/api/sets/phase-group/2/bracket').set('Cookie', cookie);
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ phaseGroupId: 2, phaseName: 'Pools', displayIdentifier: 'Pool A', bracketType: 'ROUND_ROBIN' });
+    expect(res.body.sets.map((s: ResponseBracketSet) => s.id)).toEqual([7003]);
+  });
+
+  it('404s when the phase group does not exist', async () => {
+    gqlMock.mockImplementation((_token: unknown, query: string) => {
+      if (query.includes('PhaseGroupBracket')) return Promise.resolve({ phaseGroup: null });
+      throw new Error(`unexpected query in test: ${query}`);
+    });
+    const cookie = await makeSignedInCookie('bracket-missing');
+
+    const res = await request(app).get('/api/sets/phase-group/999999/bracket').set('Cookie', cookie);
+
+    expect(res.status).toBe(404);
+  });
+});
+
+interface ResponsePhaseGroupSummary {
+  id: number;
+  displayIdentifier: string;
+  phaseName: string;
+  bracketType: string;
+}
+
+describe('GET /:eventId/phase-groups', () => {
+  afterEach(() => {
+    gqlMock.mockReset();
+  });
+
+  it("lists every pool/bracket in the event, across phases, with no set data", async () => {
+    gqlMock.mockImplementation((_token: unknown, query: string) => {
+      if (query.includes('EventPhaseGroups')) {
+        return Promise.resolve({
+          event: {
+            phaseGroups: [
+              { id: 2, displayIdentifier: 'Pool A', bracketType: 'ROUND_ROBIN', phase: { name: 'Pools' } },
+              { id: 3, displayIdentifier: 'Pool B', bracketType: 'ROUND_ROBIN', phase: { name: 'Pools' } },
+              { id: 1, displayIdentifier: '1', bracketType: 'DOUBLE_ELIMINATION', phase: { name: 'Bracket' } },
+            ],
+          },
+        });
+      }
+      throw new Error(`unexpected query in test: ${query}`);
+    });
+    const cookie = await makeSignedInCookie('phase-groups-list');
+
+    const res = await request(app).get('/api/sets/12345/phase-groups').set('Cookie', cookie);
+
+    expect(res.status).toBe(200);
+    const phaseGroups: ResponsePhaseGroupSummary[] = res.body.phaseGroups;
+    expect(phaseGroups).toEqual([
+      { id: 2, displayIdentifier: 'Pool A', bracketType: 'ROUND_ROBIN', phaseName: 'Pools' },
+      { id: 3, displayIdentifier: 'Pool B', bracketType: 'ROUND_ROBIN', phaseName: 'Pools' },
+      { id: 1, displayIdentifier: '1', bracketType: 'DOUBLE_ELIMINATION', phaseName: 'Bracket' },
+    ]);
+  });
+
+  it('returns an empty list rather than an error when the event has no phase groups', async () => {
+    gqlMock.mockImplementation((_token: unknown, query: string) => {
+      if (query.includes('EventPhaseGroups')) return Promise.resolve({ event: { phaseGroups: [] } });
+      throw new Error(`unexpected query in test: ${query}`);
+    });
+    const cookie = await makeSignedInCookie('phase-groups-empty');
+
+    const res = await request(app).get('/api/sets/12345/phase-groups').set('Cookie', cookie);
+
+    expect(res.status).toBe(200);
+    expect(res.body.phaseGroups).toEqual([]);
+  });
+});
+
+function setDetailFixture() {
+  return {
+    set: {
+      games: [
+        {
+          winnerId: 101,
+          orderNum: 1,
+          stage: { id: 51 },
+          selections: [
+            { entrant: { id: 101 }, character: { id: 1273 } },
+            { entrant: { id: 102 }, character: { id: 1274 } },
+          ],
+        },
+        {
+          winnerId: 102,
+          orderNum: 2,
+          stage: null,
+          selections: [{ entrant: { id: 101 }, character: { id: 1273 } }],
+        },
+        {
+          winnerId: 101,
+          orderNum: 3,
+          stage: { id: 52 },
+          selections: [],
+        },
+        // Defensively malformed — missing winnerId/orderNum — must be
+        // dropped, not surfaced as a broken game or crash the endpoint.
+        { winnerId: null, orderNum: null, stage: null, selections: [] },
+      ],
+    },
+  };
+}
+
+describe('GET /:setId/detail', () => {
+  afterEach(() => {
+    gqlMock.mockReset();
+  });
+
+  afterAll(async () => {
+    await pool.query('DELETE FROM users WHERE startgg_user_id LIKE $1', [`${PREFIX}%`]);
+    await closeTestPool();
+  });
+
+  it('returns each game in order with its winner, stage, and per-entrant character picks', async () => {
+    gqlMock.mockImplementation((_token: unknown, query: string) => {
+      if (query.includes('SetDetail')) return Promise.resolve(setDetailFixture());
+      throw new Error(`unexpected query in test: ${query}`);
+    });
+    const cookie = await makeSignedInCookie('set-detail');
+
+    const res = await request(app).get('/api/sets/123456/detail').set('Cookie', cookie);
+
+    expect(res.status).toBe(200);
+    expect(res.body.games).toEqual([
+      { orderNum: 1, winnerEntrantId: 101, stageId: 51, characterIdByEntrantId: { 101: 1273, 102: 1274 } },
+      { orderNum: 2, winnerEntrantId: 102, stageId: null, characterIdByEntrantId: { 101: 1273 } },
+      { orderNum: 3, winnerEntrantId: 101, stageId: 52, characterIdByEntrantId: {} },
+    ]);
+  });
+
+  it('returns an empty games list, not an error, when start.gg has no game records for this set', async () => {
+    gqlMock.mockImplementation((_token: unknown, query: string) => {
+      if (query.includes('SetDetail')) return Promise.resolve({ set: { games: [] } });
+      throw new Error(`unexpected query in test: ${query}`);
+    });
+    const cookie = await makeSignedInCookie('set-detail-empty');
+
+    const res = await request(app).get('/api/sets/123456/detail').set('Cookie', cookie);
+
+    expect(res.status).toBe(200);
+    expect(res.body.games).toEqual([]);
   });
 });

@@ -9,6 +9,7 @@ export interface StoredUser {
   accessToken: string;
   refreshToken: string;
   tokenExpiresAt: Date;
+  topXBo5: number | null;
 }
 
 interface UserRow {
@@ -19,6 +20,7 @@ interface UserRow {
   access_token: string;
   refresh_token: string;
   token_expires_at: Date;
+  top_x_bo5: number | null;
 }
 
 function fromRow(row: UserRow): StoredUser {
@@ -30,6 +32,7 @@ function fromRow(row: UserRow): StoredUser {
     accessToken: decrypt(row.access_token),
     refreshToken: decrypt(row.refresh_token),
     tokenExpiresAt: row.token_expires_at,
+    topXBo5: row.top_x_bo5,
   };
 }
 
@@ -84,4 +87,12 @@ export async function updateUserTokens(userId: number, tokens: OAuthTokens): Pro
      WHERE id = $1`,
     [userId, encrypt(tokens.accessToken), encrypt(tokens.refreshToken), tokens.expiresAt]
   );
+}
+
+export async function updateUserTopXBo5(userId: number, topXBo5: number | null): Promise<StoredUser | null> {
+  const { rows } = await pool.query<UserRow>(
+    'UPDATE users SET top_x_bo5 = $2, updated_at = now() WHERE id = $1 RETURNING *',
+    [userId, topXBo5]
+  );
+  return rows[0] ? fromRow(rows[0]) : null;
 }

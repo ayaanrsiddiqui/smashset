@@ -131,6 +131,225 @@
   font-size: 15px;
 }
 
+.results-list li.readonly {
+  cursor: default;
+}
+
+/* ---------- Completed / Not ready sections ---------- */
+
+.set-section {
+  border-radius: 10px;
+  background: #1c1f27;
+  padding: 0 16px;
+}
+
+.set-section summary {
+  padding: 12px 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #9aa0ac;
+  cursor: pointer;
+}
+
+.set-section[open] summary {
+  border-bottom: 1px solid #2a2e38;
+  margin-bottom: 10px;
+}
+
+.set-section .results-list {
+  padding-bottom: 12px;
+}
+
+.set-section .results-list li {
+  background: #14161c;
+}
+
+/* Completed rows are clickable (to correct a misreported set) — Not-ready
+   rows (.readonly, still carrying TBD slots) aren't, so this is scoped to
+   exclude them rather than applying to every row in these sections. */
+.set-section .results-list li:not(.readonly):hover {
+  background: #1c2030;
+}
+
+/* ---------- List / Bracket toggle, and (reused) bracket group tabs ---------- */
+
+.segmented-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px;
+  border-radius: 10px;
+}
+
+.segmented-toggle button {
+  flex: 0 0 auto;
+  padding: 8px 14px;
+  border-radius: 8px;
+  border: 2px solid #2a2e38;
+  background: #1c1f27;
+  color: #9aa0ac;
+  font-weight: 600;
+}
+
+.segmented-toggle button.selected {
+  border-color: #5865f2;
+  color: #f1f2f6;
+  background: #232946;
+}
+
+/* ---------- Bracket tree ---------- */
+
+.bracket-empty {
+  color: #6b7280;
+  font-size: 15px;
+}
+
+.bracket-scroll {
+  width: 100vw;
+  margin-left: calc(50% - 50vw);
+  overflow-x: auto;
+  padding: 4px 20px 24px;
+}
+
+.bracket-canvas {
+  position: relative;
+}
+
+.bracket-column-header {
+  position: absolute;
+  font-size: 13px;
+  font-weight: 600;
+  color: #9aa0ac;
+  white-space: nowrap;
+  padding-bottom: 6px;
+  border-bottom: 1px solid #2a2e38;
+}
+
+.bracket-edges {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+}
+
+.bracket-edges path {
+  fill: none;
+  stroke: #2a2e38;
+  stroke-width: 2;
+}
+
+.bracket-box {
+  position: absolute;
+  border-radius: 8px;
+  border: 1px solid #2a2e38;
+  background: #1c1f27;
+}
+
+.bracket-box.clickable {
+  cursor: pointer;
+}
+
+.bracket-box.clickable:hover {
+  border-color: #5865f2;
+}
+
+.bracket-badge {
+  position: absolute;
+  top: 50%;
+  left: -9px;
+  transform: translateY(-50%);
+  background: #2a2e38;
+  color: #9aa0ac;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 3px 5px;
+  border-radius: 6px;
+  border: 1px solid #14161c;
+}
+
+.bracket-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  height: 50%;
+  padding: 0 8px;
+  font-size: 13px;
+  color: #9aa0ac;
+}
+
+.bracket-row:first-child {
+  border-bottom: 1px solid #2a2e38;
+}
+
+.bracket-row.winner {
+  font-weight: 700;
+  color: #f1f2f6;
+}
+
+.bracket-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bracket-score {
+  flex-shrink: 0;
+  min-width: 18px;
+  text-align: center;
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.bracket-score.won {
+  background: #22c55e;
+  color: #08260f;
+}
+
+.bracket-score.lost {
+  background: #2a2e38;
+  color: #9aa0ac;
+}
+
+.bracket-fallback {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.bracket-fallback-round h3 {
+  margin: 0 0 8px;
+  font-size: 14px;
+  color: #9aa0ac;
+}
+
+/* ---------- Cross-phase links (pools feeding a later bracket, or fed by an earlier one) ---------- */
+
+.bracket-link-stub {
+  stroke: #3a4050;
+  stroke-width: 2;
+  stroke-dasharray: 3 4;
+}
+
+.bracket-link {
+  position: absolute;
+  transform: translateY(-50%);
+  font-size: 11px;
+  color: #6b7280;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bracket-link-left {
+  text-align: right;
+}
+
 .result-num {
   flex-shrink: 0;
   width: 22px;
@@ -160,16 +379,40 @@
   font-size: 14px;
 }
 
+.prior-result {
+  margin: 0;
+  font-size: 14px;
+  color: #e0a94e;
+}
+
+.prior-result strong {
+  color: #f1f2f6;
+}
+
 .toast {
   position: fixed;
   bottom: 24px;
   left: 50%;
   transform: translateX(-50%);
-  background: #22c55e;
-  color: #08260f;
   font-weight: 600;
   padding: 12px 20px;
   border-radius: 10px;
+  max-width: calc(100vw - 40px);
+}
+
+.toast-success {
+  background: #22c55e;
+  color: #08260f;
+}
+
+.toast-error {
+  background: #f87171;
+  color: #2b0808;
+}
+
+.toast-info {
+  background: #2a2e38;
+  color: #f1f2f6;
 }
 
 /* Settings screen */
@@ -501,6 +744,74 @@ kbd {
   visibility: hidden;
 }
 
+.edit-main-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 0 10px;
+  font-size: 13px;
+}
+
+.edit-main-triggers {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+}
+
+.main-status-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.main-status-text {
+  color: #9aa0ac;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.main-status-line button {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  color: #9aa0ac;
+  text-decoration: underline;
+  padding: 0;
+  font-size: 13px;
+}
+
+.main-status-line button:hover {
+  color: #f1f2f6;
+}
+
+.edit-main-label {
+  color: #9aa0ac;
+  flex-shrink: 0;
+}
+
+.edit-main-row .fuzzy-cell-active {
+  flex: 1;
+  min-width: 0;
+}
+
+.edit-main-clear {
+  flex-shrink: 0;
+  background: none;
+  border: 1px solid #2a2e38;
+  border-radius: 8px;
+  color: #9aa0ac;
+  padding: 6px 10px;
+  font-size: 13px;
+}
+
+.edit-main-clear:hover {
+  border-color: #5865f2;
+  color: #f1f2f6;
+}
+
 .game-stat-arrow-btn {
   background: none;
   border: none;
@@ -823,6 +1134,99 @@ kbd {
 .help-modal-body h2 {
   margin: 0 0 8px;
   font-size: 26px;
+}
+
+/* ---------- Account modal ---------- */
+
+.account-modal .help-modal-body {
+  gap: 28px;
+}
+
+.account-loading {
+  margin: 0;
+  color: #9aa0ac;
+}
+
+.account-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-top: 20px;
+  border-top: 1px solid #2a2e38;
+}
+
+.account-section:first-of-type {
+  padding-top: 0;
+  border-top: none;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.account-section h3 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.account-identity {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.account-name {
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.account-profile-link {
+  color: #9aa0ac;
+  font-size: 13px;
+}
+
+.account-sign-out {
+  flex-shrink: 0;
+  background: none;
+  border: 1px solid #2a2e38;
+  border-radius: 8px;
+  color: #9aa0ac;
+  padding: 8px 14px;
+  font-size: 14px;
+}
+
+.account-sign-out:hover {
+  border-color: #5865f2;
+  color: #f1f2f6;
+}
+
+.account-top-x {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 15px;
+}
+
+.account-top-x input {
+  width: 60px;
+  font-size: 15px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid #2a2e38;
+  background: #1c1f27;
+  color: #f1f2f6;
+  text-align: center;
+}
+
+.account-top-x input:focus {
+  outline: none;
+  border-color: #5865f2;
+}
+
+.account-top-x-hint {
+  margin: 0;
+  color: #9aa0ac;
+  font-size: 13px;
+  max-width: 50ch;
 }
 
 .help-intro {

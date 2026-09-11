@@ -89,8 +89,13 @@ one level first).
   search) and `Enter`. You can jump straight between sides/games without
   re-pressing `c` — e.g. `c w a Sonic Enter l a Fox Enter 3 Samus Enter` sets
   the winner's character for every game, the loser's for every game, then
-  overrides just game 3. `m` fills in both players' main character, once
-  that lookup is wired up (see `web/src/mains.ts`).
+  overrides just game 3. `m` fills in both players' main character, computed
+  automatically in the background from each player's recent start.gg history
+  for the current game (falling back to a small hardcoded list in
+  `web/src/mains.ts` for players with no computable main yet). Wrong or
+  missing data on file for a player can be corrected right above the "All
+  games" row — that correction is remembered for every future set they're in,
+  not just this report.
 - **`s`** — stages. Press a game number, type the stage name, `Enter`.
 - **`Enter`** — report the set. The button becomes a ✓ / ✕ confirmation;
   `Enter` again confirms, `Escape` cancels.
@@ -108,11 +113,8 @@ one level first).
 - Search covers sets that aren't yet completed and have both entrants
   determined — no byes or TBDs. It doesn't auto-call the next set or take
   player self-reported scores yet.
-- Main-character autofill (`m` in the characters tool) is wired up but has no
-  data source — `web/src/mains.ts` exports an empty tag → character map for
-  that to be filled in later.
-- The bracket view doesn't yet mirror start.gg's bracket structure, and there
-  is no in-app keybind reference; both are next up.
+- The bracket view doesn't yet mirror start.gg's bracket structure — sets are
+  found by searching, not by browsing a tree.
 - Reports go straight to the live bracket with no undo inside SmashSet. A
   mistake is fixed on start.gg like any other misreport. If you're setting it
   up for the first time, point it at a test event and send one report through

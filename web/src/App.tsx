@@ -1,14 +1,46 @@
 import { useEffect, useRef, useState } from 'react';
 import { Settings } from './Settings';
 import { SignIn } from './SignIn';
+import { PoolPicker } from './PoolPicker';
 import { ReportPanel } from './ReportPanel';
 import { HelpModal } from './HelpModal';
-import { startSet, fetchCharacters, fetchOpenSets, fetchStages, fetchMe, logout } from './api';
+import { AccountModal } from './AccountModal';
+import { Bracket } from './Bracket';
+import {
+  startSet,
+  fetchBracket,
+  fetchCharacters,
+  fetchOpenSets,
+  fetchPhaseGroups,
+  fetchSetDetail,
+  fetchStages,
+  fetchMe,
+  fetchAccount,
+  updateTopXBo5,
+  logout,
+} from './api';
 import { fuzzyMatchSets } from './fuzzy';
-import type { Character, CurrentUser, EventInfo, OpenSet, Stage } from './types';
+import { bracketSetById, isNotReady, priorResultFor, slotLabel } from './bracketDisplay';
+import { compareIdentifiers } from './identifierOrder';
+import type {
+  AccountDetails,
+  BracketGroup,
+  BracketSet,
+  Character,
+  CurrentUser,
+  EventInfo,
+  OpenSet,
+  PhaseGroupSummary,
+  SetDetail,
+  Stage,
+  ToastKind,
+} from './types';
 import './App.css';
 
 const STORAGE_KEY = 'smashset.event';
+// Keyed by which event it was chosen for (below), so switching events never
+// silently carries over a pool id that doesn't belong to the new one.
+const POOL_STORAGE_KEY = 'smashset.phaseGroup';
 const POLL_MS = 4000;
 
 export default function App() {
@@ -18,7 +50,20 @@ export default function App() {
     const raw = localStorage.getItem(STORAGE_KEY);
     return raw ? (JSON.parse(raw) as EventInfo) : null;
   });
+  // null = not fetched yet for the current event. A TO is normally only
+  // ever looking at one pool/bracket at a time (matching how start.gg's own
+  // bracket pages work), so everything below is scoped to whichever one
+  // this is — nothing is fetched for any other pool unless the TO switches.
+  const [phaseGroups, setPhaseGroups] = useState<PhaseGroupSummary[] | null>(null);
+  const [phaseGroupId, setPhaseGroupIdState] = useState<number | null>(null);
+  // True while actively re-choosing a pool via "switch pool" — distinct from
+  // "phaseGroupId is null", which also means "no pool chosen yet" but should
+  // fall back to event selection on Back rather than cancel back to a
+  // current pool that doesn't exist yet.
+  const [pickingPool, setPickingPool] = useState(false);
   const [sets, setSets] = useState<OpenSet[]>([]);
+  const [bracketGroup, setBracketGroup] = useState<BracketGroup | null>(null);
+  const [view, setView] = useState<'list' | 'bracket'>('list');
   const [characters, setCharacters] = useState<Character[]>([]);
   const [stages, setStages] = useState<Stage[]>([]);
   const [query, setQuery] = useState('');
@@ -30,15 +75,24 @@ export default function App() {
   // selecting instead of just revealing.
   const [revealed, setRevealed] = useState(false);
   const [selectedSet, setSelectedSet] = useState<OpenSet | null>(null);
-  const [toast, setToast] = useState<string | null>(null);
+  // Set only when selectedSet was opened for correction (via
+  // selectFromBracket) and start.gg actually had per-game records for it —
+  // reset to null on every close, from whichever path (see the ReportPanel
+  // render below), so a later plain open-set click never inherits a stale
+  // value from a previous correction.
+  const [priorDetail, setPriorDetail] = useState<SetDetail | null>(null);
+  const [toast, setToast] = useState<{ message: string; kind: ToastKind } | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [topX, setTopXState] = useState<number | null>(null);
+  const [bracketLoadError, setBracketLoadError] = useState<string | null>(null);
+  const [account, setAccount] = useState<AccountDetails | null>(null);
+  const [accountError, setAccountError] = useState(false);
   const [startingIds, setStartingIds] = useState<Set<number | string>>(new Set());
   // Sets we've successfully started this session, kept separately from `sets`
   // so a poll landing before start.gg's own read catches up to the mutation
   // can't flip a just-started set back to not-started and bring the button back.
   const [startedIds, setStartedIds] = useState<Set<number | string>>(new Set());
   const [showHelp, setShowHelp] = useState(false);
+  const [showAccount, setShowAccount] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -47,32 +101,101 @@ export default function App() {
       .catch(() => setUser(null));
   }, []);
 
+  useEffect(() => {
+    if (!user) return;
+    fetchAccount()
+      .then(setAccount)
+      .catch(() => setAccountError(true));
+  }, [user]);
+
   function handleResolved(e: EventInfo) {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(e));
     setEvent(e);
   }
 
-  function setTopX(value: number | null) {
-    setTopXState(value);
-    if (!event) return;
-    const key = `${STORAGE_KEY}.topX.${event.id}`;
-    if (value == null) localStorage.removeItem(key);
-    else localStorage.setItem(key, String(value));
+  function pickPool(id: number) {
+    if (event) localStorage.setItem(POOL_STORAGE_KEY, JSON.stringify({ eventId: event.id, phaseGroupId: id }));
+    setPhaseGroupIdState(id);
+    setPickingPool(false);
   }
 
+  // The event picker (Settings) already resolves an event; this resolves
+  // which of its pools/brackets to actually work with — skipped entirely
+  // (auto-picked) when there's only one, which is the common case.
   useEffect(() => {
     if (!event) return;
-    const raw = localStorage.getItem(`${STORAGE_KEY}.topX.${event.id}`);
-    setTopXState(raw ? Number(raw) : null);
-  }, [event?.id]);
+    setPhaseGroups(null);
+    setPhaseGroupIdState(null);
+    fetchPhaseGroups(event.id)
+      .then(({ phaseGroups }) => {
+        setPhaseGroups(phaseGroups);
+        if (phaseGroups.length === 1) {
+          pickPool(phaseGroups[0].id);
+          return;
+        }
+        const raw = localStorage.getItem(POOL_STORAGE_KEY);
+        if (!raw) return;
+        try {
+          const saved = JSON.parse(raw) as { eventId: number; phaseGroupId: number };
+          if (saved.eventId === event.id && phaseGroups.some((pg) => pg.id === saved.phaseGroupId)) {
+            setPhaseGroupIdState(saved.phaseGroupId);
+          }
+        } catch {
+          // Malformed storage — just leaves phaseGroupId unset, same as if
+          // nothing had been saved, so PoolPicker shows as usual.
+        }
+      })
+      .catch((err) => setLoadError(err instanceof Error ? err.message : 'Failed to load phase groups'));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [event]);
 
-  async function refreshSets(eventId: number) {
+  // The one place a toast gets shown and cleared — every call site below
+  // (and ReportPanel, via the onNotify prop) goes through this instead of
+  // duplicating its own setTimeout.
+  function notify(message: string, kind: ToastKind = 'info') {
+    setToast({ message, kind });
+    setTimeout(() => setToast(null), 3000);
+  }
+
+  // Optimistic: the input reflects the new value immediately, and rolls back
+  // with a toast on the rare failure rather than waiting a round trip to
+  // update — the same pattern handleStart already uses below.
+  async function handleTopXChange(value: number | null) {
+    const previous = account?.topXBo5 ?? null;
+    setAccount((prev) => (prev ? { ...prev, topXBo5: value } : prev));
     try {
-      const { sets } = await fetchOpenSets(eventId);
+      await updateTopXBo5(value);
+    } catch (err) {
+      setAccount((prev) => (prev ? { ...prev, topXBo5: previous } : prev));
+      notify(err instanceof Error ? err.message : 'Failed to save preference', 'error');
+    }
+  }
+
+  function handleSignOut() {
+    setShowAccount(false);
+    logout().finally(() => setUser(null));
+  }
+
+  async function refreshSets(phaseGroupId: number) {
+    try {
+      const { sets } = await fetchOpenSets(phaseGroupId);
       setSets(sets);
       setLoadError(null);
     } catch (err) {
       setLoadError(err instanceof Error ? err.message : 'Failed to load sets');
+    }
+  }
+
+  // Polled separately from refreshSets (different endpoint, different
+  // shape) but on the same cadence — powers the read-only Completed/Not
+  // ready sections below, which the fast-path open-sets list can't (it
+  // deliberately excludes both categories).
+  async function refreshBracket(phaseGroupId: number) {
+    try {
+      setBracketGroup(await fetchBracket(phaseGroupId));
+      setBracketLoadError(null);
+    } catch (err) {
+      setBracketLoadError(err instanceof Error ? err.message : 'Failed to load completed/not-ready sets');
     }
   }
 
@@ -87,22 +210,32 @@ export default function App() {
   }, [event]);
 
   useEffect(() => {
-    if (!event || selectedSet) return;
-    refreshSets(event.id);
-    const interval = setInterval(() => refreshSets(event.id), POLL_MS);
+    if (phaseGroupId === null || selectedSet) return;
+    refreshSets(phaseGroupId);
+    const interval = setInterval(() => refreshSets(phaseGroupId), POLL_MS);
     return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [event, selectedSet]);
+  }, [phaseGroupId, selectedSet]);
+
+  useEffect(() => {
+    if (phaseGroupId === null || selectedSet) return;
+    refreshBracket(phaseGroupId);
+    const interval = setInterval(() => refreshBracket(phaseGroupId), POLL_MS);
+    return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phaseGroupId, selectedSet]);
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
       // ReportPanel owns every keypress while a set is open — it has its own
-      // window-level listener and its own escape/confirm flow. The help
-      // modal owns its own Escape-to-close and has no other bindings, but
-      // still needs every OTHER key suppressed here, or e.g. a digit typed
-      // while it's open would select a result on the hidden search screen
-      // underneath it.
-      if (selectedSet || showHelp) return;
+      // window-level listener and its own escape/confirm flow. The help and
+      // account modals own their own Escape-to-close and have no other
+      // bindings, but still need every OTHER key suppressed here, or e.g. a
+      // digit typed while one is open would select a result on the hidden
+      // search screen underneath it. The bracket view has no search box or
+      // numbered results to target, so these shortcuts are meaningless (and
+      // would silently steal focus/keys) while it's showing.
+      if (selectedSet || showHelp || showAccount || view === 'bracket') return;
 
       const active = document.activeElement;
       const inField = active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement;
@@ -164,6 +297,37 @@ export default function App() {
   if (user === null) return <SignIn />;
   if (!event) return <Settings onResolved={handleResolved} />;
 
+  function backToEventPicker() {
+    localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(POOL_STORAGE_KEY);
+    setEvent(null);
+  }
+
+  if (phaseGroups === null) return <div className="settings-screen"><h1>SmashSet</h1></div>;
+
+  if (phaseGroups.length === 0) {
+    return (
+      <div className="settings-screen">
+        <h1>SmashSet</h1>
+        <p className="error">This event has no brackets yet.</p>
+        <button onClick={backToEventPicker}>back</button>
+      </div>
+    );
+  }
+
+  if (pickingPool || (phaseGroups.length > 1 && phaseGroupId === null)) {
+    return (
+      <PoolPicker
+        eventName={event.name}
+        phaseGroups={phaseGroups}
+        onPicked={pickPool}
+        onBack={phaseGroupId !== null ? () => setPickingPool(false) : backToEventPicker}
+      />
+    );
+  }
+
+  if (phaseGroupId === null) return <div className="settings-screen"><h1>SmashSet</h1></div>;
+
   const results = fuzzyMatchSets(query, sets, (s) => s.entrants.map((e) => e.name))
     .map((s) => (!s.isStarted && startedIds.has(s.id) ? { ...s, isStarted: true } : s))
     .sort((a, b) => Number(b.isStarted) - Number(a.isStarted));
@@ -172,8 +336,58 @@ export default function App() {
   // always has — only an actual choice among several needs `revealed` first.
   const showHighlight = results.length <= 1 || revealed;
 
+  const allBracketSets = bracketGroup?.sets ?? [];
+  const bracketById = bracketSetById(allBracketSets);
+  const completedSets = allBracketSets.filter((s) => s.state === 3).sort((a, b) => compareIdentifiers(a.identifier, b.identifier));
+  const notReadySets = allBracketSets.filter(isNotReady).sort((a, b) => compareIdentifiers(a.identifier, b.identifier));
+
   function selectSet(s: OpenSet) {
     setSelectedSet(s);
+  }
+
+  // Shared by the bracket tree and the Completed-section rows — both a
+  // still-open set and an already-completed one (being reopened for
+  // correction) funnel through here. For a completed one, this also fetches
+  // its full per-game detail so ReportPanel can open pre-filled with what
+  // was actually played; that fetch happens *before* selectSet so it's
+  // already in state by the time ReportPanel's useState initializers read
+  // it on mount (they only ever consult their initial value once).
+  async function selectFromBracket(bs: BracketSet) {
+    if (bs.state === 3) {
+      try {
+        setPriorDetail(await fetchSetDetail(bs.id));
+      } catch {
+        // Still opens — just without the pre-fill, same as if start.gg had
+        // no game records for this set at all (e.g. a quick-reported one).
+        setPriorDetail(null);
+      }
+    } else {
+      setPriorDetail(null);
+    }
+
+    // The richer, mains-enriched version of this same set already sitting
+    // in `sets` (polled continuously regardless of which view is showing)
+    // — completed sets are never in it (fetchOpenSets excludes them), so
+    // this only ever actually matches for a still-open set.
+    const openSet = sets.find((s) => s.id === bs.id);
+    if (openSet) {
+      selectSet(openSet);
+      return;
+    }
+    const [a, b] = bs.slots;
+    if (!a.entrant || !b.entrant) return;
+    selectSet({
+      id: bs.id,
+      isPreview: false,
+      isStarted: bs.state === 2,
+      fullRoundText: bs.fullRoundText,
+      identifier: bs.identifier,
+      lPlacement: bs.lPlacement,
+      entrants: [
+        { id: a.entrant.id, name: a.entrant.name },
+        { id: b.entrant.id, name: b.entrant.name },
+      ],
+    });
   }
 
   async function handleStart(s: OpenSet) {
@@ -182,8 +396,7 @@ export default function App() {
       await startSet(s.id);
       setStartedIds((prev) => new Set(prev).add(s.id));
     } catch (err) {
-      setToast(err instanceof Error ? err.message : 'Failed to start set');
-      setTimeout(() => setToast(null), 3000);
+      notify(err instanceof Error ? err.message : 'Failed to start set', 'error');
     } finally {
       setStartingIds((prev) => {
         const next = new Set(prev);
@@ -200,24 +413,43 @@ export default function App() {
     return match?.id ?? null;
   }
 
+  const topX = account?.topXBo5 ?? null;
+
   if (selectedSet) {
+    // The richer bracket-shaped view of whatever's currently selected, if
+    // any — present for anything the bracket poll has seen (which includes
+    // completed sets; the open-sets poll never does). Powers the
+    // already-reported banner and, below, a sensible default winner when
+    // there's no search match to go on.
+    const selectedBracketSet = bracketById.get(String(selectedSet.id));
+    const priorResult = selectedBracketSet ? priorResultFor(selectedBracketSet) : null;
+
     return (
       <div className="app-shell">
         <ReportPanel
           set={selectedSet}
-          presumedWinnerId={matchedEntrantId(selectedSet)}
+          // Search-query match wins when there is one (the usual reporting
+          // flow); otherwise, correcting an already-decided set should
+          // start on the winner it actually has, not an arbitrary side.
+          presumedWinnerId={matchedEntrantId(selectedSet) ?? selectedBracketSet?.winnerId ?? null}
+          priorResult={priorResult}
+          priorDetail={priorDetail}
           characters={characters}
           stages={stages}
           topXBo5={topX}
+          videogameId={event.videogame.id}
+          onNotify={notify}
           onDone={() => {
-            setToast(`Reported ${selectedSet.entrants.map((e) => e.name).join(' vs ')}`);
+            notify(`Reported ${selectedSet.entrants.map((e) => e.name).join(' vs ')}`, 'success');
             setSelectedSet(null);
+            setPriorDetail(null);
             setQuery('');
-            refreshSets(event.id);
-            setTimeout(() => setToast(null), 3000);
+            refreshSets(phaseGroupId);
+            refreshBracket(phaseGroupId);
           }}
           onCancel={() => {
             setSelectedSet(null);
+            setPriorDetail(null);
           }}
         />
       </div>
@@ -238,90 +470,145 @@ export default function App() {
           >
             ?
           </button>
-          <label className="top-x-control" title="Sets at or above this placement auto-select Bo5">
-            Top
-            <input
-              type="number"
-              min={1}
-              step={1}
-              value={topX ?? ''}
-              placeholder="—"
-              onChange={(e) => setTopX(e.target.value ? Number(e.target.value) : null)}
-            />
-            = Bo5
-          </label>
           <button
-            className="settings-link"
-            onClick={() => {
-              localStorage.removeItem(STORAGE_KEY);
-              setEvent(null);
-            }}
+            type="button"
+            className="help-trigger"
+            onClick={() => setShowAccount(true)}
+            title="Account"
+            aria-label="Account"
           >
-            switch event
+            ⚙
           </button>
-          <button
-            className="settings-link"
-            onClick={() => {
-              logout().finally(() => setUser(null));
-            }}
-          >
-            sign out
+          {phaseGroups.length > 1 && (
+            <button className="settings-link" onClick={() => setPickingPool(true)}>
+              switch pool
+            </button>
+          )}
+          <button className="settings-link" onClick={backToEventPicker}>
+            switch event
           </button>
         </div>
       </header>
 
-      <input
-        ref={searchRef}
-        className="search-box"
-        autoFocus
-        value={query}
-        placeholder="Winner's name… (press / to focus, 1-9 to pick)"
-        onChange={(e) => {
-          setQuery(e.target.value);
-          setHighlight(0);
-          setRevealed(false);
-        }}
-      />
+      <div className="segmented-toggle">
+        <button type="button" className={view === 'list' ? 'selected' : ''} onClick={() => setView('list')}>
+          List
+        </button>
+        <button type="button" className={view === 'bracket' ? 'selected' : ''} onClick={() => setView('bracket')}>
+          Bracket
+        </button>
+      </div>
 
-      {loadError && <p className="error">{loadError}</p>}
-
-      <ul className="results-list">
-        {results.map((s, i) => (
-          <li
-            key={s.id}
-            className={`${showHighlight && i === highlight ? 'active' : ''} ${s.isStarted ? 'started' : ''}`}
-            onMouseEnter={() => {
-              setRevealed(true);
-              setHighlight(i);
+      {view === 'list' ? (
+        <>
+          <input
+            ref={searchRef}
+            className="search-box"
+            autoFocus
+            value={query}
+            placeholder="Winner's name… (press / to focus, 1-9 to pick)"
+            onChange={(e) => {
+              setQuery(e.target.value);
+              setHighlight(0);
+              setRevealed(false);
             }}
-            onClick={() => selectSet(s)}
-          >
-            {i < 9 && <span className="result-num">{i + 1}</span>}
-            <span className="entrant-names">{s.entrants.map((e) => e.name).join(' vs ')}</span>
-            <span className="round-text">
-              {s.fullRoundText}
-              {s.isPreview && ' · bracket not started'}
-              {s.isStarted && ' · started'}
-            </span>
-            {!s.isPreview && !s.isStarted && (
-              <button
-                className="start-btn"
-                disabled={startingIds.has(s.id)}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleStart(s);
-                }}
-              >
-                {startingIds.has(s.id) ? '…' : 'start'}
-              </button>
-            )}
-          </li>
-        ))}
-        {results.length === 0 && <li className="empty">No open sets match "{query}"</li>}
-      </ul>
+          />
 
-      {toast && <div className="toast">{toast}</div>}
+          {loadError && <p className="error">{loadError}</p>}
+
+          <ul className="results-list">
+            {results.map((s, i) => (
+              <li
+                key={s.id}
+                className={`${showHighlight && i === highlight ? 'active' : ''} ${s.isStarted ? 'started' : ''}`}
+                onMouseEnter={() => {
+                  setRevealed(true);
+                  setHighlight(i);
+                }}
+                onClick={() => selectSet(s)}
+              >
+                {i < 9 && <span className="result-num">{i + 1}</span>}
+                <span className="entrant-names">{s.entrants.map((e) => e.name).join(' vs ')}</span>
+                <span className="round-text">
+                  {s.fullRoundText}
+                  {s.isPreview && ' · bracket not started'}
+                  {s.isStarted && ' · started'}
+                </span>
+                {!s.isPreview && !s.isStarted && (
+                  <button
+                    className="start-btn"
+                    disabled={startingIds.has(s.id)}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleStart(s);
+                    }}
+                  >
+                    {startingIds.has(s.id) ? '…' : 'start'}
+                  </button>
+                )}
+              </li>
+            ))}
+            {results.length === 0 && <li className="empty">No open sets match "{query}"</li>}
+          </ul>
+
+          {bracketLoadError && <p className="error">{bracketLoadError}</p>}
+
+          {completedSets.length > 0 && (
+            <details className="set-section">
+              <summary>Completed ({completedSets.length})</summary>
+              <ul className="results-list">
+                {completedSets.map((s) => {
+                  const [a, b] = s.slots;
+                  const winner = a.entrant?.id === s.winnerId ? a : b;
+                  const loser = winner === a ? b : a;
+                  return (
+                    <li key={s.id} onClick={() => selectFromBracket(s)}>
+                      <span className="entrant-names">
+                        <strong>{winner.entrant?.name}</strong> def. {loser.entrant?.name}
+                        {winner.score !== null && loser.score !== null ? ` ${winner.score}–${loser.score}` : ''}
+                      </span>
+                      <span className="round-text">{s.fullRoundText} · tap to correct</span>
+                    </li>
+                  );
+                })}
+              </ul>
+            </details>
+          )}
+
+          {notReadySets.length > 0 && (
+            <details className="set-section">
+              <summary>Not ready ({notReadySets.length})</summary>
+              <ul className="results-list">
+                {notReadySets.map((s) => (
+                  <li key={s.id} className="readonly">
+                    <span className="entrant-names">
+                      {slotLabel(s.slots[0], bracketById)} vs {slotLabel(s.slots[1], bracketById)}
+                    </span>
+                    <span className="round-text">{s.fullRoundText}</span>
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
+        </>
+      ) : (
+        <>
+          {bracketLoadError && <p className="error">{bracketLoadError}</p>}
+          <Bracket group={bracketGroup} onSelectSet={selectFromBracket} />
+        </>
+      )}
+
+      {toast && <div className={`toast toast-${toast.kind}`}>{toast.message}</div>}
       {showHelp && <HelpModal onClose={() => setShowHelp(false)} />}
+      {showAccount && (
+        <AccountModal
+          account={account}
+          accountError={accountError}
+          onClose={() => setShowAccount(false)}
+          onTopXChange={handleTopXChange}
+          onSignOut={handleSignOut}
+        />
+      )}
     </div>
   );
 }

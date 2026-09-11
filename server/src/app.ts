@@ -5,11 +5,13 @@ import cookieParser from 'cookie-parser';
 import { requireAuth } from './middleware/auth.js';
 import { authRouter } from './routes/auth.js';
 import { meRouter } from './routes/me.js';
+import { accountRouter } from './routes/account.js';
 import { eventRouter } from './routes/event.js';
 import { setsRouter } from './routes/sets.js';
 import { charactersRouter } from './routes/characters.js';
 import { stagesRouter } from './routes/stages.js';
 import { reportRouter } from './routes/report.js';
+import { mainsRouter } from './routes/mains.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -30,11 +32,13 @@ export function createApp() {
   // be paired with the credentialed (cookie) requests introduced here.
   app.use('/api/auth', authRouter);
   app.use('/api/me', meRouter);
+  app.use('/api/account', requireAuth, accountRouter);
   app.use('/api/event', requireAuth, eventRouter);
   app.use('/api/sets', requireAuth, setsRouter);
   app.use('/api/characters', requireAuth, charactersRouter);
   app.use('/api/stages', requireAuth, stagesRouter);
   app.use('/api/report', requireAuth, reportRouter);
+  app.use('/api/mains', requireAuth, mainsRouter);
 
   if (process.env.NODE_ENV === 'production') {
     // Railway does not set NODE_ENV=production automatically — it's set

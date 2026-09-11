@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { Character, EntrantInfo, OpenSet, Stage } from './types';
+import type { Character, EntrantInfo, OpenSet, PriorResult, SetDetail, Stage, ToastKind } from './types';
 import {
   parseScoreShorthand,
   previewGames,
@@ -11,15 +11,25 @@ import { BO_OPTIONS, boLabel, guessRequiredWins } from './roundFormat';
 import { FuzzyCell } from './FuzzyCell';
 import { fuzzyMatchCharacters } from './characterAliases';
 import { StageToggle } from './StageToggle';
-import { reportSet, type StageSelection } from './api';
+import { reportSet, updatePlayerMain, type StageSelection } from './api';
 import { lookupMain } from './mains';
+import { derivePriorState } from './priorDetail';
 
 interface Props {
   set: OpenSet;
   presumedWinnerId: number | null;
+  // Both present together when re-opening an already-completed set to
+  // correct it — priorResult drives the "already reported" banner,
+  // priorDetail (when start.gg actually has per-game records for this set)
+  // additionally pre-fills the score/characters/stages below instead of
+  // leaving them blank. Both null/absent for a normal not-yet-reported set.
+  priorResult?: PriorResult | null;
+  priorDetail?: SetDetail | null;
   characters: Character[];
   stages: Stage[];
   topXBo5: number | null;
+  videogameId: number;
+  onNotify: (message: string, kind?: ToastKind) => void;
   onDone: () => void;
   onCancel: () => void;
 }
@@ -34,23 +44,54 @@ type Mode =
   | { kind: 'boInput' }
   | { kind: 'quick' }
   | { kind: 'stages'; game: number | null }
-  | { kind: 'characters'; side: CharSide | null; target: CharTarget | null };
+  | { kind: 'characters'; side: CharSide | null; target: CharTarget | null }
+  // Corrects a player's stored main (server/src/db/mains.ts), not this game's
+  // pick — a longer-lived fix that carries forward to every future set this
+  // player is in, separate from the per-game charsByGame state below.
+  | { kind: 'editMain'; side: CharSide };
 
 type CharsByGame = Record<number, { winner: Character | null; loser: Character | null }>;
 
-export function ReportPanel({ set, presumedWinnerId, characters, stages, topXBo5, onDone, onCancel }: Props) {
+// What's currently known about a player's main and how much to trust it —
+// see mainStatus() below for how each variant gets decided.
+type MainStatus =
+  | { kind: 'none' }
+  | { kind: 'manual'; character: Character | null }
+  | { kind: 'suggested'; character: Character | null; gamesTallied: number; setsConsidered: number }
+  | { kind: 'fallback'; character: Character };
+
+export function ReportPanel({
+  set,
+  presumedWinnerId,
+  priorResult,
+  priorDetail,
+  characters,
+  stages,
+  topXBo5,
+  videogameId,
+  onNotify,
+  onDone,
+  onCancel,
+}: Props) {
   const [entrantA, entrantB] = set.entrants;
   const [winnerId, setWinnerId] = useState<number>(presumedWinnerId ?? entrantA.id);
+  // Derived once, from props alone (not state) — cheap enough to recompute
+  // every render, and only its value at mount time actually matters: it
+  // exists purely to seed the several useState calls below, which (by
+  // design) only ever consult their initializer on the very first render.
+  const derivedPrior = priorDetail
+    ? derivePriorState(priorDetail, winnerId, winnerId === entrantA.id ? entrantB.id : entrantA.id, characters, stages)
+    : null;
   const [requiredWins, setRequiredWins] = useState(() =>
-    guessRequiredWins(set.fullRoundText, set.lPlacement, topXBo5)
+    derivedPrior ? derivedPrior.requiredWins : guessRequiredWins(set.fullRoundText, set.lPlacement, topXBo5)
   );
   const [mode, setMode] = useState<Mode>({ kind: 'game' });
   const [scoreSource, setScoreSource] = useState<'detailed' | 'quick'>('detailed');
-  const [shorthand, setShorthand] = useState('');
+  const [shorthand, setShorthand] = useState(() => derivedPrior?.shorthand ?? '');
   const [resetShorthandNext, setResetShorthandNext] = useState(false);
   const [quickRaw, setQuickRaw] = useState('');
-  const [charsByGame, setCharsByGame] = useState<CharsByGame>({});
-  const [stagesByGame, setStagesByGame] = useState<Record<number, Stage | null>>({});
+  const [charsByGame, setCharsByGame] = useState<CharsByGame>(() => derivedPrior?.charsByGame ?? {});
+  const [stagesByGame, setStagesByGame] = useState<Record<number, Stage | null>>(() => derivedPrior?.stagesByGame ?? {});
   // The last character applied to "every game" via the all-games box or m
   // (mains), per side — kept separate from charsByGame so that increasing
   // the game count later (e.g. bo3 -> bo5) can back-fill the newly-added
@@ -60,8 +101,14 @@ export function ReportPanel({ set, presumedWinnerId, characters, stages, topXBo5
     loser: null,
   });
   const [focusedRow, setFocusedRow] = useState<number | null>(null);
+  // Corrections made this session via editMain, keyed by playerId — checked
+  // ahead of entrant.suggestedMainCharacterId in resolveMain so a fix is
+  // reflected immediately (m re-applies it) without waiting on a refetch.
+  // null is a real value here (cleared, not "no correction"); a missing key
+  // means "no correction made," which is why this can't just be
+  // Record<number, number | null> defaulted to undefined-means-unset.
+  const [mainOverrides, setMainOverrides] = useState<Map<number, number | null>>(new Map());
   const [submitting, setSubmitting] = useState(false);
-  const [submitError, setSubmitError] = useState<string | null>(null);
   // Mirrors `submitting` but as a ref, not state: state updates aren't
   // applied until the next render, so keys dispatched faster than that
   // (mashing Enter with no gap) all see the same stale `submitting=false`
@@ -253,22 +300,81 @@ export function ReportPanel({ set, presumedWinnerId, characters, stages, topXBo5
     setMode((m) => (m.kind === 'stages' ? { kind: 'stages', game: null } : m));
   }
 
-  // Prefers the auto-computed suggestion (from the entrant's own recent
-  // start.gg history) over the old hardcoded web/src/mains.ts lookup, which
-  // stays as a manual-override fallback for players with no computable main
-  // yet (e.g. too new to have 10 sets on record).
+  // Single source of truth for "what do we know about this player's main,
+  // and how much should that be trusted" — resolveMain and the status line
+  // rendered near "All games" both derive from this, so they can never say
+  // two different things. Precedence: a same-session correction (editMain)
+  // beats a persisted one (setsConsidered: 0 — the same upsert path, just
+  // from an earlier session), which beats the auto-computed suggestion (from
+  // the player's own recent start.gg history), which beats the old
+  // hardcoded web/src/mains.ts lookup — a fallback for players with no
+  // computable main yet (e.g. too new to have 10 sets on record).
+  function mainStatus(entrant: EntrantInfo): MainStatus {
+    if (entrant.playerId != null && mainOverrides.has(entrant.playerId)) {
+      const overrideId = mainOverrides.get(entrant.playerId) ?? null;
+      return { kind: 'manual', character: overrideId != null ? (characters.find((c) => c.id === overrideId) ?? null) : null };
+    }
+    const suggested = entrant.suggestedMain;
+    if (suggested) {
+      const character = suggested.characterId != null ? (characters.find((c) => c.id === suggested.characterId) ?? null) : null;
+      if (suggested.setsConsidered === 0) return { kind: 'manual', character };
+      return { kind: 'suggested', character, gamesTallied: suggested.gamesTallied, setsConsidered: suggested.setsConsidered };
+    }
+    const fallback = lookupMain(entrant.name, characters);
+    return fallback ? { kind: 'fallback', character: fallback } : { kind: 'none' };
+  }
+
   function resolveMain(entrant: EntrantInfo): Character | null {
-    const suggested =
-      entrant.suggestedMainCharacterId != null
-        ? (characters.find((c) => c.id === entrant.suggestedMainCharacterId) ?? null)
-        : null;
-    return suggested ?? lookupMain(entrant.name, characters);
+    const status = mainStatus(entrant);
+    return status.kind === 'none' ? null : status.character;
+  }
+
+  // gamesTallied counts games, setsConsidered counts sets (a Bo5 can supply
+  // several games to one set), so the two are never combined into a single
+  // fraction — that would look like a percentage but silently mix units.
+  function describeMainStatus(status: MainStatus): string {
+    switch (status.kind) {
+      case 'none':
+        return 'no main on file';
+      case 'manual':
+        return status.character ? `${status.character.name} — set manually` : 'no main on file';
+      case 'fallback':
+        return status.character.name;
+      case 'suggested':
+        return status.character
+          ? `${status.character.name} — seen in ${status.gamesTallied} games across their last ${status.setsConsidered} sets`
+          : `no clear main in their last ${status.setsConsidered} sets`;
+    }
+  }
+
+  // Corrects what's on file for this player going forward — distinct from
+  // charsByGame, which only ever describes this one report. Applied to local
+  // state immediately regardless of how the request resolves: a failure here
+  // means the correction won't be remembered next time this player comes up,
+  // not that anything about the report currently being filled in is wrong,
+  // so it isn't worth a blocking error of its own.
+  function correctMain(side: CharSide, item: Character | null) {
+    const entrant = side === 'winner' ? winner : loser;
+    if (entrant.playerId == null) return;
+    const playerId = entrant.playerId;
+    setMainOverrides((prev) => new Map(prev).set(playerId, item?.id ?? null));
+    setMode({ kind: 'game' });
+    updatePlayerMain(playerId, videogameId, item?.id ?? null).catch((err) => {
+      console.error(`Failed to save corrected main for player ${playerId}:`, err);
+    });
   }
 
   function applyMains() {
     const winnerMain = resolveMain(winner);
     const loserMain = resolveMain(loser);
-    if (!winnerMain && !loserMain) return;
+    if (!winnerMain && !loserMain) {
+      // Otherwise m is a silent no-op indistinguishable from not having
+      // registered the keypress at all — the status line above "All games"
+      // already shows "no main on file" up front, but this confirms the
+      // keypress itself did something (or rather, correctly did nothing).
+      onNotify('No main on file for either player — pick one manually, or correct it above.', 'info');
+      return;
+    }
     setCharsByGame((prev) => {
       const next: CharsByGame = { ...prev };
       for (let g = 1; g <= maxRows; g++) {
@@ -291,7 +397,6 @@ export function ReportPanel({ set, presumedWinnerId, characters, stages, topXBo5
     if (!games || games.length === 0) return;
     submittingRef.current = true;
     setSubmitting(true);
-    setSubmitError(null);
     try {
       // Quick-reported scores are winner + overall score only — never drag in
       // character/stage picks left over from switching out of detailed entry
@@ -328,7 +433,7 @@ export function ReportPanel({ set, presumedWinnerId, characters, stages, topXBo5
       });
       onDone();
     } catch (err) {
-      setSubmitError(err instanceof Error ? err.message : 'Failed to report set');
+      onNotify(err instanceof Error ? err.message : 'Failed to report set', 'error');
     } finally {
       submittingRef.current = false;
       setSubmitting(false);
@@ -576,6 +681,13 @@ export function ReportPanel({ set, presumedWinnerId, characters, stages, topXBo5
         {set.fullRoundText} · {set.identifier}
       </div>
 
+      {priorResult && (
+        <p className="prior-result">
+          Already reported: <strong>{priorResult.winnerName}</strong> def. {priorResult.loserName}{' '}
+          {priorResult.winnerScore}–{priorResult.loserScore} — reporting below will overwrite this.
+        </p>
+      )}
+
       {set.isPreview && (
         <p className="error">
           This bracket hasn't been started on start.gg yet, so this is only a preview matchup — it can't be reported
@@ -663,9 +775,50 @@ export function ReportPanel({ set, presumedWinnerId, characters, stages, topXBo5
       {mode.kind !== 'quick' && (
         <div
           className={`game-stats-section ${
-            mode.kind === 'game' || mode.kind === 'characters' || mode.kind === 'stages' ? 'focused' : ''
+            mode.kind === 'game' || mode.kind === 'characters' || mode.kind === 'stages' || mode.kind === 'editMain'
+              ? 'focused'
+              : ''
           } ${charPending ? 'char-pending' : ''}`}
         >
+          {mode.kind === 'editMain' ? (
+            <div className="edit-main-row">
+              <span className="edit-main-label">Correct {mode.side === 'winner' ? winner.name : loser.name}'s main</span>
+              <FuzzyCell
+                items={characters}
+                matchItems={fuzzyMatchCharacters}
+                value={null}
+                placeholder="type a character, or clear…"
+                active
+                onCommit={(c) => correctMain(mode.side, c)}
+                onCancel={() => setMode({ kind: 'game' })}
+              />
+              <button type="button" className="edit-main-clear" onClick={() => correctMain(mode.side, null)}>
+                clear
+              </button>
+            </div>
+          ) : (
+            (winner.playerId != null || loser.playerId != null) && (
+              <div className="edit-main-row edit-main-triggers">
+                {winner.playerId != null && (
+                  <div className="main-status-line">
+                    <span className="main-status-text">{winner.name}: {describeMainStatus(mainStatus(winner))}</span>
+                    <button type="button" onClick={() => setMode({ kind: 'editMain', side: 'winner' })}>
+                      ✎ correct
+                    </button>
+                  </div>
+                )}
+                {loser.playerId != null && (
+                  <div className="main-status-line">
+                    <span className="main-status-text">{loser.name}: {describeMainStatus(mainStatus(loser))}</span>
+                    <button type="button" onClick={() => setMode({ kind: 'editMain', side: 'loser' })}>
+                      ✎ correct
+                    </button>
+                  </div>
+                )}
+              </div>
+            )
+          )}
+
           <div className="game-stat-row all-games-row">
           <div className="game-stat-title">All games</div>
           <div className="game-stat-sides">
@@ -857,7 +1010,6 @@ export function ReportPanel({ set, presumedWinnerId, characters, stages, topXBo5
           {submitting ? 'Reporting…' : 'Report set'}
         </button>
       )}
-      {submitError && <p className="error">{submitError}</p>}
 
       <div className="sticky-footer">
         <div className="tool-label">
@@ -868,7 +1020,8 @@ export function ReportPanel({ set, presumedWinnerId, characters, stages, topXBo5
           </div>
           <div>
             Characters — <kbd>c</kbd>, then <kbd>w</kbd>/<kbd>l</kbd> (starts on all games), then numbers to target
-            games (stack multiple) or <kbd>a</kbd> for all · <kbd>m</kbd> fills in mains anytime
+            games (stack multiple) or <kbd>a</kbd> for all · <kbd>m</kbd> fills in mains anytime · wrong main on
+            file? correct it above "All games"
           </div>
           {stages.length > 0 && (
             <div>

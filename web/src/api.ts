@@ -1,4 +1,4 @@
-import type { Character, CurrentUser, EventInfo, OpenSet, Stage } from './types';
+import type { AccountDetails, BracketGroup, Character, CurrentUser, EventInfo, OpenSet, PhaseGroupSummary, SetDetail, Stage } from './types';
 
 async function req<T>(url: string, opts?: RequestInit): Promise<T> {
   // Same-origin requests already send cookies by default, but being
@@ -19,6 +19,30 @@ export function logout(): Promise<{ ok: true }> {
   return req('/api/auth/logout', { method: 'POST' });
 }
 
+export function fetchAccount(): Promise<AccountDetails> {
+  return req('/api/account');
+}
+
+export function updateTopXBo5(topXBo5: number | null): Promise<{ topXBo5: number | null }> {
+  return req('/api/account/preferences', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ topXBo5 }),
+  });
+}
+
+export function updatePlayerMain(
+  playerId: number,
+  videogameId: number,
+  characterId: number | null
+): Promise<{ characterId: number | null }> {
+  return req('/api/mains', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ playerId, videogameId, characterId }),
+  });
+}
+
 export function resolveEvent(input: string): Promise<{ event?: EventInfo; events?: EventInfo[] }> {
   return req('/api/event/resolve', {
     method: 'POST',
@@ -27,12 +51,24 @@ export function resolveEvent(input: string): Promise<{ event?: EventInfo; events
   });
 }
 
-export function fetchOpenSets(eventId: number): Promise<{ sets: OpenSet[] }> {
-  return req(`/api/sets/${eventId}/open-sets`);
+export function fetchPhaseGroups(eventId: number): Promise<{ phaseGroups: PhaseGroupSummary[] }> {
+  return req(`/api/sets/${eventId}/phase-groups`);
+}
+
+export function fetchOpenSets(phaseGroupId: number): Promise<{ sets: OpenSet[] }> {
+  return req(`/api/sets/phase-group/${phaseGroupId}/open-sets`);
 }
 
 export function startSet(setId: number | string): Promise<{ ok: true }> {
   return req(`/api/sets/${setId}/start`, { method: 'POST' });
+}
+
+export function fetchBracket(phaseGroupId: number): Promise<BracketGroup> {
+  return req(`/api/sets/phase-group/${phaseGroupId}/bracket`);
+}
+
+export function fetchSetDetail(setId: number | string): Promise<SetDetail> {
+  return req(`/api/sets/${setId}/detail`);
 }
 
 export function fetchCharacters(videogameId: number): Promise<{ characters: Character[] }> {

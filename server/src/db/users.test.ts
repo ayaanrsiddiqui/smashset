@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { pool } from './pool.js';
-import { getUserById, getUserByStartggId, upsertUserFromOAuth, updateUserTokens } from './users.js';
+import { getUserById, getUserByStartggId, upsertUserFromOAuth, updateUserTokens, updateUserTopXBo5 } from './users.js';
 import { closeTestPool } from '../test-helpers.js';
 
 // Every row this file creates is scoped under this prefix and swept up in
@@ -100,5 +100,36 @@ describe('db/users', () => {
     expect(updated?.accessToken).toBe('new-access');
     expect(updated?.refreshToken).toBe('new-refresh');
     expect(updated?.tokenExpiresAt.getTime()).toBe(newExpiry.getTime());
+  });
+
+  it('a new user has no topXBo5 preference until one is set', async () => {
+    const created = await upsertUserFromOAuth(idFor('default-topx'), null, 'Default TopX Tester', {
+      accessToken: 'a',
+      refreshToken: 'r',
+      expiresAt: futureDate(168),
+    });
+    expect(created.topXBo5).toBeNull();
+  });
+
+  it('updateUserTopXBo5 sets, overwrites, and clears the preference', async () => {
+    const created = await upsertUserFromOAuth(idFor('update-topx'), null, 'TopX Tester', {
+      accessToken: 'a',
+      refreshToken: 'r',
+      expiresAt: futureDate(168),
+    });
+
+    const setTo17 = await updateUserTopXBo5(created.id, 17);
+    expect(setTo17?.topXBo5).toBe(17);
+    expect((await getUserById(created.id))?.topXBo5).toBe(17);
+
+    const overwritten = await updateUserTopXBo5(created.id, 33);
+    expect(overwritten?.topXBo5).toBe(33);
+
+    const cleared = await updateUserTopXBo5(created.id, null);
+    expect(cleared?.topXBo5).toBeNull();
+  });
+
+  it('updateUserTopXBo5 returns null for a nonexistent user', async () => {
+    expect(await updateUserTopXBo5(-1, 5)).toBeNull();
   });
 });
