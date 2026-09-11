@@ -41,8 +41,11 @@ jobs:
       SESSION_SECRET: ci-session-secret-not-a-real-one
       TOKEN_ENCRYPTION_KEY: 00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff
       APP_BASE_URL: http://localhost:3001
-      STARTGG_OAUTH_CLIENT_ID: ci-placeholder
-      STARTGG_OAUTH_CLIENT_SECRET: ci-placeholder
+      # Deliberately different strings: a test asserts the client secret never
+      # appears in the authorize URL, which a shared placeholder would fail
+      # purely because the client id is in there legitimately.
+      STARTGG_OAUTH_CLIENT_ID: ci-placeholder-client-id
+      STARTGG_OAUTH_CLIENT_SECRET: ci-placeholder-client-secret
 
     steps:
       - uses: actions/checkout@v4
