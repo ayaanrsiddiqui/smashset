@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { sign } from 'cookie-signature';
 import request from 'supertest';
+import { testServer } from './test-server.js';
 
 const getSessionWithUserMock = vi.fn();
 const deleteSessionMock = vi.fn();
@@ -12,7 +13,7 @@ vi.mock('./db/sessions.js', async (importOriginal) => ({
 
 const { createApp } = await import('./app.js');
 const { SESSION_COOKIE_NAME } = await import('./middleware/auth.js');
-const app = createApp();
+const server = testServer(createApp());
 
 function signedCookie(sessionId = 'some-session-id'): string {
   return `${SESSION_COOKIE_NAME}=${encodeURIComponent(`s:${sign(sessionId, process.env.SESSION_SECRET!)}`)}`;
@@ -31,7 +32,7 @@ describe('an error no route handled', () => {
     // page the client's JSON parser chokes on.
     getSessionWithUserMock.mockRejectedValue(new Error('connection terminated unexpectedly'));
 
-    const res = await request(app).get('/api/sets/1/phase-groups').set('Cookie', signedCookie());
+    const res = await request(server).get('/api/sets/1/phase-groups').set('Cookie', signedCookie());
 
     expect(res.status).toBe(500);
     expect(res.type).toMatch(/json/);
@@ -41,7 +42,7 @@ describe('an error no route handled', () => {
   it('does not leak the underlying error to the client', async () => {
     getSessionWithUserMock.mockRejectedValue(new Error('connection to 10.0.0.4:5432 refused'));
 
-    const res = await request(app).get('/api/sets/1/phase-groups').set('Cookie', signedCookie());
+    const res = await request(server).get('/api/sets/1/phase-groups').set('Cookie', signedCookie());
 
     expect(JSON.stringify(res.body)).not.toMatch(/10\.0\.0\.4/);
     expect(JSON.stringify(res.body)).not.toMatch(/refused/);
@@ -61,7 +62,7 @@ describe('POST /api/auth/logout when the session row cannot be deleted', () => {
     // was quietly signed back in.
     deleteSessionMock.mockRejectedValue(new Error('db gone'));
 
-    const res = await request(app).post('/api/auth/logout').set('Cookie', signedCookie());
+    const res = await request(server).post('/api/auth/logout').set('Cookie', signedCookie());
 
     // supertest types this as a string; Node actually hands back an array.
     const setCookie = res.headers['set-cookie'] as unknown as string[] | string | undefined;
@@ -75,7 +76,7 @@ describe('POST /api/auth/logout when the session row cannot be deleted', () => {
   it('reports success and clears the cookie on the normal path', async () => {
     deleteSessionMock.mockResolvedValue(undefined);
 
-    const res = await request(app).post('/api/auth/logout').set('Cookie', signedCookie());
+    const res = await request(server).post('/api/auth/logout').set('Cookie', signedCookie());
 
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ ok: true });

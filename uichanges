@@ -105,18 +105,26 @@ unit test, not by live data. It resolves toward letting them report if start.gg
 is unclear, so the failure mode is a spectator typing a score start.gg then
 refuses, rather than a real TO locked out at a venue.
 
-**The server test flake is diagnosed now: `Error: socket hang up`.** I finally
-caught the message (I'd lost it before by piping the run through `head`). It
-has now hit two different 401-gate tests — `GET /api/characters/1` and
-`POST /api/mains` — both of which are deterministic by inspection: no cookie
-means no database query and no network call. The cause is supertest, not the
-app: `request(app)` stands up and tears down a fresh HTTP server for every
-single call, so a full run does that several hundred times, and under load one
-of those sockets gets reset before its response lands. The fix is to listen
-once per file (`const server = app.listen(0)` in beforeAll, then
-`request(server)`) instead of per request. Worth doing — CI gates deploys, so
-a 1-in-6 false failure can block a good push — but it touches every server test
-file, so I left it rather than bundle it into a UI change.
+**The server test flake is fixed.** It was `Error: socket hang up` (and,
+less often, an HTTP parse error), and the cause was supertest rather than the
+app: `request(app)` stands up a fresh `app.listen(0)` and closes it around
+*every single request*, so a run churns hundreds of short-lived listeners
+through the ephemeral port range until one binds a port the kernel has not
+finished with. That is why it kept landing on 401-gate tests that do no I/O at
+all — the request died in the transport, nowhere near whatever test got blamed.
+
+Measured before fixing, minimal app, 8 concurrent workers: **5 failures in
+40,000 requests** listening per-request, **0 in 40,000** listening once. All 7
+supertest files now call `testServer(createApp())` once per file and use
+`request(server)`. 30 consecutive suite runs clean afterwards.
+
+Two things worth knowing about the fix. Holding one listener for a whole file
+means `server.close()` now waits out any socket a test left open, so the
+teardown calls `closeAllConnections()` first — without it, a test that opens
+the SSE route would fail its *whole file* on a hook timeout that names the
+helper rather than the test holding the socket. And because reverting this is
+invisible (the suite stays green, it just goes back to being flaky), there is a
+guard test that fails if any supertest file stops going through the helper.
 
 **Flaky web tests, noted not fixed.** Two runs of `npm run verify` during this
 batch failed a single App test that passes on its own and in its own file

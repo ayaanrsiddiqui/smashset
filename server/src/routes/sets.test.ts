@@ -7,6 +7,7 @@ import { upsertPlayerMain } from '../db/mains.js';
 import { createSession } from '../db/sessions.js';
 import { SESSION_COOKIE_NAME } from '../middleware/auth.js';
 import { closeTestPool } from '../test-helpers.js';
+import { testServer } from '../test-server.js';
 
 const gqlMock = vi.fn();
 // What start.gg reports a response cost. Null by default (most tests don't
@@ -30,7 +31,7 @@ const { StartggComplexityError } = await import('../startgg.js');
 const { COST_MODEL, invalidateSetCaches } = await import('./sets.js');
 const { hasSeenPool, resetPoolEvents } = await import('../poolEvents.js');
 const { resetMainLookupState } = await import('../mainLookup.js');
-const app = createApp();
+const server = testServer(createApp());
 
 const PREFIX = `test-sets-route-${Date.now()}-`;
 const idFor = (label: string) => `${PREFIX}${label}`;
@@ -120,7 +121,7 @@ describe('GET /phase-group/:phaseGroupId/open-sets — auto-main integration', (
     const cookie = await makeSignedInCookie('attach');
     const phaseGroupId = nextTestEventId++; // each test gets its own id so fetchOpenSets' 4s cache never crosses tests
 
-    const res = await request(app).get(`/api/sets/phase-group/${phaseGroupId}/open-sets`).set('Cookie', cookie);
+    const res = await request(server).get(`/api/sets/phase-group/${phaseGroupId}/open-sets`).set('Cookie', cookie);
 
     expect(res.status).toBe(200);
     const entrants: ResponseEntrant[] = res.body.sets[0].entrants;
@@ -159,14 +160,14 @@ describe('GET /phase-group/:phaseGroupId/open-sets — auto-main integration', (
     const phaseGroupId = nextTestEventId++;
     const url = `/api/sets/phase-group/${phaseGroupId}/open-sets`;
 
-    await request(app).get(url).set('Cookie', cookie);
+    await request(server).get(url).set('Cookie', cookie);
     expect(openSetsCalls).toBe(1);
 
     // Well inside the cache TTL, so this one is served locally.
-    await request(app).get(url).set('Cookie', cookie);
+    await request(server).get(url).set('Cookie', cookie);
     expect(openSetsCalls).toBe(1);
 
-    const reported = await request(app).post('/api/report').set('Cookie', cookie).send({
+    const reported = await request(server).post('/api/report').set('Cookie', cookie).send({
       setId: 5001,
       winnerEntrantId: 6001,
       loserEntrantId: 6002,
@@ -177,7 +178,7 @@ describe('GET /phase-group/:phaseGroupId/open-sets — auto-main integration', (
 
     // Without invalidation the TO would keep seeing the set they just
     // reported sitting in the list, still waiting to be reported.
-    await request(app).get(url).set('Cookie', cookie);
+    await request(server).get(url).set('Cookie', cookie);
     expect(openSetsCalls).toBe(2);
   });
 
@@ -191,7 +192,7 @@ describe('GET /phase-group/:phaseGroupId/open-sets — auto-main integration', (
     const cookie = await makeSignedInCookie('lands-in-db');
     const phaseGroupId = nextTestEventId++;
 
-    await request(app).get(`/api/sets/phase-group/${phaseGroupId}/open-sets`).set('Cookie', cookie);
+    await request(server).get(`/api/sets/phase-group/${phaseGroupId}/open-sets`).set('Cookie', cookie);
 
     await vi.waitFor(async () => {
       const { rows } = await pool.query('SELECT character_id FROM player_mains WHERE player_id = $1 AND videogame_id = $2', [
@@ -218,7 +219,7 @@ describe('GET /phase-group/:phaseGroupId/open-sets — auto-main integration', (
     const cookie = await makeSignedInCookie('tombstone-wire-shape');
     const phaseGroupId = nextTestEventId++;
 
-    const res = await request(app).get(`/api/sets/phase-group/${phaseGroupId}/open-sets`).set('Cookie', cookie);
+    const res = await request(server).get(`/api/sets/phase-group/${phaseGroupId}/open-sets`).set('Cookie', cookie);
 
     const entrants: ResponseEntrant[] = res.body.sets[0].entrants;
     const cached = entrants.find((e) => e.name === 'Cached Player')!;
@@ -250,7 +251,7 @@ describe('GET /phase-group/:phaseGroupId/open-sets — auto-main integration', (
     // this request would hang forever (the PlayerMainHistory mocks never
     // resolve until released below) and the test would time out — a direct,
     // automated proof of "must not block," not just an argument for it.
-    const res = await request(app).get(`/api/sets/phase-group/${phaseGroupId}/open-sets`).set('Cookie', cookie);
+    const res = await request(server).get(`/api/sets/phase-group/${phaseGroupId}/open-sets`).set('Cookie', cookie);
     expect(res.status).toBe(200);
 
     // Release the pending mocks so both background tasks finish and their
@@ -525,7 +526,7 @@ describe('GET /phase-group/:phaseGroupId/players', () => {
     });
     const cookie = await makeSignedInCookie('pool-players');
 
-    const res = await request(app).get('/api/sets/phase-group/55/players').set('Cookie', cookie);
+    const res = await request(server).get('/api/sets/phase-group/55/players').set('Cookie', cookie);
 
     expect(res.status).toBe(200);
     expect(res.body.videogameId).toBe(VIDEOGAME_ID);
@@ -545,11 +546,11 @@ describe('GET /phase-group/:phaseGroupId/players', () => {
     });
     const cookie = await makeSignedInCookie('pool-players-cache');
 
-    await request(app).get('/api/sets/phase-group/56/players').set('Cookie', cookie);
+    await request(server).get('/api/sets/phase-group/56/players').set('Cookie', cookie);
     const afterFirst = gqlMock.mock.calls.length;
     // A TO sets one between the two calls.
     await upsertPlayerMain(SEEDED_NEVER_LOOKED, VIDEOGAME_ID, 1300, 0, 0);
-    const res = await request(app).get('/api/sets/phase-group/56/players').set('Cookie', cookie);
+    const res = await request(server).get('/api/sets/phase-group/56/players').set('Cookie', cookie);
 
     // Which entrant is which player cannot change once a pool is seeded, so
     // asking start.gg again would be waste — but the mains do change.
@@ -566,7 +567,7 @@ describe('GET /phase-group/:phaseGroupId/players', () => {
     });
     const cookie = await makeSignedInCookie('pool-players-paged');
 
-    const res = await request(app).get('/api/sets/phase-group/57/players').set('Cookie', cookie);
+    const res = await request(server).get('/api/sets/phase-group/57/players').set('Cookie', cookie);
 
     expect(res.body.players).toHaveLength(3);
     // Background main lookups land in the same mock; only the roster query
@@ -587,7 +588,7 @@ describe('GET /phase-group/:phaseGroupId/players', () => {
     });
     const cookie = await makeSignedInCookie('pool-players-empty-seed');
 
-    const res = await request(app).get('/api/sets/phase-group/58/players').set('Cookie', cookie);
+    const res = await request(server).get('/api/sets/phase-group/58/players').set('Cookie', cookie);
 
     expect(res.body.players.map((p: { name: string }) => p.name)).toEqual(['Real']);
   });
@@ -611,7 +612,7 @@ describe('GET /phase-group/:phaseGroupId/players', () => {
     });
     const cookie = await makeSignedInCookie('pool-players-lookup');
 
-    const res = await request(app).get('/api/sets/phase-group/59/players').set('Cookie', cookie);
+    const res = await request(server).get('/api/sets/phase-group/59/players').set('Cookie', cookie);
     expect(res.status).toBe(200);
 
     // Fire-and-forget, so the response does not wait on start.gg — the work
@@ -625,7 +626,7 @@ describe('GET /phase-group/:phaseGroupId/players', () => {
   });
 
   it('rejects an unauthenticated request', async () => {
-    const res = await request(app).get('/api/sets/phase-group/55/players');
+    const res = await request(server).get('/api/sets/phase-group/55/players');
     expect(res.status).toBe(401);
   });
 });
@@ -641,13 +642,13 @@ describe('GET /phase-group/:phaseGroupId/events', () => {
     // moved, which start.gg may not have shown them.
     const cookie = await makeSignedInCookie('events-unseen');
 
-    const res = await request(app).get('/api/sets/phase-group/999/events').set('Cookie', cookie);
+    const res = await request(server).get('/api/sets/phase-group/999/events').set('Cookie', cookie);
 
     expect(res.status).toBe(403);
   });
 
   it('rejects an unauthenticated subscriber', async () => {
-    const res = await request(app).get('/api/sets/phase-group/1/events');
+    const res = await request(server).get('/api/sets/phase-group/1/events');
     expect(res.status).toBe(401);
   });
 
@@ -663,7 +664,7 @@ describe('GET /phase-group/:phaseGroupId/events', () => {
     const userId: number = rows[0].id;
 
     expect(hasSeenPool(userId, '1')).toBe(false);
-    await request(app).get('/api/sets/phase-group/1/bracket').set('Cookie', cookie);
+    await request(server).get('/api/sets/phase-group/1/bracket').set('Cookie', cookie);
 
     // Reading it with their own token is the admission: the stream itself is
     // long-lived, so the gate is asserted rather than the socket.
@@ -695,7 +696,7 @@ describe('GET /phase-group/:phaseGroupId/bracket', () => {
     countingMock();
     const cookie = await makeSignedInCookie('bracket-characters');
 
-    const res = await request(app).get('/api/sets/phase-group/1/bracket').set('Cookie', cookie);
+    const res = await request(server).get('/api/sets/phase-group/1/bracket').set('Cookie', cookie);
 
     const group: ResponseBracketGroup = res.body;
     const completed = group.sets.find((s) => s.id === 7001)!;
@@ -709,9 +710,9 @@ describe('GET /phase-group/:phaseGroupId/bracket', () => {
     const calls = countingMock();
     const cookie = await makeSignedInCookie('bracket-characters-once');
 
-    await request(app).get('/api/sets/phase-group/1/bracket').set('Cookie', cookie);
+    await request(server).get('/api/sets/phase-group/1/bracket').set('Cookie', cookie);
     invalidateSetCaches(); // as a mutation would, forcing a real second fetch
-    const res = await request(app).get('/api/sets/phase-group/1/bracket').set('Cookie', cookie);
+    const res = await request(server).get('/api/sets/phase-group/1/bracket').set('Cookie', cookie);
 
     // The bracket really was re-fetched, and the characters were not: they are
     // the same games, and paying ~20 objects a set for them again is the cost
@@ -724,12 +725,12 @@ describe('GET /phase-group/:phaseGroupId/bracket', () => {
     const calls = countingMock();
     const cookie = await makeSignedInCookie('bracket-characters-corrected');
 
-    await request(app).get('/api/sets/phase-group/1/bracket').set('Cookie', cookie);
+    await request(server).get('/api/sets/phase-group/1/bracket').set('Cookie', cookie);
     // Another TO corrects the set on start.gg: same set, different result. The
     // live query already carries the score, so this is noticed for free.
     countingMockScore(calls, 'Winner Player 3 - Loser Player 1');
     invalidateSetCaches();
-    await request(app).get('/api/sets/phase-group/1/bracket').set('Cookie', cookie);
+    await request(server).get('/api/sets/phase-group/1/bracket').set('Cookie', cookie);
 
     expect(calls.characters).toBe(2);
   });
@@ -759,7 +760,7 @@ describe('GET /phase-group/:phaseGroupId/bracket', () => {
     });
     const cookie = await makeSignedInCookie('bracket-basic');
 
-    const res = await request(app).get('/api/sets/phase-group/1/bracket').set('Cookie', cookie);
+    const res = await request(server).get('/api/sets/phase-group/1/bracket').set('Cookie', cookie);
 
     expect(res.status).toBe(200);
     const group: ResponseBracketGroup = res.body;
@@ -798,7 +799,7 @@ describe('GET /phase-group/:phaseGroupId/bracket', () => {
     });
     const cookie = await makeSignedInCookie('bracket-scoped');
 
-    const res = await request(app).get('/api/sets/phase-group/2/bracket').set('Cookie', cookie);
+    const res = await request(server).get('/api/sets/phase-group/2/bracket').set('Cookie', cookie);
 
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ phaseGroupId: 2, phaseName: 'Pools', displayIdentifier: 'Pool A', bracketType: 'ROUND_ROBIN' });
@@ -827,7 +828,7 @@ describe('GET /phase-group/:phaseGroupId/bracket', () => {
     });
     const cookie = await makeSignedInCookie('bracket-complexity');
 
-    const res = await request(app).get('/api/sets/phase-group/42/bracket').set('Cookie', cookie);
+    const res = await request(server).get('/api/sets/phase-group/42/bracket').set('Cookie', cookie);
 
     expect(res.status).toBe(200);
     expect(res.body.sets).toHaveLength(2);
@@ -847,7 +848,7 @@ describe('GET /phase-group/:phaseGroupId/bracket', () => {
     });
     const cookie = await makeSignedInCookie('bracket-complexity-hopeless');
 
-    const res = await request(app).get('/api/sets/phase-group/43/bracket').set('Cookie', cookie);
+    const res = await request(server).get('/api/sets/phase-group/43/bracket').set('Cookie', cookie);
 
     expect(res.status).toBe(502);
   });
@@ -862,17 +863,17 @@ describe('GET /phase-group/:phaseGroupId/bracket', () => {
     const alice = await makeSignedInCookie('bracket-cache-alice');
     const bob = await makeSignedInCookie('bracket-cache-bob');
 
-    await request(app).get('/api/sets/phase-group/77/bracket').set('Cookie', alice);
+    await request(server).get('/api/sets/phase-group/77/bracket').set('Cookie', alice);
     const afterAlice = gqlMock.mock.calls.length;
     expect(afterAlice).toBeGreaterThan(0);
 
     // Alice again, same pool, well inside the TTL — no second trip upstream.
-    await request(app).get('/api/sets/phase-group/77/bracket').set('Cookie', alice);
+    await request(server).get('/api/sets/phase-group/77/bracket').set('Cookie', alice);
     expect(gqlMock.mock.calls.length).toBe(afterAlice);
 
     // Bob must not be answered from Alice's entry: start.gg decides per token
     // which tournaments are visible, so his request goes out under his own.
-    await request(app).get('/api/sets/phase-group/77/bracket').set('Cookie', bob);
+    await request(server).get('/api/sets/phase-group/77/bracket').set('Cookie', bob);
     expect(gqlMock.mock.calls.length).toBeGreaterThan(afterAlice);
   });
 
@@ -890,12 +891,12 @@ describe('GET /phase-group/:phaseGroupId/bracket', () => {
     complexityMock.mockReturnValue(123);
 
     const alice = await makeSignedInCookie('cost-learn-a');
-    await request(app).get('/api/sets/phase-group/88/bracket').set('Cookie', alice);
+    await request(server).get('/api/sets/phase-group/88/bracket').set('Cookie', alice);
     const firstPage = perPages[0];
 
     // A different user misses the per-user cache, so this really re-fetches.
     const bob = await makeSignedInCookie('cost-learn-b');
-    await request(app).get('/api/sets/phase-group/88/bracket').set('Cookie', bob);
+    await request(server).get('/api/sets/phase-group/88/bracket').set('Cookie', bob);
 
     expect(perPages.at(-1)!).toBeLessThan(firstPage);
   });
@@ -920,8 +921,8 @@ describe('GET /phase-group/:phaseGroupId/bracket', () => {
     // the bracket query was cut in two.
     const alice = await makeSignedInCookie('struct-ttl-a');
     const bob = await makeSignedInCookie('struct-ttl-b');
-    await request(app).get('/api/sets/phase-group/89/bracket').set('Cookie', alice);
-    await request(app).get('/api/sets/phase-group/89/bracket').set('Cookie', bob);
+    await request(server).get('/api/sets/phase-group/89/bracket').set('Cookie', alice);
+    await request(server).get('/api/sets/phase-group/89/bracket').set('Cookie', bob);
 
     expect(counts.live).toBe(2);
     expect(counts.structure).toBe(1);
@@ -934,7 +935,7 @@ describe('GET /phase-group/:phaseGroupId/bracket', () => {
     });
     const cookie = await makeSignedInCookie('bracket-missing');
 
-    const res = await request(app).get('/api/sets/phase-group/999999/bracket').set('Cookie', cookie);
+    const res = await request(server).get('/api/sets/phase-group/999999/bracket').set('Cookie', cookie);
 
     expect(res.status).toBe(404);
   });
@@ -975,7 +976,7 @@ describe('GET /phase/:phaseId/pool-preview', () => {
     });
     const cookie = await makeSignedInCookie('pool-preview');
 
-    const res = await request(app).get('/api/sets/phase/777/pool-preview').set('Cookie', cookie);
+    const res = await request(server).get('/api/sets/phase/777/pool-preview').set('Cookie', cookie);
 
     expect(res.status).toBe(200);
     expect(res.body.previews).toEqual([
@@ -997,7 +998,7 @@ describe('GET /phase/:phaseId/pool-preview', () => {
     );
     const cookie = await makeSignedInCookie('pool-preview-paged');
 
-    const res = await request(app).get('/api/sets/phase/778/pool-preview').set('Cookie', cookie);
+    const res = await request(server).get('/api/sets/phase/778/pool-preview').set('Cookie', cookie);
 
     expect(res.status).toBe(200);
     expect(res.body.previews.map((p: { phaseGroupId: number }) => p.phaseGroupId)).toEqual([1, 2]);
@@ -1020,7 +1021,7 @@ describe('GET /phase/:phaseId/pool-preview', () => {
     });
     const cookie = await makeSignedInCookie('pool-preview-complex');
 
-    const res = await request(app).get('/api/sets/phase/779/pool-preview').set('Cookie', cookie);
+    const res = await request(server).get('/api/sets/phase/779/pool-preview').set('Cookie', cookie);
 
     expect(res.status).toBe(200);
     expect(retryPerPage).toBeLessThan(firstPerPage);
@@ -1038,7 +1039,7 @@ describe('GET /phase/:phaseId/pool-preview', () => {
     });
     const cookie = await makeSignedInCookie('pool-preview-null');
 
-    const res = await request(app).get('/api/sets/phase/780/pool-preview').set('Cookie', cookie);
+    const res = await request(server).get('/api/sets/phase/780/pool-preview').set('Cookie', cookie);
 
     expect(res.status).toBe(200);
     expect(res.body.previews).toEqual([{ phaseGroupId: 3, names: ['Real'], total: 2 }]);
@@ -1065,7 +1066,7 @@ describe('GET /phase/:phaseId/pool-preview', () => {
     gqlMock.mockImplementation(hugePhase(250, COST_MODEL.poolPreview.maxPerPool, seen));
     const cookie = await makeSignedInCookie('pool-preview-huge');
 
-    const res = await request(app).get('/api/sets/phase/781/pool-preview').set('Cookie', cookie);
+    const res = await request(server).get('/api/sets/phase/781/pool-preview').set('Cookie', cookie);
 
     expect(res.status).toBe(200);
     // Every pool, none dropped, across however many requests that took.
@@ -1083,7 +1084,7 @@ describe('GET /phase/:phaseId/pool-preview', () => {
     gqlMock.mockImplementation(hugePhase(150, 30, seen));
     const cookie = await makeSignedInCookie('pool-preview-drift');
 
-    const res = await request(app).get('/api/sets/phase/782/pool-preview').set('Cookie', cookie);
+    const res = await request(server).get('/api/sets/phase/782/pool-preview').set('Cookie', cookie);
 
     expect(res.status).toBe(200);
     expect(res.body.previews).toHaveLength(150);
@@ -1100,7 +1101,7 @@ describe('GET /phase/:phaseId/pool-preview', () => {
     });
     const cookie = await makeSignedInCookie('pool-preview-hopeless');
 
-    const res = await request(app).get('/api/sets/phase/783/pool-preview').set('Cookie', cookie);
+    const res = await request(server).get('/api/sets/phase/783/pool-preview').set('Cookie', cookie);
 
     // Nothing can make a single pool fit, so it has to stop. The page size
     // strictly decreases every retry, which is what makes that terminate.
@@ -1113,7 +1114,7 @@ describe('GET /phase/:phaseId/pool-preview', () => {
     gqlMock.mockImplementation(hugePhase(100_000, COST_MODEL.poolPreview.maxPerPool, seen));
     const cookie = await makeSignedInCookie('pool-preview-runaway');
 
-    const res = await request(app).get('/api/sets/phase/784/pool-preview').set('Cookie', cookie);
+    const res = await request(server).get('/api/sets/phase/784/pool-preview').set('Cookie', cookie);
 
     // Rows past the cap fall back to showing the bracket type, which still
     // works — far better than hundreds of requests against an 80/minute limit.
@@ -1123,7 +1124,7 @@ describe('GET /phase/:phaseId/pool-preview', () => {
   });
 
   it('rejects an unauthenticated request', async () => {
-    const res = await request(app).get('/api/sets/phase/777/pool-preview');
+    const res = await request(server).get('/api/sets/phase/777/pool-preview');
     expect(res.status).toBe(401);
   });
 });
@@ -1146,7 +1147,7 @@ describe('GET /:eventId/entrants', () => {
     respondWith([]);
     const cookie = await makeSignedInCookie('entrants-short');
 
-    const res = await request(app).get('/api/sets/12345/entrants?q=sp').set('Cookie', cookie);
+    const res = await request(server).get('/api/sets/12345/entrants?q=sp').set('Cookie', cookie);
 
     expect(res.status).toBe(400);
     expect(gqlMock).not.toHaveBeenCalled();
@@ -1156,7 +1157,7 @@ describe('GET /:eventId/entrants', () => {
     respondWith([]);
     const cookie = await makeSignedInCookie('entrants-blank');
 
-    const res = await request(app).get('/api/sets/12345/entrants?q=%20%20a%20%20').set('Cookie', cookie);
+    const res = await request(server).get('/api/sets/12345/entrants?q=%20%20a%20%20').set('Cookie', cookie);
 
     expect(res.status).toBe(400);
     expect(gqlMock).not.toHaveBeenCalled();
@@ -1169,7 +1170,7 @@ describe('GET /:eventId/entrants', () => {
     ]);
     const cookie = await makeSignedInCookie('entrants-match');
 
-    const res = await request(app).get('/api/sets/12345/entrants?q=sparg0').set('Cookie', cookie);
+    const res = await request(server).get('/api/sets/12345/entrants?q=sparg0').set('Cookie', cookie);
 
     expect(res.status).toBe(200);
     expect(res.body.entrants).toEqual([
@@ -1184,14 +1185,14 @@ describe('GET /:eventId/entrants', () => {
     respondWith([{ id: 3, name: 'Undrawn', seeds: [{ phaseGroup: null }] }]);
     const cookie = await makeSignedInCookie('entrants-undrawn');
 
-    const res = await request(app).get('/api/sets/12345/entrants?q=undrawn').set('Cookie', cookie);
+    const res = await request(server).get('/api/sets/12345/entrants?q=undrawn').set('Cookie', cookie);
 
     expect(res.status).toBe(200);
     expect(res.body.entrants).toEqual([{ id: 3, name: 'Undrawn', phaseGroupIds: [] }]);
   });
 
   it('rejects an unauthenticated lookup', async () => {
-    const res = await request(app).get('/api/sets/12345/entrants?q=sparg0');
+    const res = await request(server).get('/api/sets/12345/entrants?q=sparg0');
     expect(res.status).toBe(401);
   });
 });
@@ -1218,7 +1219,7 @@ describe('GET /:eventId/phase-groups', () => {
     });
     const cookie = await makeSignedInCookie('phase-groups-list');
 
-    const res = await request(app).get('/api/sets/12345/phase-groups').set('Cookie', cookie);
+    const res = await request(server).get('/api/sets/12345/phase-groups').set('Cookie', cookie);
 
     expect(res.status).toBe(200);
     const phaseGroups: ResponsePhaseGroupSummary[] = res.body.phaseGroups;
@@ -1251,7 +1252,7 @@ describe('GET /:eventId/phase-groups', () => {
     gqlMock.mockImplementation(accessFixture({ me: 500, owner: 500 }));
     const cookie = await makeSignedInCookie('access-owner');
 
-    const res = await request(app).get('/api/sets/12345/phase-groups').set('Cookie', cookie);
+    const res = await request(server).get('/api/sets/12345/phase-groups').set('Cookie', cookie);
 
     expect(res.body.canReport).toBe(true);
   });
@@ -1260,7 +1261,7 @@ describe('GET /:eventId/phase-groups', () => {
     gqlMock.mockImplementation(accessFixture({ me: 501, owner: 500, admins: [{ id: 501 }] }));
     const cookie = await makeSignedInCookie('access-admin');
 
-    const res = await request(app).get('/api/sets/12345/phase-groups').set('Cookie', cookie);
+    const res = await request(server).get('/api/sets/12345/phase-groups').set('Cookie', cookie);
 
     expect(res.body.canReport).toBe(true);
   });
@@ -1269,7 +1270,7 @@ describe('GET /:eventId/phase-groups', () => {
     gqlMock.mockImplementation(accessFixture({ me: 999, owner: 500, admins: null }));
     const cookie = await makeSignedInCookie('access-spectator');
 
-    const res = await request(app).get('/api/sets/12345/phase-groups').set('Cookie', cookie);
+    const res = await request(server).get('/api/sets/12345/phase-groups').set('Cookie', cookie);
 
     expect(res.body.canReport).toBe(false);
   });
@@ -1281,7 +1282,7 @@ describe('GET /:eventId/phase-groups', () => {
     gqlMock.mockImplementation(accessFixture({ me: null, owner: 500, admins: null }));
     const cookie = await makeSignedInCookie('access-unknown');
 
-    const res = await request(app).get('/api/sets/12345/phase-groups').set('Cookie', cookie);
+    const res = await request(server).get('/api/sets/12345/phase-groups').set('Cookie', cookie);
 
     expect(res.body.canReport).toBe(true);
   });
@@ -1290,7 +1291,7 @@ describe('GET /:eventId/phase-groups', () => {
     gqlMock.mockImplementation(accessFixture({ me: 999, owner: 500, admins: null }));
     const cookie = await makeSignedInCookie('access-still-lists');
 
-    const res = await request(app).get('/api/sets/12345/phase-groups').set('Cookie', cookie);
+    const res = await request(server).get('/api/sets/12345/phase-groups').set('Cookie', cookie);
 
     expect(res.body.phaseGroups).toHaveLength(1);
   });
@@ -1310,7 +1311,7 @@ describe('GET /:eventId/phase-groups', () => {
     });
     const cookie = await makeSignedInCookie('phase-groups-unseeded');
 
-    const res = await request(app).get('/api/sets/12345/phase-groups').set('Cookie', cookie);
+    const res = await request(server).get('/api/sets/12345/phase-groups').set('Cookie', cookie);
 
     expect(res.status).toBe(200);
     expect(res.body.phaseGroups).toEqual([
@@ -1325,7 +1326,7 @@ describe('GET /:eventId/phase-groups', () => {
     });
     const cookie = await makeSignedInCookie('phase-groups-empty');
 
-    const res = await request(app).get('/api/sets/12345/phase-groups').set('Cookie', cookie);
+    const res = await request(server).get('/api/sets/12345/phase-groups').set('Cookie', cookie);
 
     expect(res.status).toBe(200);
     expect(res.body.phaseGroups).toEqual([]);
@@ -1382,7 +1383,7 @@ describe('GET /:setId/detail', () => {
     });
     const cookie = await makeSignedInCookie('set-detail');
 
-    const res = await request(app).get('/api/sets/123456/detail').set('Cookie', cookie);
+    const res = await request(server).get('/api/sets/123456/detail').set('Cookie', cookie);
 
     expect(res.status).toBe(200);
     expect(res.body.games).toEqual([
@@ -1399,7 +1400,7 @@ describe('GET /:setId/detail', () => {
     });
     const cookie = await makeSignedInCookie('set-detail-empty');
 
-    const res = await request(app).get('/api/sets/123456/detail').set('Cookie', cookie);
+    const res = await request(server).get('/api/sets/123456/detail').set('Cookie', cookie);
 
     expect(res.status).toBe(200);
     expect(res.body.games).toEqual([]);

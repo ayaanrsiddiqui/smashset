@@ -7,10 +7,11 @@ import { createSession } from './db/sessions.js';
 import { createApp } from './app.js';
 import { SESSION_COOKIE_NAME } from './middleware/auth.js';
 import { closeTestPool } from './test-helpers.js';
+import { testServer } from './test-server.js';
 
 const PREFIX = `test-app-${Date.now()}-`;
 const idFor = (label: string) => `${PREFIX}${label}`;
-const app = createApp();
+const server = testServer(createApp());
 
 function futureDate(hours: number): Date {
   return new Date(Date.now() + hours * 60 * 60 * 1000);
@@ -36,27 +37,27 @@ describe('GET /api/me', () => {
   });
 
   it('is 200 with user: null when signed out (never 401 — this is how the frontend probes login state)', async () => {
-    const res = await request(app).get('/api/me');
+    const res = await request(server).get('/api/me');
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ user: null });
   });
 
   it('is 200 with the real user when signed in', async () => {
     const cookie = await makeSignedInCookie('me');
-    const res = await request(app).get('/api/me').set('Cookie', cookie);
+    const res = await request(server).get('/api/me').set('Cookie', cookie);
     expect(res.status).toBe(200);
     expect(res.body.user).toMatchObject({ displayName: 'App Test (me)' });
   });
 
   it('ignores a garbage/forged cookie rather than erroring', async () => {
-    const res = await request(app).get('/api/me').set('Cookie', `${SESSION_COOKIE_NAME}=not-a-real-signed-value`);
+    const res = await request(server).get('/api/me').set('Cookie', `${SESSION_COOKIE_NAME}=not-a-real-signed-value`);
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ user: null });
   });
 });
 
 function sendRequest(method: 'GET' | 'POST', path: string) {
-  return method === 'GET' ? request(app).get(path) : request(app).post(path);
+  return method === 'GET' ? request(server).get(path) : request(server).post(path);
 }
 
 describe('requireAuth gating on protected routers', () => {
@@ -97,21 +98,21 @@ describe('POST /api/auth/logout', () => {
   it('actually revokes the session server-side, not just the cookie client-side', async () => {
     const cookie = await makeSignedInCookie('logout');
 
-    const before = await request(app).get('/api/me').set('Cookie', cookie);
+    const before = await request(server).get('/api/me').set('Cookie', cookie);
     expect(before.body.user).not.toBeNull();
 
-    const logoutRes = await request(app).post('/api/auth/logout').set('Cookie', cookie);
+    const logoutRes = await request(server).post('/api/auth/logout').set('Cookie', cookie);
     expect(logoutRes.status).toBe(200);
     expect(logoutRes.body).toEqual({ ok: true });
 
     // The same cookie must no longer work — proves the session row was
     // actually deleted server-side, not merely that the client forgot it.
-    const after = await request(app).get('/api/me').set('Cookie', cookie);
+    const after = await request(server).get('/api/me').set('Cookie', cookie);
     expect(after.body.user).toBeNull();
   });
 
   it('is a harmless no-op when already signed out', async () => {
-    const res = await request(app).post('/api/auth/logout');
+    const res = await request(server).post('/api/auth/logout');
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ ok: true });
   });

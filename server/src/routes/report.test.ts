@@ -6,6 +6,7 @@ import { upsertUserFromOAuth } from '../db/users.js';
 import { createSession } from '../db/sessions.js';
 import { SESSION_COOKIE_NAME } from '../middleware/auth.js';
 import { closeTestPool } from '../test-helpers.js';
+import { testServer } from '../test-server.js';
 import { StartggError } from '../startgg.js';
 
 const gqlMock = vi.fn();
@@ -19,7 +20,7 @@ vi.mock('../startgg.js', async (importOriginal) => ({
 
 const { createApp } = await import('../app.js');
 const { subscribe, resetPoolEvents } = await import('../poolEvents.js');
-const app = createApp();
+const server = testServer(createApp());
 
 const PREFIX = `test-report-route-${Date.now()}-`;
 
@@ -99,7 +100,7 @@ describe('POST /api/report', () => {
   });
 
   it('rejects an unauthenticated report', async () => {
-    const res = await request(app).post('/api/report').send(VALID);
+    const res = await request(server).post('/api/report').send(VALID);
     expect(res.status).toBe(401);
   });
 
@@ -111,7 +112,7 @@ describe('POST /api/report', () => {
     const heard = watcher('1');
     const cookie = await makeSignedInCookie('publishes');
 
-    const res = await request(app).post('/api/report').set('Cookie', cookie).send({ ...VALID, phaseGroupId: '1' });
+    const res = await request(server).post('/api/report').set('Cookie', cookie).send({ ...VALID, phaseGroupId: '1' });
 
     expect(res.status).toBe(200);
     expect(heard).toEqual(['changed']);
@@ -122,7 +123,7 @@ describe('POST /api/report', () => {
     const elsewhere = watcher('2');
     const cookie = await makeSignedInCookie('other-pool');
 
-    await request(app).post('/api/report').set('Cookie', cookie).send({ ...VALID, phaseGroupId: '1' });
+    await request(server).post('/api/report').set('Cookie', cookie).send({ ...VALID, phaseGroupId: '1' });
 
     expect(elsewhere).toEqual([]);
   });
@@ -134,7 +135,7 @@ describe('POST /api/report', () => {
     const heard = watcher('1');
     const cookie = await makeSignedInCookie('no-pool');
 
-    const res = await request(app).post('/api/report').set('Cookie', cookie).send(VALID);
+    const res = await request(server).post('/api/report').set('Cookie', cookie).send(VALID);
 
     expect(res.status).toBe(200);
     expect(heard).toEqual([]);
@@ -147,7 +148,7 @@ describe('POST /api/report', () => {
     const heard = watcher('1');
     const cookie = await makeSignedInCookie('failed');
 
-    const res = await request(app).post('/api/report').set('Cookie', cookie).send({ ...VALID, phaseGroupId: '1' });
+    const res = await request(server).post('/api/report').set('Cookie', cookie).send({ ...VALID, phaseGroupId: '1' });
 
     expect(res.status).toBe(502);
     expect(heard).toEqual([]);
@@ -172,7 +173,7 @@ describe('POST /api/report — correcting a set start.gg already considers finis
     const cookie = await makeSignedInCookie('correct-score');
 
     // Same winner, different score: 2-0 becomes 2-1.
-    const res = await request(app).post('/api/report').set('Cookie', cookie).send({ ...VALID, shorthand: 'WLW' });
+    const res = await request(server).post('/api/report').set('Cookie', cookie).send({ ...VALID, shorthand: 'WLW' });
 
     expect(res.status).toBe(200);
     expect(mutations()).toEqual(['UpdateSet']);
@@ -184,7 +185,7 @@ describe('POST /api/report — correcting a set start.gg already considers finis
 
     // mudd now reported as the winner — start.gg can only do this by tearing
     // down the result, and everything downstream of it, first.
-    const res = await request(app)
+    const res = await request(server)
       .post('/api/report')
       .set('Cookie', cookie)
       .send({ ...VALID, winnerEntrantId: 8002, loserEntrantId: 8001 });
@@ -198,7 +199,7 @@ describe('POST /api/report — correcting a set start.gg already considers finis
     startgg({ set: COMPLETED_SET });
     const cookie = await makeSignedInCookie('flip-confirmed');
 
-    const res = await request(app)
+    const res = await request(server)
       .post('/api/report')
       .set('Cookie', cookie)
       .send({ ...VALID, winnerEntrantId: 8002, loserEntrantId: 8001, confirmReset: true });
@@ -214,7 +215,7 @@ describe('POST /api/report — correcting a set start.gg already considers finis
     startgg({ set: COMPLETED_SET, report: new Error('start.gg did not respond in time.') });
     const cookie = await makeSignedInCookie('half-done');
 
-    const res = await request(app)
+    const res = await request(server)
       .post('/api/report')
       .set('Cookie', cookie)
       .send({ ...VALID, winnerEntrantId: 8002, loserEntrantId: 8001, confirmReset: true });
@@ -228,7 +229,7 @@ describe('POST /api/report — correcting a set start.gg already considers finis
     startgg({ set: OPEN_SET });
     const cookie = await makeSignedInCookie('normal');
 
-    const res = await request(app).post('/api/report').set('Cookie', cookie).send(VALID);
+    const res = await request(server).post('/api/report').set('Cookie', cookie).send(VALID);
 
     expect(res.status).toBe(200);
     expect(mutations()).toEqual(['ReportSet']);
@@ -252,7 +253,7 @@ describe('POST /api/report — a report that would corrupt the set', () => {
     startgg({ set: OPEN_SET });
     const cookie = await makeSignedInCookie('stranger');
 
-    const res = await request(app).post('/api/report').set('Cookie', cookie).send({ ...VALID, winnerEntrantId: 9999 });
+    const res = await request(server).post('/api/report').set('Cookie', cookie).send({ ...VALID, winnerEntrantId: 9999 });
 
     expect(res.status).toBe(409);
     expect(mutations()).toEqual([]);
@@ -262,7 +263,7 @@ describe('POST /api/report — a report that would corrupt the set', () => {
     startgg({ set: { ...OPEN_SET, slots: [{ entrant: { id: 8001, name: 'Ada' } }, { entrant: null }] } });
     const cookie = await makeSignedInCookie('tbd');
 
-    const res = await request(app).post('/api/report').set('Cookie', cookie).send(VALID);
+    const res = await request(server).post('/api/report').set('Cookie', cookie).send(VALID);
 
     expect(res.status).toBe(409);
     expect(mutations()).toEqual([]);
@@ -281,7 +282,7 @@ describe('POST /api/report — telling the TO what a teardown costs', () => {
     startgg({ set: COMPLETED_SET });
     const cookie = await makeSignedInCookie('would-clear');
 
-    const res = await request(app).post('/api/report').set('Cookie', cookie).send(flip);
+    const res = await request(server).post('/api/report').set('Cookie', cookie).send(flip);
 
     // R is only reachable through the bye set start.gg hides by default.
     expect(res.body.wouldClear).toEqual(['I', 'R']);
@@ -294,7 +295,7 @@ describe('POST /api/report — telling the TO what a teardown costs', () => {
     startgg({ set: COMPLETED_SET });
     const cookie = await makeSignedInCookie('shows-byes');
 
-    await request(app).post('/api/report').set('Cookie', cookie).send(flip);
+    await request(server).post('/api/report').set('Cookie', cookie).send(flip);
 
     const cascadeQuery = gqlMock.mock.calls.map(([, q]) => q as string).find((q) => q.includes('PhaseGroupCascade'));
     expect(cascadeQuery).toMatch(/showByes:\s*true/);
@@ -304,7 +305,7 @@ describe('POST /api/report — telling the TO what a teardown costs', () => {
     startgg({ set: COMPLETED_SET, cascade: { phaseGroup: null } });
     const cookie = await makeSignedInCookie('cascade-empty');
 
-    const res = await request(app).post('/api/report').set('Cookie', cookie).send(flip);
+    const res = await request(server).post('/api/report').set('Cookie', cookie).send(flip);
 
     expect(res.body.wouldClear).toBeNull();
   });
@@ -315,7 +316,7 @@ describe('POST /api/report — telling the TO what a teardown costs', () => {
     startgg({ set: COMPLETED_SET, cascade: new Error('start.gg is down') });
     const cookie = await makeSignedInCookie('cascade-down');
 
-    const res = await request(app).post('/api/report').set('Cookie', cookie).send(flip);
+    const res = await request(server).post('/api/report').set('Cookie', cookie).send(flip);
 
     expect(res.status).toBe(409);
     expect(res.body.wouldClear).toBeNull();
@@ -346,7 +347,7 @@ describe('POST /api/report — a retry arriving after the set already moved', ()
     startgg({ set: COMPLETED_SET });
     const cookie = await makeSignedInCookie('retry-converged');
 
-    const res = await request(app).post('/api/report').set('Cookie', cookie).send(retry);
+    const res = await request(server).post('/api/report').set('Cookie', cookie).send(retry);
 
     expect(res.status).toBe(200);
     expect(res.body.alreadyOnFile).toBe(true);
@@ -357,7 +358,7 @@ describe('POST /api/report — a retry arriving after the set already moved', ()
     startgg({ set: { ...COMPLETED_SET, displayScore: 'Ada 2 - mudd 1' } });
     const cookie = await makeSignedInCookie('retry-conflict');
 
-    const res = await request(app).post('/api/report').set('Cookie', cookie).send(retry);
+    const res = await request(server).post('/api/report').set('Cookie', cookie).send(retry);
 
     expect(res.status).toBe(409);
     expect(res.body.retryable).toBe(false);
@@ -368,7 +369,7 @@ describe('POST /api/report — a retry arriving after the set already moved', ()
     startgg({ set: { ...COMPLETED_SET, winnerId: 8002, displayScore: 'mudd 2 - Ada 0' } });
     const cookie = await makeSignedInCookie('retry-other-winner');
 
-    const res = await request(app).post('/api/report').set('Cookie', cookie).send(retry);
+    const res = await request(server).post('/api/report').set('Cookie', cookie).send(retry);
 
     expect(res.status).toBe(409);
     expect(mutations()).toEqual([]);
@@ -380,7 +381,7 @@ describe('POST /api/report — a retry arriving after the set already moved', ()
     startgg({ set: { ...COMPLETED_SET, displayScore: 'DQ' } });
     const cookie = await makeSignedInCookie('retry-dq');
 
-    const res = await request(app).post('/api/report').set('Cookie', cookie).send(retry);
+    const res = await request(server).post('/api/report').set('Cookie', cookie).send(retry);
 
     expect(res.status).toBe(409);
     expect(mutations()).toEqual([]);
@@ -390,7 +391,7 @@ describe('POST /api/report — a retry arriving after the set already moved', ()
     startgg({ set: OPEN_SET });
     const cookie = await makeSignedInCookie('retry-open');
 
-    const res = await request(app).post('/api/report').set('Cookie', cookie).send(retry);
+    const res = await request(server).post('/api/report').set('Cookie', cookie).send(retry);
 
     expect(res.status).toBe(200);
     expect(mutations()).toEqual(['ReportSet']);
@@ -400,7 +401,7 @@ describe('POST /api/report — a retry arriving after the set already moved', ()
     startgg({ set: { ...COMPLETED_SET, displayScore: 'Ada 2 - mudd 1' } });
     const cookie = await makeSignedInCookie('first-attempt');
 
-    const res = await request(app).post('/api/report').set('Cookie', cookie).send(VALID);
+    const res = await request(server).post('/api/report').set('Cookie', cookie).send(VALID);
 
     expect(res.status).toBe(200);
     expect(mutations()).toEqual(['UpdateSet']);
@@ -423,7 +424,7 @@ describe('POST /api/report — telling a retry apart from a dead end', () => {
     startgg({ set: OPEN_SET, report: limited });
     const cookie = await makeSignedInCookie('rate-limited');
 
-    const res = await request(app).post('/api/report').set('Cookie', cookie).send(VALID);
+    const res = await request(server).post('/api/report').set('Cookie', cookie).send(VALID);
 
     expect(res.body.retryable).toBe(true);
   });
@@ -433,7 +434,7 @@ describe('POST /api/report — telling a retry apart from a dead end', () => {
     startgg({ set: OPEN_SET, report: new StartggError('start.gg did not respond in time.') });
     const cookie = await makeSignedInCookie('timed-out');
 
-    const res = await request(app).post('/api/report').set('Cookie', cookie).send(VALID);
+    const res = await request(server).post('/api/report').set('Cookie', cookie).send(VALID);
 
     expect(res.body.retryable).toBe(true);
   });
@@ -446,7 +447,7 @@ describe('POST /api/report — telling a retry apart from a dead end', () => {
     startgg({ set: OPEN_SET, report: refused });
     const cookie = await makeSignedInCookie('refused');
 
-    const res = await request(app).post('/api/report').set('Cookie', cookie).send(VALID);
+    const res = await request(server).post('/api/report').set('Cookie', cookie).send(VALID);
 
     expect(res.body.retryable).toBe(false);
   });

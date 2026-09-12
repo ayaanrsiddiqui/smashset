@@ -1,4 +1,8 @@
 {
   "extends": "./tsconfig.json",
-  "exclude": ["src/**/*.test.ts"]
+  // test-server.ts is not a *.test.ts, but it imports vitest — a
+  // devDependency — so compiling it puts a module in dist/ that a
+  // production install has no package for. It is unreachable from index.ts,
+  // so this is tidiness rather than a live break.
+  "exclude": ["src/**/*.test.ts", "src/test-server.ts"]
 }

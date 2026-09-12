@@ -6,6 +6,7 @@ import { upsertUserFromOAuth } from '../db/users.js';
 import { createSession } from '../db/sessions.js';
 import { SESSION_COOKIE_NAME } from '../middleware/auth.js';
 import { closeTestPool } from '../test-helpers.js';
+import { testServer } from '../test-server.js';
 
 const gqlMock = vi.fn();
 // Only gql is stubbed. parseStartggInput and resolveShortUrl stay real, so
@@ -17,7 +18,7 @@ vi.mock('../startgg.js', async (importOriginal) => ({
 }));
 
 const { createApp } = await import('../app.js');
-const app = createApp();
+const server = testServer(createApp());
 
 const PREFIX = `test-event-route-${Date.now()}-`;
 
@@ -66,7 +67,7 @@ describe('POST /api/event/resolve', () => {
   });
 
   it('rejects an unauthenticated request', async () => {
-    const res = await request(app).post('/api/event/resolve').send({ input: 'supernova' });
+    const res = await request(server).post('/api/event/resolve').send({ input: 'supernova' });
     expect(res.status).toBe(401);
   });
 
@@ -76,7 +77,7 @@ describe('POST /api/event/resolve', () => {
     // Supernova 2026.
     fetchMock.mockResolvedValue({ ok: true, url: 'https://www.start.gg/tournament/supernova-2026/events' });
 
-    const res = await request(app).post('/api/event/resolve').set('Cookie', await makeSignedInCookie()).send({ input: 'supernova' });
+    const res = await request(server).post('/api/event/resolve').set('Cookie', await makeSignedInCookie()).send({ input: 'supernova' });
 
     expect(res.status).toBe(200);
     expect(queriedSlug()).toBe('supernova-2026');
@@ -85,7 +86,7 @@ describe('POST /api/event/resolve', () => {
   it('leaves an explicit tournament/<slug> alone', async () => {
     // Someone who typed the canonical path asked for that tournament by name,
     // so redirecting them to the short URL's owner would be wrong.
-    const res = await request(app)
+    const res = await request(server)
       .post('/api/event/resolve')
       .set('Cookie', await makeSignedInCookie())
       .send({ input: 'start.gg/tournament/supernova' });
@@ -98,7 +99,7 @@ describe('POST /api/event/resolve', () => {
   it('falls back to the typed slug when start.gg is unreachable', async () => {
     fetchMock.mockRejectedValue(new Error('ETIMEDOUT'));
 
-    const res = await request(app).post('/api/event/resolve').set('Cookie', await makeSignedInCookie()).send({ input: 'uva' });
+    const res = await request(server).post('/api/event/resolve').set('Cookie', await makeSignedInCookie()).send({ input: 'uva' });
 
     // Degraded, not broken: bare slugs that aren't ambiguous still resolve.
     expect(res.status).toBe(200);
@@ -108,7 +109,7 @@ describe('POST /api/event/resolve', () => {
   it('never short-URL-resolves a full event URL', async () => {
     gqlMock.mockResolvedValue({ event: { id: 9, name: 'Ultimate Singles', slug: 's', videogame: { id: 1386, name: 'U' }, tournament: { id: 1, name: 'T' } } });
 
-    const res = await request(app)
+    const res = await request(server)
       .post('/api/event/resolve')
       .set('Cookie', await makeSignedInCookie())
       .send({ input: 'https://start.gg/tournament/supernova-2026/event/ultimate-singles' });

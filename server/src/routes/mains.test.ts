@@ -7,9 +7,10 @@ import { createSession } from '../db/sessions.js';
 import { SESSION_COOKIE_NAME } from '../middleware/auth.js';
 import { getPlayerMains } from '../db/mains.js';
 import { closeTestPool } from '../test-helpers.js';
+import { testServer } from '../test-server.js';
 import { createApp } from '../app.js';
 
-const app = createApp();
+const server = testServer(createApp());
 
 const PREFIX = `test-mains-route-${Date.now()}-`;
 const VIDEOGAME_ID = 1386;
@@ -38,13 +39,13 @@ describe('POST /api/mains', () => {
   });
 
   it('rejects an unauthenticated request', async () => {
-    const res = await request(app).post('/api/mains').send({ playerId: PLAYER_ID, videogameId: VIDEOGAME_ID, characterId: 1 });
+    const res = await request(server).post('/api/mains').send({ playerId: PLAYER_ID, videogameId: VIDEOGAME_ID, characterId: 1 });
     expect(res.status).toBe(401);
   });
 
   it('sets a manual main as a real, immediately-queryable row', async () => {
     const cookie = await makeSignedInCookie();
-    const res = await request(app)
+    const res = await request(server)
       .post('/api/mains')
       .set('Cookie', cookie)
       .send({ playerId: PLAYER_ID, videogameId: VIDEOGAME_ID, characterId: 42 });
@@ -60,9 +61,9 @@ describe('POST /api/mains', () => {
 
   it('overwrites an existing main (e.g. one the background auto-lookup previously set)', async () => {
     const cookie = await makeSignedInCookie();
-    await request(app).post('/api/mains').set('Cookie', cookie).send({ playerId: PLAYER_ID, videogameId: VIDEOGAME_ID, characterId: 1 });
+    await request(server).post('/api/mains').set('Cookie', cookie).send({ playerId: PLAYER_ID, videogameId: VIDEOGAME_ID, characterId: 1 });
 
-    const res = await request(app)
+    const res = await request(server)
       .post('/api/mains')
       .set('Cookie', cookie)
       .send({ playerId: PLAYER_ID, videogameId: VIDEOGAME_ID, characterId: 2 });
@@ -74,9 +75,9 @@ describe('POST /api/mains', () => {
 
   it('accepts a null characterId to clear a wrong guess', async () => {
     const cookie = await makeSignedInCookie();
-    await request(app).post('/api/mains').set('Cookie', cookie).send({ playerId: PLAYER_ID, videogameId: VIDEOGAME_ID, characterId: 1 });
+    await request(server).post('/api/mains').set('Cookie', cookie).send({ playerId: PLAYER_ID, videogameId: VIDEOGAME_ID, characterId: 1 });
 
-    const res = await request(app)
+    const res = await request(server)
       .post('/api/mains')
       .set('Cookie', cookie)
       .send({ playerId: PLAYER_ID, videogameId: VIDEOGAME_ID, characterId: null });
@@ -87,7 +88,7 @@ describe('POST /api/mains', () => {
 
   it('rejects a missing playerId or videogameId', async () => {
     const cookie = await makeSignedInCookie();
-    const res = await request(app).post('/api/mains').set('Cookie', cookie).send({ videogameId: VIDEOGAME_ID, characterId: 1 });
+    const res = await request(server).post('/api/mains').set('Cookie', cookie).send({ videogameId: VIDEOGAME_ID, characterId: 1 });
     expect(res.status).toBe(400);
   });
 });
