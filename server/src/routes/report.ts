@@ -1,7 +1,8 @@
 import { Router } from 'express';
-import { gql } from '../startgg.js';
+import { gql, StartggError } from '../startgg.js';
 import { publishPoolChanged } from '../poolEvents.js';
 import { parseScoreShorthand } from '../scoreParser.js';
+import { parseDisplayScore } from '../displayScore.js';
 import { COST_MODEL, fetchSetsPaged, invalidateSetCaches } from './sets.js';
 import { resetCascade, type CascadeSet } from '../resetCascade.js';
 
@@ -40,6 +41,12 @@ interface ReportBody {
    * client that does not know it exists.
    */
   confirmReset?: boolean;
+  /**
+   * Which delivery this is, 1 for the first. Anything above 1 is the outbox
+   * re-sending a report the TO has already walked away from, and is held to a
+   * stricter rule than a TO standing at the set deciding to overwrite it.
+   */
+  attempt?: number;
 }
 
 interface GameDataInput {
@@ -71,6 +78,7 @@ const SET_PRECONDITION_QUERY = /* GraphQL */ `
       id
       state
       winnerId
+      displayScore
       phaseGroup {
         id
       }
@@ -115,11 +123,53 @@ interface PreconditionResult {
     id: number | string;
     state: number;
     winnerId: number | null;
+    displayScore: string | null;
     // Read from the set rather than taken from the request body, where
     // phaseGroupId is only an untrusted notification hint.
     phaseGroup: { id: number | string } | null;
     slots: { entrant: { id: number; name: string } | null }[];
   } | null;
+}
+
+/**
+ * Whether trying the same request again could plausibly get a different answer.
+ *
+ * Without this every failure is one 502 with a message string, and an outbox
+ * either hammers a refusal that can never change or gives up on a four-second
+ * wifi blip. The distinction already exists inside StartggError and was simply
+ * being thrown away at this boundary.
+ */
+function isRetryable(err: unknown): boolean {
+  if (!(err instanceof StartggError)) return false;
+  // start.gg answered, with a decision. Asking again repeats the answer.
+  if (err.gqlErrors) return false;
+  // No status at all means the request never got an answer: timeout, dropped
+  // connection, venue wifi. Exactly the case worth waiting out.
+  if (err.status === undefined) return true;
+  return err.status === 429 || err.status >= 500;
+}
+
+/**
+ * Whether start.gg already holds precisely the result this report describes.
+ *
+ * Used only to resolve a retry. Returns false whenever the answer is not
+ * certain — an unreadable score (a DQ arrives as the bare string "DQ") is not
+ * a matching one, and treating it as one would retire a report that never
+ * landed.
+ */
+function alreadyOnFile(
+  current: NonNullable<PreconditionResult['set']>,
+  winnerEntrantId: number,
+  requiredWins: number,
+  totalGames: number
+): boolean {
+  if (String(current.winnerId) !== String(winnerEntrantId)) return false;
+  const [slotA, slotB] = current.slots;
+  const winnerSlot = String(slotA?.entrant?.id) === String(winnerEntrantId) ? 0 : 1;
+  const scores = parseDisplayScore(current.displayScore, slotA?.entrant?.name, slotB?.entrant?.name, winnerSlot);
+  const [winnerScore, loserScore] = winnerSlot === 0 ? scores : [scores[1], scores[0]];
+  if (winnerScore === null || loserScore === null) return false;
+  return winnerScore === requiredWins && loserScore === totalGames - requiredWins;
 }
 
 /**
@@ -191,13 +241,14 @@ reportRouter.post('/', async (req, res) => {
     body.requiredWins == null ||
     typeof body.shorthand !== 'string'
   ) {
-    res.status(400).json({ error: 'Missing required fields' });
+    res.status(400).json({ error: 'Missing required fields', retryable: false });
     return;
   }
 
   if (typeof body.setId === 'string' && body.setId.startsWith('preview_')) {
     res.status(400).json({
       error: 'This set is still a bracket preview (the bracket hasn\'t been started on start.gg yet), so it has no real set to report against.',
+      retryable: false,
     });
     return;
   }
@@ -206,7 +257,7 @@ reportRouter.post('/', async (req, res) => {
   try {
     games = parseScoreShorthand(body.shorthand, body.requiredWins);
   } catch (err) {
-    res.status(400).json({ error: err instanceof Error ? err.message : 'Invalid score' });
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Invalid score', retryable: false });
     return;
   }
 
@@ -218,17 +269,23 @@ reportRouter.post('/', async (req, res) => {
       setId: body.setId,
     }));
   } catch (err) {
-    res.status(502).json({ error: err instanceof Error ? err.message : 'Could not check this set before reporting it' });
+    res.status(502).json({
+      error: err instanceof Error ? err.message : 'Could not check this set before reporting it',
+      retryable: isRetryable(err),
+    });
     return;
   }
   if (!current) {
-    res.status(404).json({ error: 'start.gg no longer has this set.' });
+    res.status(404).json({ error: 'start.gg no longer has this set.', retryable: false });
     return;
   }
 
   const entrantIds = current.slots.map((slot) => slot.entrant?.id);
   if (entrantIds.some((id) => id == null)) {
-    res.status(409).json({ error: "This set doesn't have both players yet on start.gg, so there's nothing to report against." });
+    res.status(409).json({
+      error: "This set doesn't have both players yet on start.gg, so there's nothing to report against.",
+      retryable: false,
+    });
     return;
   }
   // Deliberately blocks rather than letting start.gg reject it: a report
@@ -236,17 +293,37 @@ reportRouter.post('/', async (req, res) => {
   if (!entrantIds.includes(body.winnerEntrantId) || !entrantIds.includes(body.loserEntrantId)) {
     res.status(409).json({
       error: 'This set is between different players on start.gg now — reopen it to see who, then report again.',
+      retryable: false,
     });
     return;
   }
 
   const alreadyDecided = current.state === COMPLETED_STATE;
+
+  // A retry is the outbox re-sending something the TO has already moved on
+  // from, so it gets no licence to overwrite. Either start.gg already holds
+  // exactly this result — the first attempt landed and only its response was
+  // lost, which is a success, not a failure — or the set has moved and the
+  // only safe thing is to stop and say so.
+  if ((body.attempt ?? 1) > 1 && alreadyDecided) {
+    if (alreadyOnFile(current, body.winnerEntrantId, body.requiredWins, games.length)) {
+      res.json({ alreadyOnFile: true, games });
+      return;
+    }
+    res.status(409).json({
+      error: `This set now reads ${current.displayScore ?? 'differently'} on start.gg, so this report was not sent. Open it to check.`,
+      retryable: false,
+    });
+    return;
+  }
+
   const winnerChanged = alreadyDecided && String(current.winnerId) !== String(body.winnerEntrantId);
   if (winnerChanged && body.confirmReset !== true) {
     const clears = current.phaseGroup ? await wouldClear(req.user!.accessToken, String(current.phaseGroup.id), body.setId) : null;
     res.status(409).json({
       error: 'Changing who won means clearing this result and everything it fed into.',
       requiresReset: true,
+      retryable: false,
       // null means the lookup failed, which is not the same as "nothing else
       // is affected" — the client says so rather than implying it is safe.
       wouldClear: clears,
@@ -272,6 +349,7 @@ reportRouter.post('/', async (req, res) => {
         if (typeof body.phaseGroupId === 'string') publishPoolChanged(body.phaseGroupId);
         res.status(502).json({
           error: `The old result was cleared but the new one didn't save (${err instanceof Error ? err.message : 'start.gg failed'}) — this set is unreported on start.gg now. Report it again.`,
+          retryable: isRetryable(err),
         });
         return;
       }
@@ -296,6 +374,6 @@ reportRouter.post('/', async (req, res) => {
     if (typeof body.phaseGroupId === 'string') publishPoolChanged(body.phaseGroupId);
     res.json({ result: data, games });
   } catch (err) {
-    res.status(502).json({ error: err instanceof Error ? err.message : 'Failed to report set' });
+    res.status(502).json({ error: err instanceof Error ? err.message : 'Failed to report set', retryable: isRetryable(err) });
   }
 });

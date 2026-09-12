@@ -11,7 +11,7 @@ import { BO_OPTIONS, boLabel, guessRequiredWins } from './roundFormat';
 import { FuzzyCell } from './FuzzyCell';
 import { fuzzyMatchCharacters } from './characterAliases';
 import { StageToggle } from './StageToggle';
-import { ApiError, reportSet, updatePlayerMain, type StageSelection } from './api';
+import { ApiError, reportSet, updatePlayerMain, type ReportPayload, type StageSelection } from './api';
 import { lookupMain } from './mains';
 import { derivePriorState } from './priorDetail';
 
@@ -25,12 +25,21 @@ interface Props {
   // leaving them blank. Both null/absent for a normal not-yet-reported set.
   priorResult?: PriorResult | null;
   priorDetail?: SetDetail | null;
+  // Who start.gg had as the winner when this set was opened, or null for one
+  // nobody has reported. Only used to decide whether this report needs the
+  // destructive confirmation below — the server checks for real, and refuses
+  // if this was stale.
+  priorWinnerEntrantId?: number | null;
   characters: Character[];
   stages: Stage[];
   topXBo5: number | null;
   videogameId: number;
   /** The pool being viewed, passed through so a report can wake its watchers. */
   phaseGroupId: number | null;
+  // Hands the finished report to the outbox. Returns control immediately —
+  // the panel closes and delivery happens behind the TO, who is already at the
+  // next table. It is NOT a claim that anything was reported.
+  onQueue: (payload: ReportPayload, label: string) => void;
   onNotify: (message: string, kind?: ToastKind) => void;
   // Returns true when the error was a dead session and has been handled by
   // ending it — the panel then stays quiet rather than toasting "Not signed
@@ -76,11 +85,13 @@ export function ReportPanel({
   presumedWinnerId,
   priorResult,
   priorDetail,
+  priorWinnerEntrantId = null,
   characters,
   stages,
   topXBo5,
   videogameId,
   phaseGroupId,
+  onQueue,
   onNotify,
   onAuthError,
   onDone,
@@ -425,68 +436,83 @@ export function ReportPanel({
     }));
   }
 
+  function buildPayload(confirmReset: boolean): ReportPayload | null {
+    if (!games || games.length === 0) return null;
+    // Quick-reported scores are winner + overall score only — never drag in
+    // character/stage picks left over from switching out of detailed entry
+    // partway through. start.gg's reportBracketSet mutation always needs a
+    // per-game gameData array to encode the score itself (there's no
+    // separate "just a score" mutation), but each entry stays bare
+    // ({gameNum, winnerId}) as long as characters/stages are omitted here.
+    const charactersPayload =
+      scoreSource === 'quick'
+        ? []
+        : games
+            .map((g) => ({
+              gameNum: g.gameNum,
+              winnerCharacterId: charsByGame[g.gameNum]?.winner?.id,
+              loserCharacterId: charsByGame[g.gameNum]?.loser?.id,
+            }))
+            .filter((c) => c.winnerCharacterId != null || c.loserCharacterId != null);
+
+    const stagesPayload =
+      scoreSource === 'quick'
+        ? []
+        : games
+            .map((g) => ({ gameNum: g.gameNum, stageId: stagesByGame[g.gameNum]?.id }))
+            .filter((s): s is StageSelection => s.stageId != null);
+
+    return {
+      setId: set.id,
+      winnerEntrantId: winner.id,
+      loserEntrantId: loser.id,
+      requiredWins: submitRequiredWins,
+      shorthand: submitShorthand,
+      characters: charactersPayload.length > 0 ? charactersPayload : undefined,
+      stages: stagesPayload.length > 0 ? stagesPayload : undefined,
+      // So every other TO watching this pool sees the result immediately,
+      // rather than each of them polling start.gg to find out.
+      phaseGroupId: phaseGroupId == null ? undefined : String(phaseGroupId),
+      // Only ever true on a second submit, made from the confirmation the
+      // refusal opens — so the destructive path cannot be reached without
+      // the TO having seen what it costs.
+    confirmReset,
+    };
+  }
+
   async function submit(confirmReset = false) {
     if (submittingRef.current) return;
-    if (!games || games.length === 0) return;
-    submittingRef.current = true;
-    setSubmitting(true);
-    try {
-      // Quick-reported scores are winner + overall score only — never drag in
-      // character/stage picks left over from switching out of detailed entry
-      // partway through. start.gg's reportBracketSet mutation always needs a
-      // per-game gameData array to encode the score itself (there's no
-      // separate "just a score" mutation), but each entry stays bare
-      // ({gameNum, winnerId}) as long as characters/stages are omitted here.
-      const charactersPayload =
-        scoreSource === 'quick'
-          ? []
-          : games
-              .map((g) => ({
-                gameNum: g.gameNum,
-                winnerCharacterId: charsByGame[g.gameNum]?.winner?.id,
-                loserCharacterId: charsByGame[g.gameNum]?.loser?.id,
-              }))
-              .filter((c) => c.winnerCharacterId != null || c.loserCharacterId != null);
+    const payload = buildPayload(confirmReset);
+    if (!payload) return;
 
-      const stagesPayload =
-        scoreSource === 'quick'
-          ? []
-          : games
-              .map((g) => ({ gameNum: g.gameNum, stageId: stagesByGame[g.gameNum]?.id }))
-              .filter((s): s is StageSelection => s.stageId != null);
-
-      await reportSet({
-        setId: set.id,
-        winnerEntrantId: winner.id,
-        loserEntrantId: loser.id,
-        requiredWins: submitRequiredWins,
-        shorthand: submitShorthand,
-        characters: charactersPayload.length > 0 ? charactersPayload : undefined,
-        stages: stagesPayload.length > 0 ? stagesPayload : undefined,
-        // So every other TO watching this pool sees the result immediately,
-        // rather than each of them polling start.gg to find out.
-        phaseGroupId: phaseGroupId == null ? undefined : String(phaseGroupId),
-        // Only ever true on a second submit, made from the confirmation the
-        // refusal below opens — so the destructive path cannot be reached
-        // without the TO having seen what it costs.
-        confirmReset,
-      });
-      onDone();
-    } catch (err) {
-      if (onAuthError(err)) return;
-      // Not a failure: start.gg cannot change a decided set's winner in place,
-      // so the server is asking whether tearing the result down is really what
-      // was meant, and naming what that would clear.
-      if (err instanceof ApiError && err.details?.requiresReset === true) {
-        const clears = err.details.wouldClear;
-        setMode({ kind: 'confirmReset', wouldClear: Array.isArray(clears) ? (clears as string[]) : null });
-        return;
+    // Changing who won is the one thing here that destroys work, and what it
+    // destroys can only be worked out server-side. So this one report is not
+    // queued until the TO has seen the answer: the ask below writes nothing.
+    const changingWinner = priorWinnerEntrantId !== null && priorWinnerEntrantId !== winner.id;
+    if (changingWinner && !confirmReset) {
+      submittingRef.current = true;
+      setSubmitting(true);
+      try {
+        await reportSet({ ...payload, attempt: 1 });
+        // The server disagreed that the winner was changing — this set was
+        // not decided after all, and the report simply landed.
+        onDone();
+      } catch (err) {
+        if (onAuthError(err)) return;
+        if (err instanceof ApiError && err.details?.requiresReset === true) {
+          const clears = err.details.wouldClear;
+          setMode({ kind: 'confirmReset', wouldClear: Array.isArray(clears) ? (clears as string[]) : null });
+          return;
+        }
+        onNotify(err instanceof Error ? err.message : 'Failed to report set', 'error');
+      } finally {
+        submittingRef.current = false;
+        setSubmitting(false);
       }
-      onNotify(err instanceof Error ? err.message : 'Failed to report set', 'error');
-    } finally {
-      submittingRef.current = false;
-      setSubmitting(false);
+      return;
     }
+
+    onQueue(payload, `${winner.name} vs ${loser.name}`);
   }
 
   useEffect(() => {

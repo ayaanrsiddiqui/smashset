@@ -1,10 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { StrictMode } from 'react';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { fetchAccount, fetchBracket, fetchCharacters, fetchOpenSets, fetchPhaseGroups, fetchPoolPlayers, fetchSetDetail, fetchStages, reportSet, updatePlayerMain, updateTopXBo5 } from './api';
 import { apiFailure, flushTimers, resetApiDefaults, seedEvent, seedPool, TEST_EVENT } from './test-helpers';
 import type { BracketSet } from './types';
 import { openedEventSource, resetEventSources } from './test-eventsource';
+import { enqueue, remove as dropFromOutbox, resetOutbox } from './outbox';
 
 const fetchMeMock = vi.fn();
 const logoutMock = vi.fn();
@@ -1240,13 +1242,15 @@ describe('App — setting a main by hand', () => {
 });
 
 /**
- * The report screen is its own early return (App.tsx), and the toast lives in
- * the branch below it — so every message ReportPanel raised while it was open
- * rendered nowhere. A TO whose report failed got no error, no toast and a
- * panel that simply stayed put, which is CLAUDE.md's "a caught error that
- * renders nowhere is worse than a crash", exactly.
+ * The whole point of the outbox, end to end.
+ *
+ * Before it, submit() awaited reportSet inline: the panel froze for up to 25
+ * seconds on venue wifi (measured against a socket that accepts and never
+ * answers), every key including Escape was swallowed, and a failure threw the
+ * report away behind a toast that — because the report screen is its own early
+ * return above where the toast rendered — never appeared at all.
  */
-describe('App — a report that does not land', () => {
+describe('App — reporting a set and walking away', () => {
   const OPEN_SET = {
     id: 5001,
     isPreview: false,
@@ -1262,6 +1266,7 @@ describe('App — a report that does not land', () => {
 
   beforeEach(() => {
     localStorage.clear();
+    resetOutbox();
     seedEvent();
     seedPool();
     resetApiDefaults();
@@ -1273,34 +1278,183 @@ describe('App — a report that does not land', () => {
   afterEach(() => {
     vi.mocked(reportSet).mockReset();
     fetchMeMock.mockReset();
+    localStorage.clear();
+    resetOutbox();
   });
 
   /** Opens the one set in the list and submits a 2-0 for Ada. */
   async function reportIt() {
-    const { findByText } = screen;
-    await findByText(/Ada vs mudd/);
+    await screen.findByText(/Ada vs mudd/);
     fireEvent.keyDown(window, { key: '1' });
-    await findByText(/Winners Round 1 · A/);
+    await screen.findByText(/Winners Round 1 · A/);
     for (const key of ['w', 'w', 'Enter', 'Enter']) fireEvent.keyDown(window, { key });
   }
 
-  it('tells the TO when the report failed, instead of leaving them on a silent panel', async () => {
-    vi.mocked(reportSet).mockRejectedValue(apiFailure(0, 'Timed out reaching the server. Check your connection.'));
+  it('gives the TO the screen back at once, without claiming anything was reported', async () => {
+    vi.mocked(reportSet).mockReturnValue(new Promise(() => {})); // in flight forever
     render(<App />);
     await reportIt();
 
-    expect(await screen.findByText(/Timed out reaching the server/)).toBeInTheDocument();
-    // Still on the report screen: nothing was reported, so there is nothing
-    // to go back to the list for.
-    expect(screen.getByText(/Winners Round 1 · A/)).toBeInTheDocument();
+    // Off the report screen before start.gg has said anything at all.
+    expect(await screen.findByText(/Sending Ada vs mudd/)).toBeInTheDocument();
+    expect(screen.queryByText(/Winners Round 1 · A/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^Reported /)).not.toBeInTheDocument();
   });
 
-  it('does not claim a set was reported when it was not', async () => {
-    vi.mocked(reportSet).mockRejectedValue(apiFailure(502, 'start.gg is down'));
+  it('says it was reported only once start.gg confirms', async () => {
+    let land: (value: { result: unknown }) => void = () => {};
+    vi.mocked(reportSet).mockReturnValue(new Promise((resolve) => (land = resolve)));
+    render(<App />);
+    await reportIt();
+    await screen.findByText(/Sending Ada vs mudd/);
+    expect(screen.queryByText(/^Reported /)).not.toBeInTheDocument();
+
+    land({ result: {} });
+
+    expect(await screen.findByText('Reported Ada vs mudd')).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByText(/Sending Ada vs mudd/)).not.toBeInTheDocument());
+  });
+
+  it('leaves a dead end on screen as NOT REPORTED, not as a toast that fades', async () => {
+    vi.mocked(reportSet).mockRejectedValue(
+      apiFailure(409, 'This set is between different players on start.gg now — reopen it to see who, then report again.')
+    );
     render(<App />);
     await reportIt();
 
-    expect(await screen.findByText(/start\.gg is down/)).toBeInTheDocument();
-    expect(screen.queryByText(/^Reported /)).not.toBeInTheDocument();
+    expect(await screen.findByText('NOT REPORTED')).toBeInTheDocument();
+    expect(screen.getByText(/between different players/)).toBeInTheDocument();
+  });
+
+  it('keeps a failure visible long after any toast would have gone', async () => {
+    vi.mocked(reportSet).mockRejectedValue(apiFailure(409, 'start.gg would not take this.'));
+    render(<App />);
+    await reportIt();
+    await screen.findByText('NOT REPORTED');
+
+    // Three times the toast's own lifetime.
+    await new Promise((resolve) => setTimeout(resolve, 900));
+
+    expect(screen.getByText('NOT REPORTED')).toBeInTheDocument();
+  });
+
+  it('keeps trying when the failure is one that might clear up', async () => {
+    // Status 0: the request never reached the server at all. Venue wifi.
+    vi.mocked(reportSet).mockRejectedValue(apiFailure(0, 'Could not reach the server.'));
+    render(<App />);
+    await reportIt();
+
+    await waitFor(() => expect(vi.mocked(reportSet).mock.calls.length).toBeGreaterThan(1), { timeout: 4000 });
+    // Still sending, not given up on: the score is the thing that must not be lost.
+    expect(screen.getByText(/Sending Ada vs mudd/)).toBeInTheDocument();
+    expect(screen.queryByText('NOT REPORTED')).not.toBeInTheDocument();
+  });
+
+  it('counts its deliveries, so the server can tell a retry from a decision', async () => {
+    vi.mocked(reportSet).mockRejectedValue(apiFailure(0, 'Could not reach the server.'));
+    render(<App />);
+    await reportIt();
+
+    await waitFor(() => expect(vi.mocked(reportSet).mock.calls.length).toBeGreaterThan(1), { timeout: 4000 });
+    const attempts = vi.mocked(reportSet).mock.calls.map(([payload]) => payload.attempt);
+    expect(attempts.slice(0, 2)).toEqual([1, 2]);
+  });
+
+  it('sends a dead-lettered report again when the TO asks', async () => {
+    vi.mocked(reportSet).mockRejectedValueOnce(apiFailure(409, 'start.gg would not take this.'));
+    render(<App />);
+    await reportIt();
+    await screen.findByText('NOT REPORTED');
+
+    vi.mocked(reportSet).mockResolvedValue({ result: {} });
+    fireEvent.click(screen.getByRole('button', { name: 'try again' }));
+
+    expect(await screen.findByText('Reported Ada vs mudd')).toBeInTheDocument();
+  });
+
+  it('lets the TO throw a dead-lettered report away once they have dealt with it', async () => {
+    vi.mocked(reportSet).mockRejectedValue(apiFailure(409, 'start.gg would not take this.'));
+    render(<App />);
+    await reportIt();
+    await screen.findByText('NOT REPORTED');
+
+    fireEvent.click(screen.getByRole('button', { name: 'discard' }));
+
+    await waitFor(() => expect(screen.queryByText('NOT REPORTED')).not.toBeInTheDocument());
+  });
+
+  it('still has the report after a reload, because the tab is not where it lives', async () => {
+    vi.mocked(reportSet).mockRejectedValue(apiFailure(409, 'start.gg would not take this.'));
+    const { unmount } = render(<App />);
+    await reportIt();
+    await screen.findByText('NOT REPORTED');
+    unmount();
+    resetOutbox(); // a fresh page load against the same browser storage
+
+    vi.mocked(reportSet).mockReturnValue(new Promise(() => {}));
+    render(<App />);
+
+    expect(await screen.findByText('NOT REPORTED')).toBeInTheDocument();
+  });
+});
+
+describe('App — a queued report that was already in storage at start-up', () => {
+  const OPEN_SET = {
+    id: 5001,
+    isPreview: false,
+    isStarted: false,
+    fullRoundText: 'Winners Round 1',
+    identifier: 'A',
+    lPlacement: null,
+    entrants: [
+      { id: 6001, name: 'Ada' },
+      { id: 6002, name: 'mudd' },
+    ],
+  };
+
+  beforeEach(() => {
+    localStorage.clear();
+    resetOutbox();
+    seedEvent();
+    seedPool();
+    resetApiDefaults();
+    resetEventSources();
+    fetchMeMock.mockResolvedValue({ user: { id: 1, displayName: 'FireSlam23' } });
+    vi.mocked(fetchOpenSets).mockResolvedValue({ sets: [OPEN_SET] });
+  });
+
+  afterEach(() => {
+    vi.mocked(reportSet).mockReset();
+    fetchMeMock.mockReset();
+    localStorage.clear();
+    resetOutbox();
+  });
+
+  it('reflects the queue itself, not just what its own delivery returned', async () => {
+    // Found in a browser, not here: React StrictMode mounts each effect, tears
+    // it down and mounts it again, so the delivery started by the first mount
+    // belongs to an effect that has already been cleaned up. A strip refreshed
+    // only from that delivery's own return value kept showing a report that
+    // had landed — this feature inverted, and a TO would report the set twice.
+    //
+    // So the invariant is that the strip follows the queue, whoever changed
+    // it: a torn-down effect, another tab, anything.
+    enqueue(
+      { setId: 5001, winnerEntrantId: 6001, loserEntrantId: 6002, requiredWins: 2, shorthand: '+' },
+      'Ada vs mudd',
+      Date.now()
+    );
+    vi.mocked(reportSet).mockReturnValue(new Promise(() => {})); // never settles, so no drain does this for us
+
+    render(
+      <StrictMode>
+        <App />
+      </StrictMode>
+    );
+    expect(await screen.findByText(/Sending Ada vs mudd/)).toBeInTheDocument();
+
+    act(() => dropFromOutbox('5001'));
+
+    await waitFor(() => expect(screen.queryByText(/Sending Ada vs mudd/)).not.toBeInTheDocument());
   });
 });

@@ -6,6 +6,7 @@ import { upsertUserFromOAuth } from '../db/users.js';
 import { createSession } from '../db/sessions.js';
 import { SESSION_COOKIE_NAME } from '../middleware/auth.js';
 import { closeTestPool } from '../test-helpers.js';
+import { StartggError } from '../startgg.js';
 
 const gqlMock = vi.fn();
 vi.mock('../startgg.js', async (importOriginal) => ({
@@ -35,8 +36,8 @@ async function makeSignedInCookie(label: string): Promise<string> {
 const VALID = { setId: 7001, winnerEntrantId: 8001, loserEntrantId: 8002, requiredWins: 2, shorthand: '+' };
 
 /** What start.gg holds for the set being reported, before this report lands. */
-const OPEN_SET = { id: 7001, state: 2, winnerId: null, phaseGroup: { id: 1 }, slots: [{ entrant: { id: 8001, name: 'Ada' } }, { entrant: { id: 8002, name: 'mudd' } }] };
-const COMPLETED_SET = { ...OPEN_SET, state: 3, winnerId: 8001 };
+const OPEN_SET = { id: 7001, state: 2, winnerId: null, displayScore: null, phaseGroup: { id: 1 }, slots: [{ entrant: { id: 8001, name: 'Ada' } }, { entrant: { id: 8002, name: 'mudd' } }] };
+const COMPLETED_SET = { ...OPEN_SET, state: 3, winnerId: 8001, displayScore: 'Ada 2 - mudd 0' };
 
 /** 7001 feeds a played set directly, and another through a bye, as start.gg models it. */
 const CASCADE_SETS = [
@@ -318,5 +319,135 @@ describe('POST /api/report — telling the TO what a teardown costs', () => {
 
     expect(res.status).toBe(409);
     expect(res.body.wouldClear).toBeNull();
+  });
+});
+
+/**
+ * An outbox delivers at least once, so the same report can arrive twice: the
+ * first attempt landed and its response died on venue wifi. A retry must not
+ * be the thing that overwrites a result somebody has since corrected.
+ *
+ * Only retries are guarded. A first attempt is a TO looking at the set and
+ * deciding, which is exactly when overwriting is the point.
+ */
+describe('POST /api/report — a retry arriving after the set already moved', () => {
+  afterEach(() => {
+    gqlMock.mockReset();
+    resetPoolEvents();
+  });
+
+  // VALID is a clean 2-0 for 8001, which is what COMPLETED_SET already holds.
+  const retry = { ...VALID, attempt: 2 };
+
+  it('stops when the result on file is the one it was trying to report', async () => {
+    // The ambiguous timeout: this attempt already landed. Reporting again
+    // would be harmless but pointless, and failing would strand a red line on
+    // a set that is correctly reported.
+    startgg({ set: COMPLETED_SET });
+    const cookie = await makeSignedInCookie('retry-converged');
+
+    const res = await request(app).post('/api/report').set('Cookie', cookie).send(retry);
+
+    expect(res.status).toBe(200);
+    expect(res.body.alreadyOnFile).toBe(true);
+    expect(mutations()).toEqual([]);
+  });
+
+  it('refuses to overwrite a different score somebody has since reported', async () => {
+    startgg({ set: { ...COMPLETED_SET, displayScore: 'Ada 2 - mudd 1' } });
+    const cookie = await makeSignedInCookie('retry-conflict');
+
+    const res = await request(app).post('/api/report').set('Cookie', cookie).send(retry);
+
+    expect(res.status).toBe(409);
+    expect(res.body.retryable).toBe(false);
+    expect(mutations()).toEqual([]);
+  });
+
+  it('refuses to overwrite a different winner, too', async () => {
+    startgg({ set: { ...COMPLETED_SET, winnerId: 8002, displayScore: 'mudd 2 - Ada 0' } });
+    const cookie = await makeSignedInCookie('retry-other-winner');
+
+    const res = await request(app).post('/api/report').set('Cookie', cookie).send(retry);
+
+    expect(res.status).toBe(409);
+    expect(mutations()).toEqual([]);
+  });
+
+  it('refuses when it cannot read what is on file rather than assuming', async () => {
+    // A DQ comes back as the bare string "DQ", so the score is unknowable. An
+    // unreadable result is not a matching one.
+    startgg({ set: { ...COMPLETED_SET, displayScore: 'DQ' } });
+    const cookie = await makeSignedInCookie('retry-dq');
+
+    const res = await request(app).post('/api/report').set('Cookie', cookie).send(retry);
+
+    expect(res.status).toBe(409);
+    expect(mutations()).toEqual([]);
+  });
+
+  it('still reports normally when the set is untouched', async () => {
+    startgg({ set: OPEN_SET });
+    const cookie = await makeSignedInCookie('retry-open');
+
+    const res = await request(app).post('/api/report').set('Cookie', cookie).send(retry);
+
+    expect(res.status).toBe(200);
+    expect(mutations()).toEqual(['ReportSet']);
+  });
+
+  it('leaves a first attempt free to overwrite, which is what correcting means', async () => {
+    startgg({ set: { ...COMPLETED_SET, displayScore: 'Ada 2 - mudd 1' } });
+    const cookie = await makeSignedInCookie('first-attempt');
+
+    const res = await request(app).post('/api/report').set('Cookie', cookie).send(VALID);
+
+    expect(res.status).toBe(200);
+    expect(mutations()).toEqual(['UpdateSet']);
+  });
+});
+
+/**
+ * The outbox has to decide whether waiting will help. Everything used to come
+ * back as a bare 502 with a message string, which is either hammering a
+ * refusal that can never change or giving up on a four-second wifi blip.
+ */
+describe('POST /api/report — telling a retry apart from a dead end', () => {
+  afterEach(() => {
+    gqlMock.mockReset();
+    resetPoolEvents();
+  });
+
+  it('marks a rate limit as worth retrying', async () => {
+    const limited = new StartggError('start.gg is rate limiting us. Give it a moment and try again.', 429);
+    startgg({ set: OPEN_SET, report: limited });
+    const cookie = await makeSignedInCookie('rate-limited');
+
+    const res = await request(app).post('/api/report').set('Cookie', cookie).send(VALID);
+
+    expect(res.body.retryable).toBe(true);
+  });
+
+  it('marks a dropped connection as worth retrying', async () => {
+    // No status at all: the request never got an answer.
+    startgg({ set: OPEN_SET, report: new StartggError('start.gg did not respond in time.') });
+    const cookie = await makeSignedInCookie('timed-out');
+
+    const res = await request(app).post('/api/report').set('Cookie', cookie).send(VALID);
+
+    expect(res.body.retryable).toBe(true);
+  });
+
+  it('marks start.gg refusing the report as a dead end', async () => {
+    // start.gg answered, with a decision. Sending it again cannot change it.
+    const refused = new StartggError('start.gg API error: Cannot report completed set via API.', 200, [
+      { message: 'Cannot report completed set via API.' },
+    ]);
+    startgg({ set: OPEN_SET, report: refused });
+    const cookie = await makeSignedInCookie('refused');
+
+    const res = await request(app).post('/api/report').set('Cookie', cookie).send(VALID);
+
+    expect(res.body.retryable).toBe(false);
   });
 });

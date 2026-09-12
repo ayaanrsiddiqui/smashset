@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type React from 'react';
 import { Settings } from './Settings';
 import { SignIn } from './SignIn';
@@ -9,6 +9,8 @@ import { AccountModal } from './AccountModal';
 import { Bracket } from './Bracket';
 import { SetPanel } from './SetPanel';
 import { MainsPanel } from './MainsPanel';
+import { OutboxStrip } from './OutboxStrip';
+import { allEntries, clearOutbox, drainOnce, enqueue, remove as dropFromOutbox, retryNow, subscribe as subscribeToOutbox } from './outbox';
 import {
   startSet,
   poolEventsUrl,
@@ -23,7 +25,9 @@ import {
   fetchAccount,
   updateTopXBo5,
   logout,
+  reportSet,
   ApiError,
+  type ReportPayload,
 } from './api';
 import { fuzzyMatchSets } from './fuzzy';
 import { bracketSetById, priorResultFor } from './bracketDisplay';
@@ -126,6 +130,14 @@ export default function App() {
   const [showHelp, setShowHelp] = useState(false);
   const [showAccount, setShowAccount] = useState(false);
   const [showMains, setShowMains] = useState(false);
+  // Reports submitted but not yet confirmed by start.gg, read straight from
+  // the queue rather than mirrored into state — see the note on subscribe in
+  // outbox.ts for what mirroring cost. Hydrated from storage, so a report
+  // survives the tab being closed mid-delivery.
+  const outbox = useSyncExternalStore(subscribeToOutbox, allEntries);
+  // Lets a fresh report start delivering immediately instead of waiting out
+  // the drain interval; assigned by the drain effect below.
+  const drainNow = useRef<() => void>(() => {});
   const searchRef = useRef<HTMLInputElement>(null);
   // Mirrors phaseGroupId for async continuations that need to know whether the
   // TO switched pool while they were awaiting — a ref because a closure
@@ -267,6 +279,10 @@ export default function App() {
     // straight in the previous TO's tournament.
     localStorage.removeItem(STORAGE_KEY);
     localStorage.removeItem(POOL_STORAGE_KEY);
+    // Queued reports belong to the TO who made them and go out under their
+    // token. Handing them to whoever signs in next on a venue device would
+    // report a set as somebody else.
+    clearOutbox();
     // Local state flips first so the UI can't sit on a live-looking session
     // while a slow logout round trip is still in the air.
     endSession();
@@ -335,6 +351,69 @@ export default function App() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, phaseGroupId, selectedSet, pickingPool, liveConnected, changeSignal]);
+
+  /**
+   * Whether trying again could help.
+   *
+   * The server says so explicitly for anything it handled. A missing verdict
+   * means the answer never came from us at all — nothing reached the server,
+   * or a proxy or gateway answered instead — and those are exactly the
+   * failures that clear up on their own.
+   */
+  function worthRetrying(err: unknown): boolean {
+    if (!(err instanceof ApiError)) return false;
+    if (typeof err.details?.retryable === 'boolean') return err.details.retryable;
+    return err.status === 0 || err.status >= 500;
+  }
+
+  // Delivers queued reports behind the TO. Runs on a short clock rather than
+  // only on events, because the backoff below needs something to wake it, and
+  // a tick with nothing due costs one map lookup.
+  useEffect(() => {
+    if (!user) return;
+    // Deliberately no cancelled flag. A delivery still in the air when this
+    // effect tears down must finish and retire its entry — dropping it on the
+    // floor is how a landed report ends up still showing as unsent.
+    const run = async () => {
+      await drainOnce({
+        now: Date.now(),
+        random: Math.random,
+        send: async (payload: ReportPayload, attempt: number) => {
+          try {
+            await reportSet({ ...payload, attempt });
+            return { ok: true };
+          } catch (err) {
+            // A dead session is not this report's fault. End the session so
+            // the TO can sign back in, and keep the report queued — it is
+            // still the only record that the set was ever reported.
+            if (err instanceof ApiError && err.status === 401) {
+              handledAuthError(err);
+              return { ok: false, retryable: true, message: 'Signed out — sign back in to send this.' };
+            }
+            return {
+              ok: false,
+              retryable: worthRetrying(err),
+              message: err instanceof Error ? err.message : 'Failed to report set',
+            };
+          }
+        },
+        // Fires on start.gg confirming, never on merely sending — which is the
+        // whole reason this is an outbox and not optimistic UI.
+        onDelivered: (entry) => notify(`Reported ${entry.label}`, 'success'),
+      });
+    };
+    drainNow.current = run;
+    run();
+    const interval = setInterval(run, 1000);
+    // Coming back on to venue wifi should not wait out a backoff that started
+    // while there was nothing to connect to.
+    window.addEventListener('online', run);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('online', run);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user]);
 
   // Subscribed only once the bracket has actually loaded, which is also the
   // server's admission rule: it refuses a pool this TO has not read, and a
@@ -550,8 +629,41 @@ export default function App() {
   // while it was open (a failed report, most of all) rendered nowhere at all.
   const toastEl = toast && <div className={`toast toast-${toast.kind}`}>{toast.message}</div>;
 
+  // Rendered by every screen below, including sign-in: a session that expires
+  // mid-tournament drops the TO there, and "you have a report that hasn't been
+  // sent" is the most useful thing that screen can say.
+  const outboxEl = (
+    <OutboxStrip
+      entries={outbox}
+      onRetry={(setId) => {
+        retryNow(setId, Date.now());
+        drainNow.current();
+      }}
+      onDiscard={(setId) => {
+        dropFromOutbox(setId);
+      }}
+    />
+  );
+
+  /** Hands a finished report to the outbox and gives the TO the screen back. */
+  function queueReport(payload: ReportPayload, label: string) {
+    enqueue(payload, label, Date.now());
+    setSelectedSet(null);
+    setPriorDetail(null);
+    setQuery('');
+    // Without this the first attempt waits out the drain interval, which is
+    // the one part of the round trip a TO would actually notice.
+    drainNow.current();
+  }
+
   if (user === undefined) return <div className="settings-screen"><h1>SmashSet</h1></div>;
-  if (user === null) return <SignIn />;
+  if (user === null)
+    return (
+      <>
+        {outboxEl}
+        <SignIn />
+      </>
+    );
   if (!event) return <Settings onResolved={handleResolved} />;
 
   /**
@@ -603,6 +715,7 @@ export default function App() {
   if (pickingPool || (phaseGroups.length > 1 && phaseGroupId === null)) {
     return (
       <>
+      {outboxEl}
       {toastEl}
       <PoolPicker
         eventId={event.id}
@@ -717,6 +830,7 @@ export default function App() {
 
     return (
       <div className="app-shell">
+        {outboxEl}
         {toastEl}
         <ReportPanel
           // Remounts when the set changes so the score/character initializers
@@ -733,13 +847,18 @@ export default function App() {
           presumedWinnerId={matchedEntrantId(selectedSet) ?? selectedBracketSet?.winnerId ?? null}
           priorResult={priorResult}
           priorDetail={priorDetail}
+          priorWinnerEntrantId={selectedBracketSet?.state === 3 ? selectedBracketSet.winnerId : null}
           characters={characters}
           stages={stages}
           topXBo5={topX}
           videogameId={event.videogame.id}
+          onQueue={queueReport}
           onNotify={notify}
           onAuthError={handledAuthError}
           onDone={() => {
+            // Reached only by the synchronous winner-change path; the queued
+            // path goes through queueReport, and its success toast fires when
+            // start.gg confirms rather than when the panel closes.
             notify(`Reported ${selectedSet.entrants.map((e) => e.name).join(' vs ')}`, 'success');
             // Clearing selectedSet re-arms both poll effects, which refresh
             // immediately — calling them here too just doubled every report's
@@ -759,6 +878,7 @@ export default function App() {
 
   return (
     <div className="app-shell unified">
+      {outboxEl}
       <header className="app-header">
         <span className="event-name">{event.name}</span>
         <div className="header-controls">

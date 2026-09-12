@@ -195,6 +195,12 @@ export interface ReportPayload {
    * destructive reading of an ambiguous request.
    */
   confirmReset?: boolean;
+  /**
+   * Which delivery this is. The outbox counts them; the server holds anything
+   * past the first to a stricter rule, since a retry is a report the TO has
+   * already walked away from rather than one they are standing over.
+   */
+  attempt?: number;
 }
 
 export function reportSet(payload: ReportPayload): Promise<{ result: unknown }> {

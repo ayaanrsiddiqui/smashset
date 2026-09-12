@@ -25,12 +25,16 @@ function setFor(fullRoundText: string): OpenSet {
   };
 }
 
+const onQueue = vi.fn();
+
 /** Grand Final is the one round guessRequiredWins reads as best-of-five. */
-function renderPanel(fullRoundText: string) {
+function renderPanel(fullRoundText: string, priorWinnerEntrantId: number | null = null) {
   render(
     <ReportPanel
       set={setFor(fullRoundText)}
       presumedWinnerId={10}
+      priorWinnerEntrantId={priorWinnerEntrantId}
+      onQueue={onQueue}
       characters={[]}
       stages={[]}
       topXBo5={null}
@@ -112,14 +116,13 @@ describe('ReportPanel — why the report button is disabled', () => {
 });
 
 /**
- * start.gg will not change a finished set's winner in place — the result has
- * to be torn down first, and tearing it down takes everything downstream with
- * it (verified live). The panel cannot work out on its own whether that is
- * what a report means: a losers-bracket set is reached through a bye set that
- * start.gg leaves out of the bracket the app fetches. So the server refuses,
- * says what it would clear, and this is where that refusal is answered.
+ * A report is handed to the outbox and the panel closes — the TO is already at
+ * the next table. The one exception is changing who won a decided set: start.gg
+ * can only do that by tearing the result down and taking everything downstream
+ * with it, and what that clears is only knowable server-side. So that one is
+ * asked about before it is queued.
  */
-describe('ReportPanel — clearing a decided set to change who won', () => {
+describe('ReportPanel — handing a report to the outbox', () => {
   const warning = () => document.querySelector('.reset-warning')?.textContent?.replace(/\s+/g, ' ').trim() ?? null;
   const submit = () => {
     for (const key of ['w', 'w', 'Enter', 'Enter']) fireEvent.keyDown(window, { key });
@@ -133,11 +136,47 @@ describe('ReportPanel — clearing a decided set to change who won', () => {
   afterEach(() => {
     vi.mocked(reportSet).mockReset();
     vi.mocked(reportSet).mockResolvedValue({ result: {} });
+    onQueue.mockReset();
+  });
+
+  it('queues an ordinary report instead of waiting on start.gg', () => {
+    renderPanel('Winners Round 1');
+    submit();
+
+    expect(onQueue).toHaveBeenCalledTimes(1);
+    expect(onQueue.mock.calls[0][0]).toMatchObject({ setId: 1, winnerEntrantId: 10, shorthand: 'WW' });
+    // Nothing was sent from here: the panel does not wait for a round trip.
+    expect(vi.mocked(reportSet)).not.toHaveBeenCalled();
+  });
+
+  it('labels the report with both names, so it is recognisable minutes later', () => {
+    renderPanel('Winners Round 1');
+    submit();
+
+    expect(onQueue.mock.calls[0][1]).toBe('Ada vs mudd');
+  });
+
+  it('queues a score correction too — editing a score in place is not destructive', () => {
+    // Same winner on file as the one being reported, so nothing is torn down.
+    renderPanel('Winners Round 1', 10);
+    submit();
+
+    expect(onQueue).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(reportSet)).not.toHaveBeenCalled();
+  });
+
+  it('never queues a report that changes the winner without asking first', async () => {
+    vi.mocked(reportSet).mockRejectedValueOnce(refusal(['I', 'R']));
+    renderPanel('Winners Round 1', 20);
+    submit();
+
+    await vi.waitFor(() => expect(warning()).not.toBeNull());
+    expect(onQueue).not.toHaveBeenCalled();
   });
 
   it('names what the teardown clears, using the list only the server can build', async () => {
     vi.mocked(reportSet).mockRejectedValueOnce(refusal(['I', 'R']));
-    renderPanel('Winners Round 1');
+    renderPanel('Winners Round 1', 20);
     submit();
 
     await vi.waitFor(() => expect(warning()).not.toBeNull());
@@ -146,93 +185,61 @@ describe('ReportPanel — clearing a decided set to change who won', () => {
 
   it('says it could not check, rather than implying nothing else is affected', async () => {
     vi.mocked(reportSet).mockRejectedValueOnce(refusal(null));
-    renderPanel('Winners Round 1');
+    renderPanel('Winners Round 1', 20);
     submit();
 
     await vi.waitFor(() => expect(warning()).not.toBeNull());
     expect(warning()).toMatch(/couldn't check/i);
   });
 
-  it('does not report anything until the teardown is confirmed', async () => {
+  it('queues the teardown once the TO agrees, carrying their agreement with it', async () => {
     vi.mocked(reportSet).mockRejectedValueOnce(refusal(['I']));
-    renderPanel('Winners Round 1');
-    submit();
-
-    await vi.waitFor(() => expect(warning()).not.toBeNull());
-    expect(vi.mocked(reportSet)).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(reportSet).mock.calls[0][0].confirmReset).toBeFalsy();
-  });
-
-  it('confirms the teardown only on a second, deliberate Enter', async () => {
-    vi.mocked(reportSet).mockRejectedValueOnce(refusal(['I']));
-    renderPanel('Winners Round 1');
+    renderPanel('Winners Round 1', 20);
     submit();
 
     await vi.waitFor(() => expect(warning()).not.toBeNull());
     fireEvent.keyDown(window, { key: 'Enter' });
 
-    await vi.waitFor(() => expect(vi.mocked(reportSet)).toHaveBeenCalledTimes(2));
-    expect(vi.mocked(reportSet).mock.calls[1][0].confirmReset).toBe(true);
+    expect(onQueue).toHaveBeenCalledTimes(1);
+    expect(onQueue.mock.calls[0][0].confirmReset).toBe(true);
   });
 
-  it('backs out on Escape without clearing anything', async () => {
+  it('backs out on Escape without queueing anything', async () => {
     vi.mocked(reportSet).mockRejectedValueOnce(refusal(['I']));
-    renderPanel('Winners Round 1');
+    renderPanel('Winners Round 1', 20);
     submit();
 
     await vi.waitFor(() => expect(warning()).not.toBeNull());
     fireEvent.keyDown(window, { key: 'Escape' });
 
     expect(warning()).toBeNull();
-    expect(vi.mocked(reportSet)).toHaveBeenCalledTimes(1);
-  });
-
-  it('confirms the teardown on a click, too — not only from the keyboard', async () => {
-    vi.mocked(reportSet).mockRejectedValueOnce(refusal(['I']));
-    renderPanel('Winners Round 1');
-    submit();
-
-    await vi.waitFor(() => expect(warning()).not.toBeNull());
-    const yes = [...document.querySelectorAll('button')].find((b) => /clear the old result/i.test(b.getAttribute('aria-label') ?? ''));
-    fireEvent.click(yes!);
-
-    await vi.waitFor(() => expect(vi.mocked(reportSet)).toHaveBeenCalledTimes(2));
-    expect(vi.mocked(reportSet).mock.calls[1][0].confirmReset).toBe(true);
+    expect(onQueue).not.toHaveBeenCalled();
   });
 
   it('takes any other key as backing out, never as agreement', async () => {
-    // A confirmation that fires on whatever key the TO happened to hit next is
-    // not a confirmation, and this one clears results.
+    // A confirmation that fires on whatever key the TO hits next is not a
+    // confirmation, and this one clears results.
     vi.mocked(reportSet).mockRejectedValueOnce(refusal(['I']));
-    renderPanel('Winners Round 1');
+    renderPanel('Winners Round 1', 20);
     submit();
 
     await vi.waitFor(() => expect(warning()).not.toBeNull());
     fireEvent.keyDown(window, { key: 'w' });
 
     expect(warning()).toBeNull();
-    expect(vi.mocked(reportSet)).toHaveBeenCalledTimes(1);
+    expect(onQueue).not.toHaveBeenCalled();
   });
 
-  it('never asks for a teardown on an ordinary report', async () => {
-    renderPanel('Winners Round 1');
-    submit();
-
-    await vi.waitFor(() => expect(vi.mocked(reportSet)).toHaveBeenCalled());
-    expect(vi.mocked(reportSet).mock.calls[0][0].confirmReset).toBeFalsy();
-    expect(warning()).toBeNull();
-  });
-
-  it('never asks for a teardown when the ordinary confirm is clicked either', async () => {
-    // submit's first parameter is confirmReset, so handing this button
-    // straight to onClick passes it a MouseEvent — truthy — and every mouse
-    // report becomes a teardown request. Caught once by tsc; pinned here.
+  it('never sets confirmReset on an ordinary report, even clicked rather than typed', async () => {
+    // submit's first parameter is confirmReset, so handing this button to
+    // onClick passes it a MouseEvent — truthy — and every mouse report becomes
+    // a teardown request. Caught once by tsc; pinned here.
     renderPanel('Winners Round 1');
     for (const key of ['w', 'w', 'Enter']) fireEvent.keyDown(window, { key });
     const yes = [...document.querySelectorAll('button')].find((b) => b.getAttribute('aria-label') === 'Confirm report');
     fireEvent.click(yes!);
 
-    await vi.waitFor(() => expect(vi.mocked(reportSet)).toHaveBeenCalled());
-    expect(vi.mocked(reportSet).mock.calls[0][0].confirmReset).toBeFalsy();
+    await vi.waitFor(() => expect(onQueue).toHaveBeenCalled());
+    expect(onQueue.mock.calls[0][0].confirmReset).toBeFalsy();
   });
 });
