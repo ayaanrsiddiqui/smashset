@@ -3,6 +3,7 @@ import { sign } from 'cookie-signature';
 import request from 'supertest';
 import { pool } from '../db/pool.js';
 import { upsertUserFromOAuth } from '../db/users.js';
+import { upsertPlayerMain } from '../db/mains.js';
 import { createSession } from '../db/sessions.js';
 import { SESSION_COOKIE_NAME } from '../middleware/auth.js';
 import { closeTestPool } from '../test-helpers.js';
@@ -451,6 +452,111 @@ interface ResponseBracketGroup {
   bracketType: string;
   sets: ResponseBracketSet[];
 }
+
+describe('GET /phase-group/:phaseGroupId/players', () => {
+  // This file's own slice of the player id space; see vitest.config.ts.
+  const SEEDED_WITH_MAIN = -301;
+  const SEEDED_NO_MAIN_FOUND = -302;
+  const SEEDED_NEVER_LOOKED = -303;
+  const VIDEOGAME_ID = 1386;
+
+  function playersFixture(totalPages = 1, page = 1) {
+    const all = [
+      { entrant: { id: 9001, name: 'Has Main', participants: [{ player: { id: SEEDED_WITH_MAIN } }] } },
+      { entrant: { id: 9002, name: 'Looked Up Empty', participants: [{ player: { id: SEEDED_NO_MAIN_FOUND } }] } },
+      { entrant: { id: 9003, name: 'Never Looked', participants: [{ player: { id: SEEDED_NEVER_LOOKED } }] } },
+    ];
+    return {
+      phaseGroup: {
+        phase: { event: { videogame: { id: VIDEOGAME_ID } } },
+        seeds: { pageInfo: { totalPages }, nodes: totalPages === 1 ? all : [all[page - 1]] },
+      },
+    };
+  }
+
+  afterEach(async () => {
+    gqlMock.mockReset();
+    await pool.query('DELETE FROM player_mains WHERE player_id = ANY($1)', [
+      [SEEDED_WITH_MAIN, SEEDED_NO_MAIN_FOUND, SEEDED_NEVER_LOOKED],
+    ]);
+  });
+
+  it('returns everyone seeded into the pool, with the main on file for each', async () => {
+    await upsertPlayerMain(SEEDED_WITH_MAIN, VIDEOGAME_ID, 1286, 7, 3);
+    // Looked up and genuinely found nothing — a different fact from never
+    // having looked, and the panel says something different for each.
+    await upsertPlayerMain(SEEDED_NO_MAIN_FOUND, VIDEOGAME_ID, null, 0, 5);
+    gqlMock.mockImplementation((_t: unknown, query: string) => {
+      if (query.includes('PhaseGroupPlayers')) return Promise.resolve(playersFixture());
+      throw new Error(`unexpected query in test: ${query}`);
+    });
+    const cookie = await makeSignedInCookie('pool-players');
+
+    const res = await request(app).get('/api/sets/phase-group/55/players').set('Cookie', cookie);
+
+    expect(res.status).toBe(200);
+    expect(res.body.videogameId).toBe(VIDEOGAME_ID);
+    expect(res.body.players).toEqual([
+      { playerId: SEEDED_WITH_MAIN, name: 'Has Main', main: { characterId: 1286, gamesTallied: 7, setsConsidered: 3 } },
+      { playerId: SEEDED_NO_MAIN_FOUND, name: 'Looked Up Empty', main: { characterId: null, gamesTallied: 0, setsConsidered: 5 } },
+      { playerId: SEEDED_NEVER_LOOKED, name: 'Never Looked', main: null },
+    ]);
+  });
+
+  it('reads the roster once but the mains every time', async () => {
+    gqlMock.mockImplementation((_t: unknown, query: string) => {
+      if (query.includes('PhaseGroupPlayers')) return Promise.resolve(playersFixture());
+      throw new Error(`unexpected query in test: ${query}`);
+    });
+    const cookie = await makeSignedInCookie('pool-players-cache');
+
+    await request(app).get('/api/sets/phase-group/56/players').set('Cookie', cookie);
+    const afterFirst = gqlMock.mock.calls.length;
+    // A TO sets one between the two calls.
+    await upsertPlayerMain(SEEDED_NEVER_LOOKED, VIDEOGAME_ID, 1300, 0, 0);
+    const res = await request(app).get('/api/sets/phase-group/56/players').set('Cookie', cookie);
+
+    // Which entrant is which player cannot change once a pool is seeded, so
+    // asking start.gg again would be waste — but the mains do change.
+    expect(gqlMock.mock.calls.length).toBe(afterFirst);
+    expect(res.body.players.find((p: { playerId: number }) => p.playerId === SEEDED_NEVER_LOOKED).main.characterId).toBe(1300);
+  });
+
+  it('pages a pool with more seeds than fit in one request', async () => {
+    gqlMock.mockImplementation((_t: unknown, query: string, vars: { page: number }) => {
+      if (query.includes('PhaseGroupPlayers')) return Promise.resolve(playersFixture(3, vars.page));
+      throw new Error(`unexpected query in test: ${query}`);
+    });
+    const cookie = await makeSignedInCookie('pool-players-paged');
+
+    const res = await request(app).get('/api/sets/phase-group/57/players').set('Cookie', cookie);
+
+    expect(res.body.players).toHaveLength(3);
+    expect(gqlMock.mock.calls.map((c) => c[2].page)).toEqual([1, 2, 3]);
+  });
+
+  it('skips a seed with no entrant drawn into it yet', async () => {
+    gqlMock.mockResolvedValue({
+      phaseGroup: {
+        phase: { event: { videogame: { id: VIDEOGAME_ID } } },
+        seeds: {
+          pageInfo: { totalPages: 1 },
+          nodes: [{ entrant: null }, { entrant: { id: 9001, name: 'Real', participants: [{ player: { id: SEEDED_WITH_MAIN } }] } }],
+        },
+      },
+    });
+    const cookie = await makeSignedInCookie('pool-players-empty-seed');
+
+    const res = await request(app).get('/api/sets/phase-group/58/players').set('Cookie', cookie);
+
+    expect(res.body.players.map((p: { name: string }) => p.name)).toEqual(['Real']);
+  });
+
+  it('rejects an unauthenticated request', async () => {
+    const res = await request(app).get('/api/sets/phase-group/55/players');
+    expect(res.status).toBe(401);
+  });
+});
 
 describe('GET /phase-group/:phaseGroupId/events', () => {
   afterEach(() => {

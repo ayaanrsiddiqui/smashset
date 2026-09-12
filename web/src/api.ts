@@ -1,4 +1,4 @@
-import type { AccountDetails, BracketGroup, Character, CurrentUser, EntrantMatch, EventInfo, OpenSet, PhaseGroupSummary, PoolPreview, SetDetail, Stage } from './types';
+import type { AccountDetails, BracketGroup, Character, CurrentUser, EntrantMatch, EventInfo, OpenSet, PhaseGroupSummary, PoolPlayer, PoolPreview, SetDetail, Stage } from './types';
 
 export class ApiError extends Error {
   // Assigned explicitly rather than as a constructor parameter property: the
@@ -107,6 +107,14 @@ export function fetchPhaseGroups(eventId: number): Promise<{ phaseGroups: PhaseG
  */
 export function searchEntrants(eventId: number, query: string): Promise<{ entrants: EntrantMatch[] }> {
   return req(`/api/sets/${eventId}/entrants?q=${encodeURIComponent(query)}`);
+}
+
+/**
+ * Everyone entered in a pool, with their current main. Covers the whole pool,
+ * unlike fetchOpenSets, which only reaches players with a set still to play.
+ */
+export function fetchPoolPlayers(phaseGroupId: number): Promise<{ players: PoolPlayer[]; videogameId: number | null }> {
+  return req(`/api/sets/phase-group/${phaseGroupId}/players`);
 }
 
 /** Who is in each pool of a phase. Loaded per phase, only when one is opened. */

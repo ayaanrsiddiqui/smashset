@@ -1069,6 +1069,133 @@ async function fetchBracketData(accessToken: string, userId: number, phaseGroupI
  */
 const HEARTBEAT_MS = 25_000;
 
+/**
+ * Everyone entered in a pool, with the main on file for each.
+ *
+ * Separate from open-sets because that only reaches players with a set still
+ * to play, which is the wrong set of people to offer a TO: mains are most
+ * useful filled in *before* anything starts, and a player whose current set is
+ * finished still has later ones. Seeds carry every entrant in the pool.
+ *
+ * Deliberately does not kick off the background main lookup for anyone missing
+ * one. That lookup is a request per player against an ~80/minute limit, and
+ * firing it for a whole 116-entrant bracket because someone opened a panel is
+ * exactly the cost this app keeps having to avoid. Players in upcoming sets
+ * still get it from the open-sets path.
+ */
+const POOL_PLAYERS_BASE_COST = 3;
+/** Measured live: 3.06 objects per seed, entrant plus participant plus player. */
+const POOL_PLAYERS_MAX_COST_PER_SEED = 4;
+const POOL_PLAYERS_PER_PAGE = pageSizeFor(POOL_PLAYERS_BASE_COST, POOL_PLAYERS_MAX_COST_PER_SEED);
+
+export interface PoolPlayer {
+  playerId: number;
+  name: string;
+  /** Null when no lookup has ever run for them — distinct from a known "none". */
+  main: { characterId: number | null; gamesTallied: number; setsConsidered: number } | null;
+}
+
+interface PoolPlayersResult {
+  phaseGroup: {
+    phase: { event: { videogame: { id: number } | null } | null } | null;
+    seeds: {
+      pageInfo: { totalPages: number };
+      nodes: { entrant: { id: number; name: string; participants: { player: { id: number } | null }[] | null } | null }[] | null;
+    };
+  } | null;
+}
+
+const POOL_PLAYERS_QUERY = /* GraphQL */ `
+  query PhaseGroupPlayers($phaseGroupId: ID!, $page: Int!, $perPage: Int!) {
+    phaseGroup(id: $phaseGroupId) {
+      id
+      phase {
+        event {
+          videogame {
+            id
+          }
+        }
+      }
+      seeds(query: { page: $page, perPage: $perPage }) {
+        pageInfo {
+          totalPages
+        }
+        nodes {
+          entrant {
+            id
+            name
+            participants {
+              player {
+                id
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+`;
+
+// Which entrant is which player cannot change for an event once it is seeded,
+// so this is fetched once per pool and kept. The mains themselves are read
+// from Postgres on every request, because those change as a TO fills them in.
+const poolRosterCache = new Map<string, { videogameId: number | null; players: { playerId: number; name: string }[] }>();
+
+setsRouter.get('/phase-group/:phaseGroupId/players', async (req, res) => {
+  const { phaseGroupId } = req.params;
+  try {
+    let roster = poolRosterCache.get(phaseGroupId);
+    if (!roster) {
+      const players: { playerId: number; name: string }[] = [];
+      let videogameId: number | null = null;
+      let page = 1;
+      while (true) {
+        const data: PoolPlayersResult = await gql<PoolPlayersResult>(req.user!.accessToken, POOL_PLAYERS_QUERY, {
+          phaseGroupId,
+          page,
+          perPage: POOL_PLAYERS_PER_PAGE,
+        });
+        const group = data.phaseGroup;
+        if (!group) {
+          res.status(404).json({ error: 'Phase group not found' });
+          return;
+        }
+        videogameId = group.phase?.event?.videogame?.id ?? videogameId;
+        for (const node of group.seeds.nodes ?? []) {
+          const playerId = node.entrant?.participants?.[0]?.player?.id;
+          // A seed with no entrant is an unfilled slot, and a doubles entrant
+          // has several players; this app is 1v1, so take the first or skip.
+          if (node.entrant && playerId != null) players.push({ playerId, name: node.entrant.name });
+        }
+        if (page >= group.seeds.pageInfo.totalPages) break;
+        page += 1;
+      }
+      roster = { videogameId, players };
+      poolRosterCache.set(phaseGroupId, roster);
+    }
+
+    const mains =
+      roster.videogameId !== null && roster.players.length > 0
+        ? await getPlayerMains(
+            roster.players.map((p) => p.playerId),
+            roster.videogameId
+          )
+        : new Map();
+
+    const players: PoolPlayer[] = roster.players.map((player) => {
+      const main = mains.get(player.playerId);
+      return {
+        playerId: player.playerId,
+        name: player.name,
+        main: main ? { characterId: main.characterId, gamesTallied: main.gamesTallied, setsConsidered: main.setsConsidered } : null,
+      };
+    });
+    res.json({ players, videogameId: roster.videogameId });
+  } catch (err) {
+    res.status(502).json({ error: err instanceof Error ? err.message : 'Failed to load pool players' });
+  }
+});
+
 setsRouter.get('/phase-group/:phaseGroupId/events', (req, res) => {
   const { phaseGroupId } = req.params;
   const userId = req.user!.id;

@@ -888,11 +888,10 @@ export default function App() {
 
       {toast && <div className={`toast toast-${toast.kind}`}>{toast.message}</div>}
       {showHelp && <HelpModal onClose={() => setShowHelp(false)} />}
-      {showMains && (
+      {showMains && phaseGroupId !== null && (
         <MainsPanel
-          sets={sets}
+          phaseGroupId={phaseGroupId!}
           characters={characters}
-          videogameId={event.videogame.id}
           onClose={() => setShowMains(false)}
           onSave={handleSetMain}
         />

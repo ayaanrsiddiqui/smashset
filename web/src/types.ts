@@ -75,6 +75,14 @@ export interface PoolPreview {
   total: number;
 }
 
+/** Someone entered in a pool, with whatever main is on file for them. */
+export interface PoolPlayer {
+  playerId: number;
+  name: string;
+  /** Null when no lookup has ever run — distinct from a known "no main". */
+  main: { characterId: number | null; gamesTallied: number; setsConsidered: number } | null;
+}
+
 /** A player matching a lookup, with every pool they were seeded into. */
 export interface EntrantMatch {
   id: number;

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { fetchAccount, fetchBracket, fetchCharacters, fetchOpenSets, fetchPhaseGroups, fetchSetDetail, fetchStages, updatePlayerMain, updateTopXBo5 } from './api';
+import { fetchAccount, fetchBracket, fetchCharacters, fetchOpenSets, fetchPhaseGroups, fetchPoolPlayers, fetchSetDetail, fetchStages, updatePlayerMain, updateTopXBo5 } from './api';
 import { apiFailure, flushTimers, resetApiDefaults, seedEvent, seedPool, TEST_EVENT } from './test-helpers';
 import type { BracketSet } from './types';
 import { openedEventSource, resetEventSources } from './test-eventsource';
@@ -34,6 +34,7 @@ vi.mock('./api', async (importOriginal) => ({
   updateTopXBo5: vi.fn().mockResolvedValue({ topXBo5: null }),
   startSet: vi.fn(),
   updatePlayerMain: vi.fn().mockResolvedValue({ characterId: null }),
+  fetchPoolPlayers: vi.fn().mockResolvedValue({ players: [], videogameId: 1386 }),
   poolEventsUrl: (id: number) => `/api/sets/phase-group/${id}/events`,
 }));
 
@@ -1183,7 +1184,6 @@ describe('App — live pool updates', () => {
 
 
 describe('App — setting a main by hand', () => {
-  const fetchOpenSetsMock = vi.mocked(fetchOpenSets);
   const updatePlayerMainMock = vi.mocked(updatePlayerMain);
 
   beforeEach(() => {
@@ -1195,27 +1195,19 @@ describe('App — setting a main by hand', () => {
     updatePlayerMainMock.mockReset();
     updatePlayerMainMock.mockResolvedValue({ characterId: 100 });
     vi.mocked(fetchCharacters).mockResolvedValue({ characters: [{ id: 100, name: 'Fox' }] });
-    fetchOpenSetsMock.mockResolvedValue({
-      sets: [
-        {
-          id: 1,
-          isPreview: false,
-          isStarted: false,
-          fullRoundText: 'Winners Round 1',
-          identifier: 'A',
-          lPlacement: null,
-          entrants: [
-            { id: 10, name: 'Ada', playerId: 11 },
-            { id: 20, name: 'mudd', playerId: 12 },
-          ],
-        },
+    // The panel loads the whole pool itself now, rather than reading whatever
+    // happens to have a set still to play.
+    vi.mocked(fetchPoolPlayers).mockResolvedValue({
+      players: [
+        { playerId: 11, name: 'Ada', main: null },
+        { playerId: 12, name: 'mudd', main: null },
       ],
+      videogameId: TEST_EVENT.videogame.id,
     });
   });
 
   afterEach(() => {
     fetchMeMock.mockReset();
-    fetchOpenSetsMock.mockReset();
   });
 
   it('opens from the header and saves a main against the player', async () => {

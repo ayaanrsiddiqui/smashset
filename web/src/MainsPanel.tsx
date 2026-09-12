@@ -1,41 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { Character, OpenSet } from './types';
+import { fetchPoolPlayers } from './api';
+import type { Character, PoolPlayer } from './types';
 
 interface Props {
-  sets: OpenSet[];
+  phaseGroupId: number;
   characters: Character[];
-  videogameId: number;
   onClose: () => void;
   onSave: (playerId: number, characterId: number | null) => Promise<void>;
-}
-
-interface Player {
-  playerId: number;
-  name: string;
-  /** Absent while the background lookup is still running for this player. */
-  main?: { characterId: number | null; setsConsidered: number };
-}
-
-/**
- * Every distinct player with a set still to play, in name order.
- *
- * Drawn from the open-sets list because that is the only place a start.gg
- * *player* id reaches the client — bracket slots carry entrant ids, which are
- * per-event and cannot key a main that outlives the tournament.
- */
-export function playersNeedingMains(sets: OpenSet[]): Player[] {
-  const byPlayer = new Map<number, Player>();
-  for (const set of sets) {
-    for (const entrant of set.entrants) {
-      if (entrant.playerId == null || byPlayer.has(entrant.playerId)) continue;
-      byPlayer.set(entrant.playerId, {
-        playerId: entrant.playerId,
-        name: entrant.name,
-        main: entrant.suggestedMain,
-      });
-    }
-  }
-  return [...byPlayer.values()].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
 }
 
 /**
@@ -44,14 +15,36 @@ export function playersNeedingMains(sets: OpenSet[]): Player[] {
  * The automatic lookup reads a player's recent sets, which answers nothing for
  * someone new, someone who just switched, or an event where nobody reports
  * characters. A main set here is stored against the start.gg player rather than
- * the entrant, so it is still there at the next tournament — which is the point
- * of filling them in at all.
+ * the entrant, so it is still there at their next tournament — which is the
+ * point of filling them in at all.
+ *
+ * Loads the whole pool rather than reading the open-sets list already in
+ * memory: mains are most useful filled in before anything starts, and a player
+ * whose current set is finished still has later ones.
  */
-export function MainsPanel({ sets, characters, videogameId, onClose, onSave }: Props) {
-  const players = useMemo(() => playersNeedingMains(sets), [sets]);
-  const byId = useMemo(() => new Map(characters.map((c) => [c.id, c])), [characters]);
+export function MainsPanel({ phaseGroupId, characters, onClose, onSave }: Props) {
+  const [players, setPlayers] = useState<PoolPlayer[] | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [saving, setSaving] = useState<number | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
+  const byId = useMemo(() => new Map(characters.map((c) => [c.id, c])), [characters]);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchPoolPlayers(phaseGroupId)
+      .then((result) => {
+        if (cancelled) return;
+        setPlayers([...result.players].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })));
+        setLoadError(null);
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        setLoadError(err instanceof Error ? err.message : 'Could not load the players in this pool');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [phaseGroupId]);
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
@@ -66,11 +59,18 @@ export function MainsPanel({ sets, characters, videogameId, onClose, onSave }: P
     };
   }, [onClose]);
 
-  async function choose(player: Player, value: string) {
+  async function choose(player: PoolPlayer, value: string) {
+    const characterId = value === '' ? null : Number(value);
     setSaving(player.playerId);
     setFailed(null);
     try {
-      await onSave(player.playerId, value === '' ? null : Number(value));
+      await onSave(player.playerId, characterId);
+      setPlayers(
+        (current) =>
+          current?.map((p) =>
+            p.playerId === player.playerId ? { ...p, main: { characterId, gamesTallied: 0, setsConsidered: 0 } } : p
+          ) ?? null
+      );
     } catch (err) {
       // Rendered, not swallowed: a TO who thinks they set a main and did not
       // gets a wrong suggestion at the worst moment.
@@ -80,8 +80,10 @@ export function MainsPanel({ sets, characters, videogameId, onClose, onSave }: P
     }
   }
 
-  function describe(player: Player): string {
-    if (!player.main) return 'looking…';
+  function describe(player: PoolPlayer): string {
+    // "Never looked" and "looked and found nothing" are different facts, and a
+    // TO deciding whether to fill one in needs to tell them apart.
+    if (!player.main) return 'not looked up';
     if (player.main.characterId === null) {
       return player.main.setsConsidered === 0 ? 'not set' : 'no main found';
     }
@@ -104,17 +106,17 @@ export function MainsPanel({ sets, characters, videogameId, onClose, onSave }: P
         <div className="help-modal-body">
           <h2 id="mains-modal-title">Player mains</h2>
           <p className="subtitle">
-            Used to pre-fill the character when reporting. Saved against the player, so it carries to their next
-            tournament.
+            Everyone in this pool. Used to pre-fill the character when reporting, and saved against the player, so it
+            carries to their next tournament.
           </p>
 
+          {loadError && <p className="error">{loadError}</p>}
           {failed && <p className="error">{failed}</p>}
 
-          {players.length === 0 ? (
-            // Honest about the limit rather than looking broken: only players
-            // with a set still to play reach the client with a player id.
-            <p className="mains-empty">No players with sets left to play in this pool.</p>
-          ) : (
+          {!players && !loadError && <p className="mains-empty">Loading…</p>}
+          {players?.length === 0 && <p className="mains-empty">No players seeded into this pool yet.</p>}
+
+          {players && players.length > 0 && (
             <ul className="mains-list">
               {players.map((player) => {
                 const icon = player.main?.characterId != null ? byId.get(player.main.characterId)?.imageUrl : undefined;
@@ -141,8 +143,6 @@ export function MainsPanel({ sets, characters, videogameId, onClose, onSave }: P
               })}
             </ul>
           )}
-
-          {videogameId === 0 && <p className="error">No game loaded, so mains can't be saved yet.</p>}
         </div>
       </div>
     </div>
