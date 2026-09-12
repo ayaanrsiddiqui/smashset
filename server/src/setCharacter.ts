@@ -1,16 +1,13 @@
-export interface GameSelection {
-  entrantId: number;
-  characterId: number;
-}
-
+/**
+ * The shape of one game, shared with the set-detail endpoint's richer
+ * SetDetailGame so the same start.gg response is not modelled twice. Only what
+ * this rule reads is required — notably not the game's winner, which it
+ * deliberately ignores.
+ */
 export interface SetGame {
   orderNum: number;
-  winnerId: number | null;
-  selections: GameSelection[];
-}
-
-function characterIn(game: SetGame, entrantId: number): number | null {
-  return game.selections.find((s) => s.entrantId === entrantId)?.characterId ?? null;
+  /** Character each entrant picked, keyed by that entrant's id. */
+  characterIdByEntrantId: Record<number, number>;
 }
 
 /**
@@ -39,12 +36,12 @@ export function pickSetCharacter(games: SetGame[], entrantId: number): number | 
   // meaningless if that is assumed.
   const played = [...games]
     .sort((a, b) => a.orderNum - b.orderNum)
-    .filter((game) => characterIn(game, entrantId) != null);
+    .filter((game) => game.characterIdByEntrantId[entrantId] != null);
   if (played.length === 0) return null;
 
   const counts = new Map<number, number>();
   for (const game of played) {
-    const character = characterIn(game, entrantId)!;
+    const character = game.characterIdByEntrantId[entrantId];
     counts.set(character, (counts.get(character) ?? 0) + 1);
   }
 
@@ -55,7 +52,7 @@ export function pickSetCharacter(games: SetGame[], entrantId: number): number | 
   // An even split says nothing about which character the set was, so fall back
   // to whichever of them they were playing by the end.
   for (let i = played.length - 1; i >= 0; i--) {
-    const character = characterIn(played[i], entrantId)!;
+    const character = played[i].characterIdByEntrantId[entrantId];
     if (tied.includes(character)) return character;
   }
   return tied[0];

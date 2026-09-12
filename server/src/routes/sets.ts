@@ -3,6 +3,7 @@ import { gql, gqlWithCost, StartggComplexityError } from '../startgg.js';
 import { getPlayerMains } from '../db/mains.js';
 import { ensureMainComputed } from '../mainLookup.js';
 import { parseDisplayScore } from '../displayScore.js';
+import type { SetGame } from '../setCharacter.js';
 
 export const setsRouter = Router();
 
@@ -1036,15 +1037,15 @@ interface SetDetailQueryResult {
   } | null;
 }
 
-export interface SetDetailGame {
-  orderNum: number;
+// Extends the shape pickSetCharacter reads — the character map is the same
+// start.gg data either way, so it is modelled once. The frontend already knows
+// which entrant won the set (from the bracket data it has), so the map stays
+// flat and side-agnostic rather than this endpoint re-deriving that.
+export interface SetDetailGame extends SetGame {
+  // Narrower than SetGame's: this endpoint drops games with no winner, because
+  // the correction UI it feeds replays a set game by game.
   winnerEntrantId: number;
   stageId: number | null;
-  // Character id per entrant who made a pick, keyed by that entrant's id —
-  // the frontend already knows which entrant is the set's overall winner vs
-  // loser (from the bracket data it already has), so this stays a flat,
-  // side-agnostic map rather than this endpoint re-deriving that itself.
-  characterIdByEntrantId: Record<number, number>;
 }
 
 // Root-level `set(id:)`, not scoped through an event — matches the existing
