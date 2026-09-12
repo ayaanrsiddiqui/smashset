@@ -49,3 +49,78 @@ describe('Settings — the start.gg/ field', () => {
     expect(field().value).toBe('not-start.gg/thing');
   });
 });
+
+/**
+ * "switch event" used to drop the TO back on an empty slug field, so changing
+ * event meant retyping the tournament they were already in. It now reopens
+ * that tournament's event list.
+ */
+describe('Settings — reopening the tournament already in use', () => {
+  const EVENT = (id: number, name: string) => ({
+    id,
+    name,
+    slug: `tournament/t/event/${name}`,
+    videogame: { id: 1, name: 'Ultimate' },
+    tournament: { id: 1, name: 'Definitely Real Tournament' },
+  });
+
+  beforeEach(() => {
+    resolveEventMock.mockReset();
+  });
+
+  it('opens straight on the event list, without being asked for a slug', async () => {
+    resolveEventMock.mockResolvedValue({ events: [EVENT(1, 'singles'), EVENT(2, 'doubles')] });
+    render(<Settings onResolved={vi.fn()} initialInput="fireslam23test" />);
+
+    expect(await screen.findByText('singles')).toBeInTheDocument();
+    expect(screen.getByText('doubles')).toBeInTheDocument();
+    expect(resolveEventMock).toHaveBeenCalledWith('fireslam23test');
+  });
+
+  it('does not bounce straight back in when the tournament has only one event', async () => {
+    // Auto-selecting here would return the TO to the exact screen they just
+    // pressed "switch event" to leave.
+    const onResolved = vi.fn();
+    resolveEventMock.mockResolvedValue({ event: EVENT(1, 'singles') });
+    render(<Settings onResolved={onResolved} initialInput="fireslam23test" />);
+
+    expect(await screen.findByText('singles')).toBeInTheDocument();
+    expect(onResolved).not.toHaveBeenCalled();
+  });
+
+  it('still offers a way to a different tournament', async () => {
+    resolveEventMock.mockResolvedValue({ events: [EVENT(1, 'singles')] });
+    render(<Settings onResolved={vi.fn()} initialInput="fireslam23test" />);
+    fireEvent.click(await screen.findByRole('button', { name: 'different tournament' }));
+
+    expect(screen.getByLabelText(/tournament or event/i)).toBeInTheDocument();
+  });
+
+  it('picking an event reports what was typed to reach it, so it can be reopened', async () => {
+    const onResolved = vi.fn();
+    resolveEventMock.mockResolvedValue({ events: [EVENT(1, 'singles'), EVENT(2, 'doubles')] });
+    render(<Settings onResolved={onResolved} initialInput="fireslam23test" />);
+
+    fireEvent.click(await screen.findByText('doubles'));
+
+    expect(onResolved).toHaveBeenCalledWith(expect.objectContaining({ name: 'doubles' }), 'fireslam23test');
+  });
+
+  it('still asks for a slug when there is nothing to reopen', () => {
+    render(<Settings onResolved={vi.fn()} />);
+    expect(screen.getByLabelText(/tournament or event/i)).toBeInTheDocument();
+    expect(resolveEventMock).not.toHaveBeenCalled();
+  });
+
+  it('auto-selects a lone event when the TO typed the slug themselves', async () => {
+    // The opposite case: typing a slug and getting one event should just go.
+    const onResolved = vi.fn();
+    resolveEventMock.mockResolvedValue({ event: EVENT(1, 'singles') });
+    render(<Settings onResolved={onResolved} />);
+
+    fireEvent.change(screen.getByLabelText(/tournament or event/i), { target: { value: 'fireslam23test' } });
+    fireEvent.keyDown(screen.getByLabelText(/tournament or event/i), { key: 'Enter' });
+
+    await vi.waitFor(() => expect(onResolved).toHaveBeenCalledWith(expect.objectContaining({ name: 'singles' }), 'fireslam23test'));
+  });
+});

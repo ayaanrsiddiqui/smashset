@@ -133,6 +133,7 @@ export function ReportPanel({
   // Record<number, number | null> defaulted to undefined-means-unset.
   const [mainOverrides, setMainOverrides] = useState<Map<number, number | null>>(new Map());
   const [submitting, setSubmitting] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
   // Mirrors `submitting` but as a ref, not state: state updates aren't
   // applied until the next render, so keys dispatched faster than that
   // (mashing Enter with no gap) all see the same stale `submitting=false`
@@ -530,6 +531,11 @@ export function ReportPanel({
       const inField = active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement;
 
       if (e.key === 'Escape') {
+        if (helpOpen) {
+          e.preventDefault();
+          setHelpOpen(false);
+          return;
+        }
         if (mode.kind === 'confirmLeave') {
           onCancel();
           return;
@@ -749,6 +755,9 @@ export function ReportPanel({
 
   return (
     <div className="report-panel">
+      {/* Fixed: the whole page used to scroll, so this scrolled away for a
+          moment before sticking, which read as a glitch. */}
+      <div className="report-header">
       {mode.kind === 'confirmLeave' ? (
         <div className="confirm-row leave-confirm" ref={confirmLeaveRef}>
           <button className="confirm-leave-btn" onClick={onCancel} aria-label="Leave without submitting">
@@ -783,7 +792,6 @@ export function ReportPanel({
         </p>
       )}
 
-      <div className="sticky-header">
         <div className="matchup">
           <div className="side winner-side">
             <span className="side-name">{winner.name}</span>
@@ -810,12 +818,25 @@ export function ReportPanel({
           {!BO_OPTIONS.some((o) => o.requiredWins === requiredWins) && (
             <span className="bo-current">{boLabel(requiredWins)}</span>
           )}
-          <span className="tool-hint">
-            <kbd>b</kbd>/<kbd>bo</kbd> + odd number
-          </span>
         </div>
+
+        {/* The result itself, rather than a line of header text: it is the one
+            thing on this screen a TO has to be sure of before confirming. */}
+        {mode.kind !== 'quick' && (
+          <div className="score-display">
+            <span className="score-line">
+              {winner.name}{' '}
+              <span className="score-value">
+                <span className="score-won">{winnerGameCount}</span>–<span className="score-lost">{loserGameCount}</span>
+              </span>{' '}
+              {loser.name}
+            </span>
+            {shortfallHint && <span className="score-shortfall">{shortfallHint}</span>}
+          </div>
+        )}
       </div>
 
+      <div className="report-body">
       <div className="score-section">
         {mode.kind === 'quick' && (
           <div className="score-tool focused">
@@ -851,14 +872,6 @@ export function ReportPanel({
         )}
 
         {showError && <p className="error">{parseError}</p>}
-        {mode.kind !== 'quick' && (
-          <div className="score-preview">
-            <span className="score-line">
-              {winner.name} {winnerGameCount}–{loserGameCount} {loser.name}
-            </span>
-            {shortfallHint && <span className="score-shortfall">{shortfallHint}</span>}
-          </div>
-        )}
       </div>
 
       {mode.kind !== 'quick' && (
@@ -1071,6 +1084,9 @@ export function ReportPanel({
         </div>
       )}
 
+      </div>
+
+      <div className="report-actions">
       {mode.kind === 'confirmReset' ? (
         <div className="confirm-row submit-confirm" ref={confirmSubmitRef}>
           <p className="reset-warning">
@@ -1125,25 +1141,44 @@ export function ReportPanel({
         </button>
       )}
 
-      <div className="sticky-footer">
-        <div className="tool-label">
-          <div>
-            Score — digits (124, -3, +sweep), <kbd>w</kbd>/<kbd>l</kbd>, or <kbd>←</kbd>/<kbd>→</kbd> ·{' '}
-            <kbd>↑</kbd>/<kbd>↓</kbd> or click to pick a game · <kbd>g</kbd> to refocus · <kbd>q</kbd> for quick set
-            count
-          </div>
-          <div>
-            Characters — <kbd>c</kbd>, then <kbd>w</kbd>/<kbd>l</kbd> (starts on all games), then numbers to target
-            games (stack multiple) or <kbd>a</kbd> for all · <kbd>m</kbd> fills in mains anytime · wrong main on
-            file? correct it above "All games"
-          </div>
-          {stages.length > 0 && (
-            <div>
-              Stage — <kbd>s</kbd>, then a game number
-            </div>
-          )}
-        </div>
       </div>
+
+      {/* Collapsed into a corner: the notation is worth having once, and worth
+          nothing on every set after that, while it took a permanent strip off
+          the bottom of a screen that needs the room. */}
+      <button
+        type="button"
+        className="report-help-trigger"
+        onClick={() => setHelpOpen((open) => !open)}
+        aria-expanded={helpOpen}
+        aria-label={helpOpen ? 'Hide the notation guide' : 'Show the notation guide'}
+      >
+        ?
+      </button>
+      {helpOpen && (
+        <div className="report-help-popover" role="dialog" aria-label="Notation guide">
+          <div className="tool-label">
+            <div>
+              Score — digits (124, -3, +sweep), <kbd>w</kbd>/<kbd>l</kbd>, or <kbd>←</kbd>/<kbd>→</kbd> ·{' '}
+              <kbd>↑</kbd>/<kbd>↓</kbd> or click to pick a game · <kbd>g</kbd> to refocus · <kbd>q</kbd> for quick set
+              count
+            </div>
+            <div>
+              Best of — <kbd>b</kbd>/<kbd>bo</kbd> + an odd number
+            </div>
+            <div>
+              Characters — <kbd>c</kbd>, then <kbd>w</kbd>/<kbd>l</kbd> (starts on all games), then numbers to target
+              games (stack multiple) or <kbd>a</kbd> for all · <kbd>m</kbd> fills in mains anytime · wrong main on
+              file? correct it above "All games"
+            </div>
+            {stages.length > 0 && (
+              <div>
+                Stage — <kbd>s</kbd>, then a game number
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

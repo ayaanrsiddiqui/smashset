@@ -825,7 +825,48 @@
 .report-panel {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  height: 100dvh;
+  overflow: hidden;
+  gap: 0;
+}
+
+/* Fixed by structure rather than by position: sticky. The panel owns the
+   viewport height and only the body below scrolls, so the header cannot
+   scroll away and then snap back the way it used to. */
+.report-header {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 20px 10px;
+  border-bottom: 1px solid #22252d;
+}
+
+.report-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 14px 20px;
+}
+
+.report-actions {
+  flex: none;
+  padding: 10px 20px 14px;
+  border-top: 1px solid #22252d;
+}
+
+/* Wider than the old 640px column, and the content inside it is centred, so a
+   desktop window stops being mostly empty margin. */
+.report-header > *,
+.report-actions > * {
+  width: 100%;
+  max-width: 720px;
+  margin-left: auto;
+  margin-right: auto;
 }
 
 .round-label {
@@ -917,13 +958,10 @@ kbd {
 .bo-toggle {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px;
-  border-radius: 10px;
-  width: 100%;
-  max-width: 600px;
-  margin-left: auto;
-  margin-right: auto;
+  justify-content: center;
+  gap: 6px;
+  padding: 2px;
+  border-radius: 8px;
 }
 
 .bo-toggle.focused {
@@ -932,12 +970,13 @@ kbd {
 
 .bo-toggle button {
   flex: 0 0 auto;
-  padding: 8px 14px;
-  border-radius: 8px;
-  border: 2px solid #2a2e38;
+  padding: 4px 10px;
+  border-radius: 7px;
+  border: 1px solid #2a2e38;
   background: #1c1f27;
   color: #9aa0ac;
   font-weight: 600;
+  font-size: 12px;
 }
 
 .bo-toggle button.selected {
@@ -1003,9 +1042,38 @@ kbd {
   color: #9aa0ac;
 }
 
+.score-display {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
 .score-line {
-  font-size: 20px;
-  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #9aa0ac;
+  text-align: center;
+}
+
+.score-value {
+  font-size: 32px;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: 0.01em;
+  color: #3a4050;
+}
+
+.score-won {
+  color: #22c55e;
+}
+
+.score-lost {
+  color: #6b7280;
 }
 
 .game-stats-section {
@@ -1023,23 +1091,41 @@ kbd {
 .tool-label {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 8px;
   font-size: 13px;
+  line-height: 1.45;
   color: #9aa0ac;
-  max-width: 600px;
-  margin-left: auto;
-  margin-right: auto;
 }
 
-.sticky-footer {
-  position: sticky;
-  bottom: 0;
-  z-index: 5;
-  background: #14161c;
-  width: 100vw;
-  margin-left: calc(50% - 50vw);
-  padding: 10px 20px 20px;
-  border-top: 1px solid #2a2e38;
+.report-help-trigger {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 30;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  border-radius: 999px;
+  border: 1px solid #2f3542;
+  background: #1b1f27ee;
+  color: #9aa0ac;
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+.report-help-popover {
+  position: fixed;
+  right: 16px;
+  bottom: 62px;
+  z-index: 30;
+  max-width: min(420px, calc(100vw - 32px));
+  max-height: 60vh;
+  overflow-y: auto;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid #2f3542;
+  background: #1b1f27;
+  box-shadow: 0 10px 30px #00000080;
 }
 
 .game-stat-list {
@@ -1180,9 +1266,9 @@ kbd {
   background: none;
   border: none;
   font-family: inherit;
-  padding: 6px 4px;
+  padding: 6px 10px;
   font-weight: 700;
-  font-size: 20px;
+  font-size: 30px;
   line-height: 1;
   color: #3a4050;
   cursor: pointer;

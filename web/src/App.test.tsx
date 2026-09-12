@@ -554,7 +554,13 @@ describe('App — completed and not-ready sets on the bracket', () => {
     expect(fetchSetDetailMock).toHaveBeenCalledWith(1);
     // The score entry reflects the real 2-game history (both won by the
     // recorded winner), not an empty score waiting to be typed from scratch.
-    expect(await screen.findByText('Winner Player 2–0 Loser Player')).toBeInTheDocument();
+    // Read off the element rather than matched as one text node: the score is
+    // rendered in parts now so each side can be coloured separately.
+    await waitFor(() =>
+      expect(document.querySelector('.score-line')?.textContent?.replace(/\s+/g, ' ').trim()).toBe(
+        'Winner Player 2–0 Loser Player'
+      )
+    );
     // Derived from that same history: a 2-0 set is a Bo3, so Bo3 is already
     // selected rather than whatever guessRequiredWins would've picked blind.
     expect(container.querySelector('.bo-toggle button.selected')?.textContent).toBe('Bo3');

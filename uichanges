@@ -1,0 +1,103 @@
+# UI changes — status
+
+Legend: [ ] not started · [~] in progress · [x] done · [!] blocked / needs your call
+
+Last updated: 2026-09-12, working top to bottom.
+
+---
+
+## Bracket view
+
+[x] 1. Extra space around the alphabetical set identifier (A, B, C) — the text in the box is too close to it.
+
+[ ] 2. Characters are on the left before the tag. To mirror start.gg, put the character on the
+       right just before the score, and the seed on the left before the tag. For brackets with
+       pools the seed is complicated to differentiate between pools — display the whole thing for
+       now, you'll figure out what looks right later.
+
+[x] 3. Faint horizontal line in the middle of the set component to separate the two rows.
+
+[x] 4. Don't display Grand Final Reset until a reset is actually reached.
+
+[ ] 6. Upset factor label on the right of each set, same size as the identifier on the left.
+       Double elim: bucket by projected placement — grands (1-2), losers finals (3), losers semis
+       (4), losers quarters (5-6), then (7-8), then (9-12). If the result is an upset, the factor
+       is how far apart the buckets are (seed 7 over seed 2 ≈ 4). Not an upset, or same bucket →
+       checkmark. Echoes supermajor.gg.
+
+[ ] 17. Mobile: the interface isn't aware that the focused set may be covered by the expanded set
+        list widget. With the list expanded you can't scroll the bottom-left corner of the bracket
+        into view — it stays covered.
+
+## Set list widget
+
+[ ] 18. Expanding shouldn't change which sets are shown. Currently the default shows only sets to
+        be started and expanding adds in-progress ones at the top. It should always show all sets
+        to be reported; expanding just gives more room and makes space for the mobile keyboard.
+        Both states should be a consistent size that doesn't depend on the contents.
+
+## Set report page
+
+[ ] 7. Character icons next to gamertags in the set list view and the set report page (currently
+       bracket view only). On the report page they'd replace the "[char]: seen in x games across
+       the last x sets" text — a greyed-out icon of that player's main, which `m` un-greys and
+       fills into the set's games.
+
+[x] 8. The footer help doesn't always need to be displayed. Collapse it into a help icon in the
+       bottom-right corner that expands when clicked. Floating, not a sticky footer.
+
+[x] 9. The sticky header scrolls for a bit before sticking, which is awkward. Fix it in place.
+
+[~] 10. On desktop the page doesn't use the available space well. Condense vertically. If there's
+        still a lot of empty space, especially at the sides, make the report screen a modal
+        overlay over the bracket/set list view instead of its own screen.
+
+[x] 12. The set score is tucked away in header text. Make it large, centered, colored, standalone.
+
+[x] 13. Make the best-of-X picker smaller, and move its help text into the help display.
+
+[x] 14. Make the arrows showing who won each game bigger.
+
+[ ] 15. Pressing Enter with incomplete data still opens the confirm dialog; the second Enter
+        correctly does nothing. The first Enter should show an error or highlight the
+        "x of x wins" text instead.
+
+## Navigation
+
+[x] 5. "switch event" shouldn't go all the way back to typing a slug — just back to the events list.
+
+[ ] 11. A consistent nav bar at the top showing the logged-in account and the current event/pool.
+
+## Mains UI
+
+[ ] 19. Disorganized. The character icon should sit next to the character name, and the dropdown
+        and the text beside it currently say the same thing unless no character is associated with
+        the player. Keep the extra text only when it's actually informative.
+
+## Characters
+
+[x] 16. Add "alph" as an alias for Olimar.
+
+## Permissions
+
+[ ] 20. The app happily opens a set to report even when the signed-in user has no write access to
+        the bracket (isn't a TO/admin). Make a view-only version of the set report page for people
+        who can't actually report.
+
+---
+
+## Notes / decisions / blockers
+
+**10 (desktop space) — vertical condensing done, the modal is still open.**
+The report screen was using the plain centred 640px shell while the main screen
+had a proper full-height one; it now has a fixed header, its own scrolling
+body, a pinned action bar and a 720px content column. Measured at 1500x950
+afterwards there is still a lot of empty margin at the sides, so the condition
+you set for "make it a modal overlay" is met and I'll do that — but noting one
+real consequence first: both poll effects deliberately stop while a set is open
+(`|| selectedSet`), so a bracket visible behind a modal would look live and be
+frozen. Either it keeps polling behind the modal (more start.gg traffic while
+reporting, and the bracket moving under the TO mid-report) or it stays frozen
+and looks wrong. I'll go with keeping it frozen and dimmed, which reads as
+"paused" rather than pretending. Say if you'd rather it stayed live.
+

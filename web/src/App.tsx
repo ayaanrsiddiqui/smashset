@@ -50,6 +50,9 @@ const STORAGE_KEY = 'smashset.event';
 // Keyed by which event it was chosen for (below), so switching events never
 // silently carries over a pool id that doesn't belong to the new one.
 const POOL_STORAGE_KEY = 'smashset.phaseGroup';
+// What was typed to reach the current event. Kept so "switch event" can reopen
+// that tournament's event list instead of an empty slug field.
+const EVENT_INPUT_STORAGE_KEY = 'smashset.eventInput';
 const POLL_MS = 4000;
 /**
  * Used instead while the pool's change stream is connected, where polling is
@@ -215,8 +218,9 @@ export default function App() {
     setRevealed(false);
   }
 
-  function handleResolved(e: EventInfo) {
+  function handleResolved(e: EventInfo, input: string) {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(e));
+    localStorage.setItem(EVENT_INPUT_STORAGE_KEY, input);
     setEvent(e);
   }
 
@@ -318,6 +322,7 @@ export default function App() {
     // straight in the previous TO's tournament.
     localStorage.removeItem(STORAGE_KEY);
     localStorage.removeItem(POOL_STORAGE_KEY);
+    localStorage.removeItem(EVENT_INPUT_STORAGE_KEY);
     // Queued reports belong to the TO who made them and go out under their
     // token. Handing them to whoever signs in next on a venue device would
     // report a set as somebody else.
@@ -718,7 +723,7 @@ export default function App() {
         <SignIn />
       </>
     );
-  if (!event) return <Settings onResolved={handleResolved} />;
+  if (!event) return <Settings onResolved={handleResolved} initialInput={localStorage.getItem(EVENT_INPUT_STORAGE_KEY) ?? undefined} />;
 
   /**
    * Writes the main through, then reflects it locally rather than waiting for
@@ -744,6 +749,8 @@ export default function App() {
   function backToEventPicker() {
     localStorage.removeItem(STORAGE_KEY);
     localStorage.removeItem(POOL_STORAGE_KEY);
+    // EVENT_INPUT_STORAGE_KEY deliberately survives: it is what lets the
+    // picker open on this tournament's events rather than a blank field.
     setEvent(null);
     // The pool belongs to the event being abandoned. Without clearing it both
     // polls keep running against it from the event picker, and its sets stay
