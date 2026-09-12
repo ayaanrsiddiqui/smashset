@@ -725,6 +725,7 @@ export default function App() {
       <div className="bracket-stage">
         <Bracket
           group={bracketGroup}
+          characters={characters}
           onSelectSet={selectFromBracket}
           focusedSetId={showHighlight ? (visibleRows[highlight]?.set.id ?? null) : null}
         />

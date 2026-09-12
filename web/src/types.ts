@@ -85,6 +85,8 @@ export interface EntrantMatch {
 export interface BracketSlot {
   entrant: { id: number; name: string } | null;
   score: number | null;
+  /** Character to show for a finished set; null when start.gg has no picks. */
+  characterId: number | null;
   // The id of the set (elsewhere in the same BracketGroup) this slot is fed
   // by, or null once the slot is filled or its prereq is a seed rather than
   // another set (first-round slots). Compare as strings — Set.id round-trips

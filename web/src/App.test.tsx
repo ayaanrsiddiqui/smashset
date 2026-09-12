@@ -252,8 +252,8 @@ describe('App — completed and not-ready sets on the bracket', () => {
           winnerAdvancesToPhase: null,
           loserAdvancesToPhase: null,
           slots: [
-            { entrant: { id: 101, name: 'Winner Player' }, score: 2, prereqSetId: null, prereqPlacement: null, progressionOrigin: null },
-            { entrant: { id: 102, name: 'Loser Player' }, score: 0, prereqSetId: null, prereqPlacement: null, progressionOrigin: null },
+            { entrant: { id: 101, name: 'Winner Player' }, score: 2, characterId: null, prereqSetId: null, prereqPlacement: null, progressionOrigin: null },
+            { entrant: { id: 102, name: 'Loser Player' }, score: 0, characterId: null, prereqSetId: null, prereqPlacement: null, progressionOrigin: null },
           ],
         },
         {
@@ -268,10 +268,10 @@ describe('App — completed and not-ready sets on the bracket', () => {
           winnerAdvancesToPhase: null,
           loserAdvancesToPhase: null,
           slots: [
-            { entrant: { id: 101, name: 'Winner Player' }, score: null, prereqSetId: '1', prereqPlacement: 1, progressionOrigin: null },
+            { entrant: { id: 101, name: 'Winner Player' }, score: null, characterId: null, prereqSetId: '1', prereqPlacement: 1, progressionOrigin: null },
             // prereqSetId "999" doesn't match any set in this fixture —
             // exercises the "source not found" -> "TBD" fallback.
-            { entrant: null, score: null, prereqSetId: '999', prereqPlacement: 1, progressionOrigin: null },
+            { entrant: null, score: null, characterId: null, prereqSetId: '999', prereqPlacement: 1, progressionOrigin: null },
           ],
         },
       ],
@@ -331,8 +331,8 @@ describe('App — completed and not-ready sets on the bracket', () => {
           winnerAdvancesToPhase: null,
           loserAdvancesToPhase: null,
           slots: [
-            { entrant: { id: 101, name: 'Winner Player' }, score: null, prereqSetId: null, prereqPlacement: null, progressionOrigin: null },
-            { entrant: { id: 102, name: 'Loser Player' }, score: null, prereqSetId: null, prereqPlacement: null, progressionOrigin: null },
+            { entrant: { id: 101, name: 'Winner Player' }, score: null, characterId: null, prereqSetId: null, prereqPlacement: null, progressionOrigin: null },
+            { entrant: { id: 102, name: 'Loser Player' }, score: null, characterId: null, prereqSetId: null, prereqPlacement: null, progressionOrigin: null },
           ],
         },
         {
@@ -347,8 +347,8 @@ describe('App — completed and not-ready sets on the bracket', () => {
           winnerAdvancesToPhase: null,
           loserAdvancesToPhase: null,
           slots: [
-            { entrant: { id: 103, name: 'Other One' }, score: null, prereqSetId: null, prereqPlacement: null, progressionOrigin: null },
-            { entrant: { id: 104, name: 'Other Two' }, score: null, prereqSetId: null, prereqPlacement: null, progressionOrigin: null },
+            { entrant: { id: 103, name: 'Other One' }, score: null, characterId: null, prereqSetId: null, prereqPlacement: null, progressionOrigin: null },
+            { entrant: { id: 104, name: 'Other Two' }, score: null, characterId: null, prereqSetId: null, prereqPlacement: null, progressionOrigin: null },
           ],
         },
       ],
@@ -361,6 +361,82 @@ describe('App — completed and not-ready sets on the bracket', () => {
     // anyone pressing anything — and the bracket says which one it is.
     await waitFor(() => expect(bracketBox(container, 'A').className).toContain('focused'));
     expect(bracketBox(container, 'B').className).not.toContain('focused');
+  });
+
+  it("shows each player's character on a finished set, and nothing where start.gg has none", async () => {
+    fetchCharactersMock.mockResolvedValue({
+      characters: [
+        { id: 1500, name: 'Fox', imageUrl: 'https://example.test/fox.png' },
+        { id: 1501, name: 'Falco' },
+      ],
+    });
+    fetchBracketMock.mockResolvedValue({
+      phaseGroupId: 1,
+      phaseName: 'Bracket',
+      displayIdentifier: '1',
+      bracketType: 'DOUBLE_ELIMINATION',
+      sets: [
+        {
+          id: 1,
+          identifier: 'A',
+          round: 1,
+          fullRoundText: 'Winners Round 1',
+          state: 3,
+          winnerId: 101,
+          lPlacement: null,
+          completedAt: 100,
+          winnerAdvancesToPhase: null,
+          loserAdvancesToPhase: null,
+          slots: [
+            { entrant: { id: 101, name: 'Winner Player' }, score: 2, characterId: 1500, prereqSetId: null, prereqPlacement: null, progressionOrigin: null },
+            // Falco has no image, and this player has no character at all —
+            // both are ordinary, since many TOs never report picks.
+            { entrant: { id: 102, name: 'Loser Player' }, score: 0, characterId: null, prereqSetId: null, prereqPlacement: null, progressionOrigin: null },
+          ],
+        },
+      ],
+    });
+    const { container } = render(<App />);
+    await findBracketBox(container, 'A');
+
+    await waitFor(() => expect(container.querySelectorAll('img.bracket-character')).toHaveLength(1));
+    expect(container.querySelector('img.bracket-character')).toHaveAttribute('src', 'https://example.test/fox.png');
+    // Decoration beside a name that is already read out.
+    expect(container.querySelector('img.bracket-character')).toHaveAttribute('alt', '');
+  });
+
+  it('shows no character when the id has no image to show', async () => {
+    // A character start.gg knows but has no art for would otherwise render a
+    // broken image beside the tag.
+    fetchCharactersMock.mockResolvedValue({ characters: [{ id: 1501, name: 'Falco' }] });
+    fetchBracketMock.mockResolvedValue({
+      phaseGroupId: 1,
+      phaseName: 'Bracket',
+      displayIdentifier: '1',
+      bracketType: 'DOUBLE_ELIMINATION',
+      sets: [
+        {
+          id: 1,
+          identifier: 'A',
+          round: 1,
+          fullRoundText: 'Winners Round 1',
+          state: 3,
+          winnerId: 101,
+          lPlacement: null,
+          completedAt: 100,
+          winnerAdvancesToPhase: null,
+          loserAdvancesToPhase: null,
+          slots: [
+            { entrant: { id: 101, name: 'Winner Player' }, score: 2, characterId: 1501, prereqSetId: null, prereqPlacement: null, progressionOrigin: null },
+            { entrant: { id: 102, name: 'Loser Player' }, score: 0, characterId: 1501, prereqSetId: null, prereqPlacement: null, progressionOrigin: null },
+          ],
+        },
+      ],
+    });
+    const { container } = render(<App />);
+    await findBracketBox(container, 'A');
+
+    expect(container.querySelectorAll('img.bracket-character')).toHaveLength(0);
   });
 
   it('says so plainly when the bracket has no sets at all', async () => {
@@ -393,8 +469,8 @@ describe('App — completed and not-ready sets on the bracket', () => {
           winnerAdvancesToPhase: null,
           loserAdvancesToPhase: null,
           slots: [
-            { entrant: { id: 101, name: 'Winner Player' }, score: 2, prereqSetId: null, prereqPlacement: null, progressionOrigin: null },
-            { entrant: { id: 102, name: 'Loser Player' }, score: 0, prereqSetId: null, prereqPlacement: null, progressionOrigin: null },
+            { entrant: { id: 101, name: 'Winner Player' }, score: 2, characterId: null, prereqSetId: null, prereqPlacement: null, progressionOrigin: null },
+            { entrant: { id: 102, name: 'Loser Player' }, score: 0, characterId: null, prereqSetId: null, prereqPlacement: null, progressionOrigin: null },
           ],
         },
       ],
@@ -436,8 +512,8 @@ describe('App — completed and not-ready sets on the bracket', () => {
           winnerAdvancesToPhase: null,
           loserAdvancesToPhase: null,
           slots: [
-            { entrant: { id: 101, name: 'Winner Player' }, score: 2, prereqSetId: null, prereqPlacement: null, progressionOrigin: null },
-            { entrant: { id: 102, name: 'Loser Player' }, score: 0, prereqSetId: null, prereqPlacement: null, progressionOrigin: null },
+            { entrant: { id: 101, name: 'Winner Player' }, score: 2, characterId: null, prereqSetId: null, prereqPlacement: null, progressionOrigin: null },
+            { entrant: { id: 102, name: 'Loser Player' }, score: 0, characterId: null, prereqSetId: null, prereqPlacement: null, progressionOrigin: null },
           ],
         },
       ],
@@ -738,8 +814,8 @@ describe('App — searching completed sets', () => {
       winnerAdvancesToPhase: null,
       loserAdvancesToPhase: null,
       slots: [
-        { entrant: w, score: 2, prereqSetId: null, prereqPlacement: null, progressionOrigin: null },
-        { entrant: l, score: 0, prereqSetId: null, prereqPlacement: null, progressionOrigin: null },
+        { entrant: w, score: 2, characterId: null, prereqSetId: null, prereqPlacement: null, progressionOrigin: null },
+        { entrant: l, score: 0, characterId: null, prereqSetId: null, prereqPlacement: null, progressionOrigin: null },
       ],
     };
   }

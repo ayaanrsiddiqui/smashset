@@ -26,7 +26,7 @@ vi.mock('../startgg.js', async (importOriginal) => ({
 // middleware/auth.test.ts already uses, for the same reason.
 const { createApp } = await import('../app.js');
 const { StartggComplexityError } = await import('../startgg.js');
-const { COST_MODEL } = await import('./sets.js');
+const { COST_MODEL, invalidateSetCaches } = await import('./sets.js');
 const app = createApp();
 
 const PREFIX = `test-sets-route-${Date.now()}-`;
@@ -255,7 +255,7 @@ describe('GET /phase-group/:phaseGroupId/open-sets — auto-main integration', (
 // "live" one it polls, and an expensive "structure" one for cross-phase wiring
 // on a slower clock. Scores arrive as start.gg's rendered displayScore string
 // rather than a standing object, since a scalar costs a fraction as much.
-function bracketFixture() {
+function bracketFixture(displayScore = 'Winner Player 2 - Loser Player 0') {
   return {
     phaseGroup: {
       id: 1,
@@ -274,7 +274,7 @@ function bracketFixture() {
             state: 3,
             winnerId: 8001,
             lPlacement: 9,
-            displayScore: 'Winner Player 2 - Loser Player 0',
+            displayScore,
             completedAt: 1789000000,
             slots: [
               { entrant: { id: 8001, name: 'Winner Player' }, prereqType: 'seed', prereqId: '111', prereqPlacement: null },
@@ -311,6 +311,39 @@ function bracketFixture() {
             completedAt: null,
             slots: [{ entrant: { id: 8005, name: 'Orphan' }, prereqType: 'seed', prereqId: '115', prereqPlacement: null }],
           },
+        ],
+      },
+    },
+  };
+}
+
+const FOX = 1500;
+const FALCO = 1501;
+
+/**
+ * The per-game character walk. Set 7001 is the completed one; 7002 is not
+ * finished, so start.gg carries no games for it.
+ */
+function charactersFixture(games: unknown = undefined) {
+  return {
+    phaseGroup: {
+      id: 1,
+      displayIdentifier: '1',
+      bracketType: 'DOUBLE_ELIMINATION',
+      phase: { name: 'Bracket' },
+      sets: {
+        pageInfo: { total: 2, totalPages: 1 },
+        nodes: [
+          {
+            id: 7001,
+            winnerId: 8001,
+            displayScore: 'Winner Player 2 - Loser Player 0',
+            games: games ?? [
+              { orderNum: 1, selections: [{ entrant: { id: 8001 }, selectionValue: FOX }, { entrant: { id: 8002 }, selectionValue: FALCO }] },
+              { orderNum: 2, selections: [{ entrant: { id: 8001 }, selectionValue: FOX }, { entrant: { id: 8002 }, selectionValue: FALCO }] },
+            ],
+          },
+          { id: 7002, winnerId: null, displayScore: null, games: [] },
         ],
       },
     },
@@ -394,6 +427,7 @@ function emptyStructure(id: number, displayIdentifier: string, bracketType: stri
 interface ResponseSlot {
   entrant: { id: number; name: string } | null;
   score: number | null;
+  characterId: number | null;
   prereqSetId: string | null;
   prereqPlacement: 1 | 2 | null;
   progressionOrigin: { phaseName: string; poolName: string | null } | null;
@@ -418,6 +452,80 @@ interface ResponseBracketGroup {
 }
 
 describe('GET /phase-group/:phaseGroupId/bracket', () => {
+  /**
+   * The character walk is deliberately not on a clock — a finished set's games
+   * cannot change unless someone corrects it — so these count the calls rather
+   * than only checking the output.
+   */
+  function countingMock(score?: string) {
+    const calls = { characters: 0 };
+    gqlMock.mockImplementation((_t: unknown, query: string) => {
+      if (query.includes('PhaseGroupBracket')) return Promise.resolve(bracketFixture(score));
+      if (query.includes('PhaseGroupProgression')) return Promise.resolve(structureFixture());
+      if (query.includes('PhaseGroupSetCharacters')) {
+        calls.characters += 1;
+        return Promise.resolve(charactersFixture());
+      }
+      throw new Error(`unexpected query in test: ${query}`);
+    });
+    return calls;
+  }
+
+  it('shows each entrant the character they played, and nothing where start.gg has none', async () => {
+    countingMock();
+    const cookie = await makeSignedInCookie('bracket-characters');
+
+    const res = await request(app).get('/api/sets/phase-group/1/bracket').set('Cookie', cookie);
+
+    const group: ResponseBracketGroup = res.body;
+    const completed = group.sets.find((s) => s.id === 7001)!;
+    expect(completed.slots[0].characterId).toBe(FOX);
+    expect(completed.slots[1].characterId).toBe(FALCO);
+    // Unfinished, so there are no games to read a character from.
+    expect(group.sets.find((s) => s.id === 7002)!.slots[0].characterId).toBeNull();
+  });
+
+  it('walks the pool for characters once, not on every poll', async () => {
+    const calls = countingMock();
+    const cookie = await makeSignedInCookie('bracket-characters-once');
+
+    await request(app).get('/api/sets/phase-group/1/bracket').set('Cookie', cookie);
+    invalidateSetCaches(); // as a mutation would, forcing a real second fetch
+    const res = await request(app).get('/api/sets/phase-group/1/bracket').set('Cookie', cookie);
+
+    // The bracket really was re-fetched, and the characters were not: they are
+    // the same games, and paying ~20 objects a set for them again is the cost
+    // this whole design exists to avoid.
+    expect(res.body.sets.find((s: ResponseBracketSet) => s.id === 7001)!.slots[0].characterId).toBe(FOX);
+    expect(calls.characters).toBe(1);
+  });
+
+  it('re-reads characters once a set stops matching what was cached', async () => {
+    const calls = countingMock();
+    const cookie = await makeSignedInCookie('bracket-characters-corrected');
+
+    await request(app).get('/api/sets/phase-group/1/bracket').set('Cookie', cookie);
+    // Another TO corrects the set on start.gg: same set, different result. The
+    // live query already carries the score, so this is noticed for free.
+    countingMockScore(calls, 'Winner Player 3 - Loser Player 1');
+    invalidateSetCaches();
+    await request(app).get('/api/sets/phase-group/1/bracket').set('Cookie', cookie);
+
+    expect(calls.characters).toBe(2);
+  });
+
+  function countingMockScore(calls: { characters: number }, score: string) {
+    gqlMock.mockImplementation((_t: unknown, query: string) => {
+      if (query.includes('PhaseGroupBracket')) return Promise.resolve(bracketFixture(score));
+      if (query.includes('PhaseGroupProgression')) return Promise.resolve(structureFixture());
+      if (query.includes('PhaseGroupSetCharacters')) {
+        calls.characters += 1;
+        return Promise.resolve(charactersFixture());
+      }
+      throw new Error(`unexpected query in test: ${query}`);
+    });
+  }
+
   afterEach(() => {
     gqlMock.mockReset();
   });
@@ -426,6 +534,7 @@ describe('GET /phase-group/:phaseGroupId/bracket', () => {
     gqlMock.mockImplementation((_token: unknown, query: string) => {
       if (query.includes('PhaseGroupBracket')) return Promise.resolve(bracketFixture());
       if (query.includes('PhaseGroupProgression')) return Promise.resolve(structureFixture());
+      if (query.includes('PhaseGroupSetCharacters')) return Promise.resolve(charactersFixture());
       throw new Error(`unexpected query in test: ${query}`);
     });
     const cookie = await makeSignedInCookie('bracket-basic');
@@ -462,6 +571,7 @@ describe('GET /phase-group/:phaseGroupId/bracket', () => {
     gqlMock.mockImplementation((_token: unknown, query: string, variables: Record<string, unknown>) => {
       if (query.includes('PhaseGroupBracket') && variables.phaseGroupId === '2') return Promise.resolve(poolFixture());
       if (query.includes('PhaseGroupProgression') && variables.phaseGroupId === '2') {
+      if (query.includes('PhaseGroupSetCharacters')) return Promise.resolve(charactersFixture());
         return Promise.resolve(emptyStructure(2, 'Pool A', 'ROUND_ROBIN', 'Pools'));
       }
       throw new Error(`unexpected query/variables in test: ${query} ${JSON.stringify(variables)}`);
@@ -479,6 +589,7 @@ describe('GET /phase-group/:phaseGroupId/bracket', () => {
     const perPages: number[] = [];
     gqlMock.mockImplementation((_token: unknown, query: string, variables: Record<string, unknown>) => {
       if (query.includes('PhaseGroupProgression')) return Promise.resolve(structureFixture());
+      if (query.includes('PhaseGroupSetCharacters')) return Promise.resolve(charactersFixture());
       if (!query.includes('PhaseGroupBracket')) throw new Error(`unexpected query in test: ${query}`);
       // Only the live query's page sizes are under test here.
       const perPage = variables.perPage as number;
@@ -510,6 +621,7 @@ describe('GET /phase-group/:phaseGroupId/bracket', () => {
   it('gives up rather than looping when no page size is small enough', async () => {
     gqlMock.mockImplementation((_token: unknown, query: string) => {
       if (query.includes('PhaseGroupProgression')) return Promise.resolve(structureFixture());
+      if (query.includes('PhaseGroupSetCharacters')) return Promise.resolve(charactersFixture());
       if (!query.includes('PhaseGroupBracket')) throw new Error(`unexpected query in test: ${query}`);
       throw new StartggComplexityError('Your query complexity is too high. (actual: 5000)', 5000);
     });
@@ -524,6 +636,7 @@ describe('GET /phase-group/:phaseGroupId/bracket', () => {
     gqlMock.mockImplementation((_token: unknown, query: string) => {
       if (query.includes('PhaseGroupBracket')) return Promise.resolve(bracketFixture());
       if (query.includes('PhaseGroupProgression')) return Promise.resolve(structureFixture());
+      if (query.includes('PhaseGroupSetCharacters')) return Promise.resolve(charactersFixture());
       throw new Error(`unexpected query in test: ${query}`);
     });
     const alice = await makeSignedInCookie('bracket-cache-alice');
@@ -547,6 +660,7 @@ describe('GET /phase-group/:phaseGroupId/bracket', () => {
     const perPages: number[] = [];
     gqlMock.mockImplementation((_token: unknown, query: string, variables: Record<string, unknown>) => {
       if (query.includes('PhaseGroupProgression')) return Promise.resolve(structureFixture());
+      if (query.includes('PhaseGroupSetCharacters')) return Promise.resolve(charactersFixture());
       if (!query.includes('PhaseGroupBracket')) throw new Error(`unexpected query in test: ${query}`);
       perPages.push(variables.perPage as number);
       return Promise.resolve(bracketFixture());
@@ -570,6 +684,7 @@ describe('GET /phase-group/:phaseGroupId/bracket', () => {
     const counts = { live: 0, structure: 0 };
     gqlMock.mockImplementation((_token: unknown, query: string) => {
       if (query.includes('PhaseGroupProgression')) {
+      if (query.includes('PhaseGroupSetCharacters')) return Promise.resolve(charactersFixture());
         counts.structure++;
         return Promise.resolve(structureFixture());
       }

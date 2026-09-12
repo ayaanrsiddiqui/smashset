@@ -1,8 +1,8 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { layoutBracket, BOX_HEIGHT, BOX_WIDTH, LINK_WIDTH } from './bracketLayout';
 import { bracketSetById, isOpenable, isWinnerSlot, slotLabel } from './bracketDisplay';
 import { compareIdentifiers } from './identifierOrder';
-import type { BracketGroup, BracketSet } from './types';
+import type { BracketGroup, BracketSet, Character } from './types';
 
 // The only two shapes with an elimination tree to draw — round robin and
 // Swiss don't have a bracket structure at all, so they fall back to a plain
@@ -21,14 +21,20 @@ interface Props {
    * than two things sharing a screen.
    */
   focusedSetId?: number | string | null;
+  /**
+   * Turns a slot's characterId into an icon. Empty until the videogame's
+   * character list loads, and most sets on a real bracket carry no character
+   * at all — plenty of TOs never report picks — so the icon is always optional.
+   */
+  characters?: Character[];
 }
 
-export function Bracket({ group, onSelectSet, focusedSetId }: Props) {
+export function Bracket({ group, onSelectSet, focusedSetId, characters = [] }: Props) {
   if (!group) {
     return <p className="bracket-empty">No bracket data yet.</p>;
   }
   return ELIMINATION_TYPES.has(group.bracketType) ? (
-    <BracketTree sets={group.sets} onSelectSet={onSelectSet} focusedSetId={focusedSetId} />
+    <BracketTree sets={group.sets} onSelectSet={onSelectSet} focusedSetId={focusedSetId} characters={characters} />
   ) : (
     <FallbackList sets={group.sets} />
   );
@@ -38,11 +44,18 @@ function BracketTree({
   sets,
   onSelectSet,
   focusedSetId,
+  characters,
 }: {
   sets: BracketSet[];
   onSelectSet: (s: BracketSet) => void;
   focusedSetId?: number | string | null;
+  characters: Character[];
 }) {
+  // Built once per render rather than per slot; a bracket has hundreds.
+  const iconUrlById = useMemo(
+    () => new Map(characters.flatMap((c) => (c.imageUrl ? ([[c.id, c.imageUrl]] as [number, string][]) : []))),
+    [characters]
+  );
   const layout = layoutBracket(sets);
   const byId = bracketSetById(sets);
   const boxById = new Map(layout.boxes.map((b) => [String(b.set.id), b]));
@@ -120,6 +133,11 @@ function BracketTree({
                   const won = isWinnerSlot(s, slot);
                   return (
                     <div key={i} className={`bracket-row${won ? ' winner' : ''}`}>
+                      {/* alt is empty deliberately: the tag it sits beside is
+                          already read out, so the icon is decoration. */}
+                      {slot.characterId != null && iconUrlById.has(slot.characterId) && (
+                        <img className="bracket-character" src={iconUrlById.get(slot.characterId)} alt="" />
+                      )}
                       <span className="bracket-name">{slotLabel(slot, byId)}</span>
                       {s.state === 3 && slot.score !== null && <span className={`bracket-score ${won ? 'won' : 'lost'}`}>{slot.score}</span>}
                     </div>

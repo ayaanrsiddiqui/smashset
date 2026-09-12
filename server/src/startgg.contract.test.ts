@@ -25,6 +25,9 @@ const NETWORK_TIMEOUT_MS = 180_000;
 // survives the bracket being rebuilt.
 const TOURNAMENT_SLUG = 'fireslam23test';
 
+/** Below this many multi-game sets, a per-set character cost means nothing. */
+const MIN_SETS_WITH_GAMES = 4;
+
 /** Below this a phase is too small for its per-pool cost to mean anything. */
 const MIN_POOLS_TO_MEASURE = 4;
 
@@ -80,8 +83,12 @@ async function run(query: string, variables: Record<string, unknown>): Promise<M
 }
 
 async function livePhaseGroupId(): Promise<string> {
+  // Ranked by *completed* sets, not total. Ranking by total picked whichever
+  // bracket was biggest, and a freshly created 116-entrant event has no
+  // finished sets at all — so the score-format check below had nothing to
+  // look at and failed on a tournament that was perfectly healthy.
   const { status, raw } = await post(
-    `query($slug:String!){tournament(slug:$slug){events{id phaseGroups{id sets(page:1,perPage:1){pageInfo{total}}}}}}`,
+    `query($slug:String!){tournament(slug:$slug){events{id phaseGroups{id sets(page:1,perPage:1,filters:{state:[3]}){pageInfo{total}}}}}}`,
     { slug: TOURNAMENT_SLUG }
   );
   let body: {
@@ -266,6 +273,80 @@ async function multiPoolPhaseId(): Promise<string | null> {
 // The pool-preview pager sizes its pages from a per-pool cost measured live on
 // 2026-09-11. That number is exactly the kind that expires silently when
 // start.gg adds a field, so it is asserted rather than commented.
+/**
+ * A phase group where sets actually carry character picks.
+ *
+ * Deliberately not the disposable test tournament: 19 of 20 sets there have no
+ * games at all, which measures at ~1 object per set against a model assuming
+ * 28 — a check that passes however far the real cost drifts.
+ */
+async function phaseGroupWithGamesId(): Promise<string | null> {
+  const { raw } = await post(
+    `query{tournaments(query:{perPage:6,filter:{past:true,videogameIds:[1386]}}){nodes{` +
+      `events(filter:{videogameId:[1386]}){phaseGroups{id}}}}}`,
+    {}
+  );
+  let candidates: number[] = [];
+  try {
+    const body = JSON.parse(raw) as {
+      data?: { tournaments?: { nodes: { events?: { phaseGroups?: { id: number }[] }[] }[] } };
+    };
+    candidates = (body.data?.tournaments?.nodes ?? [])
+      .flatMap((t) => t.events ?? [])
+      .flatMap((e) => e.phaseGroups ?? [])
+      .map((g) => g.id);
+  } catch {
+    return null;
+  }
+
+  for (const id of candidates.slice(0, 12)) {
+    const probe = await post(COST_MODEL.setCharacters.query, { phaseGroupId: String(id), page: 1, perPage: 20 });
+    try {
+      const body = JSON.parse(probe.raw) as { data?: { phaseGroup?: { sets: { nodes: { games: unknown[] | null }[] } } | null } };
+      const nodes = body.data?.phaseGroup?.sets?.nodes ?? [];
+      // Enough long sets for a per-set average to mean something.
+      if (nodes.filter((n) => (n.games ?? []).length >= 2).length >= MIN_SETS_WITH_GAMES) return String(id);
+    } catch {
+      // Treated the same as a phase group without games.
+    }
+  }
+  return null;
+}
+
+// Per-game character picks are fetched once per completed set rather than on a
+// clock, but the page size still comes from a measured per-set cost, and that
+// measurement expires the moment start.gg charges differently for games.
+describe.skipIf(!ENABLED)('start.gg set characters', () => {
+  it('still charges no more per set than the cost model assumes', async () => {
+    const phaseGroupId = await phaseGroupWithGamesId();
+    if (!phaseGroupId) {
+      // Measuring a phase with no games would re-check the empty case and look
+      // like proof, which is the failure this file exists to prevent.
+      console.warn(`[contract] found no phase group with >= ${MIN_SETS_WITH_GAMES} multi-game sets; per-set cost not measured`);
+      return;
+    }
+
+    const { raw } = await post(COST_MODEL.setCharacters.query, { phaseGroupId, page: 1, perPage: 20 });
+    const body = JSON.parse(raw) as {
+      data?: { phaseGroup?: { sets: { nodes: unknown[] } } | null };
+      errors?: { message: string }[];
+      extensions?: { queryComplexity?: number };
+    };
+    expect(body.errors?.[0]?.message ?? null, 'set characters query failed').toBeNull();
+
+    const sets = body.data?.phaseGroup?.sets?.nodes?.length ?? 0;
+    expect(sets, 'set characters query returned no sets to measure').toBeGreaterThan(0);
+
+    const perSet = (body.extensions!.queryComplexity! - COST_MODEL.setCharacters.base) / sets;
+    expect(
+      perSet,
+      `per-game picks now cost ${perSet.toFixed(2)} objects/set, above the assumed ` +
+        `${COST_MODEL.setCharacters.maxPerSet}. Re-derive SET_CHARACTERS_MAX_COST_PER_SET in ` +
+        `server/src/routes/sets.ts before a long-set phase starts being rejected.`
+    ).toBeLessThanOrEqual(COST_MODEL.setCharacters.maxPerSet);
+  }, NETWORK_TIMEOUT_MS);
+});
+
 describe.skipIf(!ENABLED)('start.gg pool previews', () => {
   it('still charges no more per pool than the cost model assumes', async () => {
     const phaseId = await multiPoolPhaseId();

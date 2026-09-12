@@ -6,6 +6,7 @@ function slot(entrantId: number | null, score: number | null = null, prereqSetId
   return {
     entrant: entrantId !== null ? { id: entrantId, name: `P${entrantId}` } : null,
     score,
+    characterId: null,
     prereqSetId,
     prereqPlacement,
     progressionOrigin: null,

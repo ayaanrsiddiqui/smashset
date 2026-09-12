@@ -3,7 +3,7 @@ import { gql, gqlWithCost, StartggComplexityError } from '../startgg.js';
 import { getPlayerMains } from '../db/mains.js';
 import { ensureMainComputed } from '../mainLookup.js';
 import { parseDisplayScore } from '../displayScore.js';
-import type { SetGame } from '../setCharacter.js';
+import { pickSetCharacter, type SetGame } from '../setCharacter.js';
 
 export const setsRouter = Router();
 
@@ -448,6 +448,10 @@ interface SetsPage<N, H> {
 export interface BracketSlot {
   entrant: { id: number; name: string } | null;
   score: number | null;
+  // The character this entrant is shown as having played, for a finished set.
+  // Null whenever start.gg carries no picks for the set, which is common —
+  // plenty of TOs never report them. See pickSetCharacter.
+  characterId: number | null;
   // A same-response Set.id this slot is fed by (winner or loser, per
   // prereqPlacement below), or null once the slot is already filled, or if
   // the prereq is a seed rather than another set (first-round slots).
@@ -645,12 +649,68 @@ const BRACKET_STRUCTURE_QUERY = /* GraphQL */ `
 // here came from a real measurement, and a measurement that lives only in a
 // comment is exactly how the query-complexity outage happened — encoding it
 // somewhere a scheduled job can check is the point.
+/**
+ * Per-game character picks, fetched once per completed set and then kept.
+ *
+ * Deliberately not on the structure query, where it would look like it
+ * belongs. Measured live: adding games there takes it from ~12.6 objects per
+ * set to over 37 on a phase of full Bo5s, which drops the page size from 64
+ * sets to ~22 and triples that query's requests — every 60 seconds, forever,
+ * for data that cannot change. A set's games are fixed once it is complete;
+ * the only thing that moves them is somebody correcting the set, which the
+ * fingerprint below notices.
+ *
+ * selectionValue rather than character { id }: it is the same character id as
+ * a scalar instead of an object, measured 19% cheaper for identical data.
+ */
+const SET_CHARACTERS_BASE_COST = 3;
+/** Measured 20.4/set on a Bo5-heavy top 8; ~5 objects a game caps all-Bo5 near 26. */
+const SET_CHARACTERS_MAX_COST_PER_SET = 28;
+
+const SET_CHARACTERS_QUERY = /* GraphQL */ `
+  query PhaseGroupSetCharacters($phaseGroupId: ID!, $page: Int!, $perPage: Int!) {
+    phaseGroup(id: $phaseGroupId) {
+      id
+      displayIdentifier
+      bracketType
+      phase {
+        name
+      }
+      sets(page: $page, perPage: $perPage) {
+        pageInfo {
+          total
+          totalPages
+        }
+        nodes {
+          id
+          winnerId
+          displayScore
+          games {
+            orderNum
+            selections {
+              entrant {
+                id
+              }
+              selectionValue
+            }
+          }
+        }
+      }
+    }
+  }
+`;
+
 export const COST_MODEL = {
   budget: COMPLEXITY_BUDGET,
   cap: 1000, // start.gg's own hard limit, which `budget` stays under
   live: { base: BRACKET_BASE_COST, maxPerSet: BRACKET_MAX_COST_PER_SET, query: BRACKET_LIVE_QUERY },
   structure: { base: STRUCTURE_BASE_COST, maxPerSet: STRUCTURE_MAX_COST_PER_SET, query: BRACKET_STRUCTURE_QUERY },
   openSets: { base: SETS_BASE_COST, maxPerSet: SETS_MAX_COST_PER_SET, query: SETS_QUERY },
+  setCharacters: {
+    base: SET_CHARACTERS_BASE_COST,
+    maxPerSet: SET_CHARACTERS_MAX_COST_PER_SET,
+    query: SET_CHARACTERS_QUERY,
+  },
   poolPreview: {
     base: POOL_PREVIEW_BASE_COST,
     maxPerPool: POOL_PREVIEW_COST_PER_POOL,
@@ -860,6 +920,55 @@ async function fetchBracketStructure(accessToken: string, phaseGroupId: string):
   return byId;
 }
 
+interface RawCharacterSet {
+  id: number | string;
+  winnerId: number | null;
+  displayScore: string | null;
+  games: { orderNum: number | null; selections: { entrant: { id: number } | null; selectionValue: number | null }[] | null }[] | null;
+}
+
+
+/**
+ * What a set's result looks like right now. A correction made elsewhere on
+ * start.gg changes the winner or the score, which is how a cached set that is
+ * no longer accurate gets noticed — the live query already carries both, so
+ * this costs nothing.
+ */
+function resultFingerprint(set: { winnerId: number | null; displayScore: string | null }): string {
+  return `${set.winnerId ?? ''}|${set.displayScore ?? ''}`;
+}
+
+const setCharacterCache = new Map<string, { fingerprint: string; byEntrant: Record<number, number> }>();
+
+async function refreshSetCharacters(accessToken: string, userId: number, phaseGroupId: string): Promise<void> {
+  const paged = await fetchSetsPaged<RawCharacterSet, BracketHeader>(accessToken, phaseGroupId, SET_CHARACTERS_QUERY, {
+    name: 'setCharacters',
+    base: SET_CHARACTERS_BASE_COST,
+    maxPerRow: SET_CHARACTERS_MAX_COST_PER_SET,
+  });
+  if (!paged) return;
+
+  for (const set of paged.nodes) {
+    const games: SetGame[] = (set.games ?? []).flatMap((game) => {
+      if (game.orderNum == null) return [];
+      const characterIdByEntrantId: Record<number, number> = {};
+      for (const selection of game.selections ?? []) {
+        if (selection.entrant && selection.selectionValue != null) {
+          characterIdByEntrantId[selection.entrant.id] = selection.selectionValue;
+        }
+      }
+      return [{ orderNum: game.orderNum, characterIdByEntrantId }];
+    });
+
+    const byEntrant: Record<number, number> = {};
+    for (const entrantId of new Set(games.flatMap((g) => Object.keys(g.characterIdByEntrantId).map(Number)))) {
+      const character = pickSetCharacter(games, entrantId);
+      if (character != null) byEntrant[entrantId] = character;
+    }
+    setCharacterCache.set(`${userId}:${set.id}`, { fingerprint: resultFingerprint(set), byEntrant });
+  }
+}
+
 async function fetchBracketData(accessToken: string, userId: number, phaseGroupId: string): Promise<BracketGroup | null> {
   const key = cacheKey(userId, phaseGroupId);
   const cached = bracketCache.get(key);
@@ -879,6 +988,19 @@ async function fetchBracketData(accessToken: string, userId: number, phaseGroupI
   }
 
   const structure = await fetchBracketStructure(accessToken, phaseGroupId);
+
+  // Games exist only once a set is finished, and then never move unless it is
+  // corrected — which changes its winner or score, and so its fingerprint. In
+  // practice this walks the pool once and then not again, rather than paying
+  // for it on a clock. Not invalidated by invalidateSetCaches either: a local
+  // correction changes the fingerprint too, so it is noticed the same way.
+  const charactersAreStale = live.nodes.some((set) => {
+    if (set.state !== 3) return false;
+    const cached = setCharacterCache.get(`${userId}:${set.id}`);
+    return !cached || cached.fingerprint !== resultFingerprint(set);
+  });
+  if (charactersAreStale) await refreshSetCharacters(accessToken, userId, phaseGroupId);
+
   const pg = live.header;
   const group: BracketGroup = {
     phaseGroupId: pg.id,
@@ -900,11 +1022,14 @@ async function fetchBracketData(accessToken: string, userId: number, phaseGroupI
     const winnerSlot = winnerAt === 0 || winnerAt === 1 ? winnerAt : null;
     const scores = parseDisplayScore(s.displayScore, s.slots[0].entrant?.name, s.slots[1].entrant?.name, winnerSlot);
 
+    const characters = setCharacterCache.get(`${userId}:${s.id}`)?.byEntrant ?? {};
+
     const slots = s.slots.map((slot, i): BracketSlot => {
       const origin = wiring?.slots?.[i]?.seed?.progressionSource;
       return {
         entrant: slot.entrant,
         score: scores[i],
+        characterId: slot.entrant ? (characters[slot.entrant.id] ?? null) : null,
         prereqSetId: slot.prereqType === 'set' ? slot.prereqId : null,
         prereqPlacement: slot.prereqPlacement === 1 || slot.prereqPlacement === 2 ? slot.prereqPlacement : null,
         progressionOrigin: origin?.originPhase
