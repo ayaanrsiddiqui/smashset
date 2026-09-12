@@ -1247,9 +1247,12 @@ describe('App — setting a main by hand', () => {
 
     // Polling is up to 12s away now that the change stream carries the urgent
     // updates; a main the TO just set must not look ignored for that long.
+    // The dropdown is where the pick shows — the column beside it only speaks
+    // when it has something the dropdown cannot say.
     await waitFor(() => {
       const row = [...document.querySelectorAll('.mains-list li')].find((li) => li.textContent?.includes('Ada'));
-      expect(row?.querySelector('.mains-current')?.textContent).toBe('Fox');
+      expect((row?.querySelector('select') as HTMLSelectElement | null)?.value).toBe('100');
+      expect(row?.querySelector('.mains-current')).toBeNull();
     });
   });
 });
