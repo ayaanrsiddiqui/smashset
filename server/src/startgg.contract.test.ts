@@ -15,7 +15,8 @@ import { resolveShortUrl } from './startgg.js';
 // normal `npm test` stays offline, deterministic, and free of rate limits.
 // It alerts rather than gates: start.gg being down is not a reason to block a
 // merge.
-const ENABLED = process.env.RUN_CONTRACT_TESTS === '1' && !!process.env.STARTGG_API_KEY;
+const ASKED_TO_RUN = process.env.RUN_CONTRACT_TESTS === '1';
+const ENABLED = ASKED_TO_RUN && !!process.env.STARTGG_API_KEY;
 const ENDPOINT = 'https://api.start.gg/gql/alpha';
 // Generous on purpose: a rate-limited attempt waits out the limit (see post()),
 // which is far past vitest's 5s default.
@@ -142,6 +143,21 @@ async function progressionFedPhaseGroupId(): Promise<string | null> {
   }
   return null;
 }
+
+/**
+ * Without this, a run asked to check start.gg with no key simply skipped every
+ * describe below and reported success — a canary that is green having looked
+ * at nothing, which is worse than a red one because it reads as protection.
+ * Being unable to run is a result worth failing on; not being asked to is not.
+ */
+describe.skipIf(!ASKED_TO_RUN)('start.gg canary preconditions', () => {
+  it('has a key to run against, rather than skipping everything and passing', () => {
+    expect(
+      process.env.STARTGG_API_KEY,
+      'RUN_CONTRACT_TESTS=1 but STARTGG_API_KEY is unset, so every contract test below would skip and this run would pass having checked nothing. Set the STARTGG_API_KEY repo secret.'
+    ).toBeTruthy();
+  });
+});
 
 describe.skipIf(!ENABLED)('start.gg contract', () => {
   // Resolved once: each lookup is a request against the same rate limit the

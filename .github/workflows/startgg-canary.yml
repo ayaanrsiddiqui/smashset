@@ -23,8 +23,12 @@ jobs:
       RUN_CONTRACT_TESTS: '1'
       STARTGG_API_KEY: ${{ secrets.STARTGG_API_KEY }}
       # The contract test never touches Postgres, but env.ts validates the full
-      # set at import. A DATABASE_URL that is never connected to is fine — the
-      # pg Pool only dials on first query.
+      # set at import, so this still has to be a well-formed URL. Nothing dials
+      # it: the pg Pool only connects on first query, and test-global-setup
+      # skips its migration when RUN_CONTRACT_TESTS is set. That migration ran
+      # unconditionally before, which is why this job never once got as far as
+      # start.gg — it died on ECONNREFUSED 5432 against a database that was
+      # never supposed to exist.
       DATABASE_URL: postgres://unused:unused@localhost:5432/unused
       SESSION_SECRET: canary-session-secret-not-a-real-one
       TOKEN_ENCRYPTION_KEY: 00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff
