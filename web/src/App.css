@@ -539,6 +539,64 @@
   opacity: 0.45;
 }
 
+/* Player mains. The icon column keeps its width whether or not a main is
+   known, so rows line up on a fresh event where most of them are not. */
+.mains-modal {
+  max-width: 560px;
+}
+
+.mains-list {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.mains-list li {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #1c1f27;
+}
+
+.mains-icon {
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  object-fit: cover;
+}
+
+.mains-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mains-current {
+  color: #9aa0ac;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.mains-list select {
+  background: #22252d;
+  color: #f1f2f6;
+  border: 1px solid #2a2e38;
+  border-radius: 6px;
+  padding: 5px 6px;
+  font-size: 13px;
+}
+
+.mains-empty {
+  color: #9aa0ac;
+}
+
 /* Phase list on the pool picker. A phase is a disclosure row; its pools only
    render while it's open, so a 64-pool phase costs nothing until asked for. */
 .phase-list {

@@ -8,9 +8,11 @@ import { HelpModal } from './HelpModal';
 import { AccountModal } from './AccountModal';
 import { Bracket } from './Bracket';
 import { SetPanel } from './SetPanel';
+import { MainsPanel } from './MainsPanel';
 import {
   startSet,
   poolEventsUrl,
+  updatePlayerMain,
   fetchBracket,
   fetchCharacters,
   fetchOpenSets,
@@ -122,6 +124,7 @@ export default function App() {
   const [startedIds, setStartedIds] = useState<Set<number | string>>(new Set());
   const [showHelp, setShowHelp] = useState(false);
   const [showAccount, setShowAccount] = useState(false);
+  const [showMains, setShowMains] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
   // Mirrors phaseGroupId for async continuations that need to know whether the
   // TO switched pool while they were awaiting — a ref because a closure
@@ -390,7 +393,7 @@ export default function App() {
       // search screen underneath it. The bracket view has no search box or
       // numbered results to target, so these shortcuts are meaningless (and
       // would silently steal focus/keys) while it's showing.
-      if (selectedSet || showHelp || showAccount) return;
+      if (selectedSet || showHelp || showAccount || showMains) return;
 
       const active = document.activeElement;
       const inField = active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement;
@@ -543,6 +546,27 @@ export default function App() {
   if (user === undefined) return <div className="settings-screen"><h1>SmashSet</h1></div>;
   if (user === null) return <SignIn />;
   if (!event) return <Settings onResolved={handleResolved} />;
+
+  /**
+   * Writes the main through, then reflects it locally rather than waiting for
+   * the next poll — which is up to 12s away now that the change stream carries
+   * the urgent updates, and a main the TO just set should not appear to have
+   * been ignored for that long.
+   */
+  async function handleSetMain(playerId: number, characterId: number | null): Promise<void> {
+    if (!event) return;
+    await updatePlayerMain(playerId, event.videogame.id, characterId);
+    setSets((current) =>
+      current.map((set) => ({
+        ...set,
+        entrants: set.entrants.map((entrant) =>
+          entrant.playerId === playerId
+            ? { ...entrant, suggestedMain: { characterId, gamesTallied: 0, setsConsidered: 0 } }
+            : entrant
+        ),
+      }))
+    );
+  }
 
   function backToEventPicker() {
     localStorage.removeItem(STORAGE_KEY);
@@ -739,6 +763,15 @@ export default function App() {
           <button
             type="button"
             className="help-trigger"
+            onClick={() => setShowMains(true)}
+            title="Player mains"
+            aria-label="Player mains"
+          >
+            ☺
+          </button>
+          <button
+            type="button"
+            className="help-trigger"
             onClick={() => setShowAccount(true)}
             title="Account"
             aria-label="Account"
@@ -854,6 +887,15 @@ export default function App() {
 
       {toast && <div className={`toast toast-${toast.kind}`}>{toast.message}</div>}
       {showHelp && <HelpModal onClose={() => setShowHelp(false)} />}
+      {showMains && (
+        <MainsPanel
+          sets={sets}
+          characters={characters}
+          videogameId={event.videogame.id}
+          onClose={() => setShowMains(false)}
+          onSave={handleSetMain}
+        />
+      )}
       {showAccount && (
         <AccountModal
           account={account}

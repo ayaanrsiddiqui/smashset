@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { fetchAccount, fetchBracket, fetchCharacters, fetchOpenSets, fetchPhaseGroups, fetchSetDetail, fetchStages, updateTopXBo5 } from './api';
-import { apiFailure, flushTimers, resetApiDefaults, seedEvent, seedPool } from './test-helpers';
+import { fetchAccount, fetchBracket, fetchCharacters, fetchOpenSets, fetchPhaseGroups, fetchSetDetail, fetchStages, updatePlayerMain, updateTopXBo5 } from './api';
+import { apiFailure, flushTimers, resetApiDefaults, seedEvent, seedPool, TEST_EVENT } from './test-helpers';
 import type { BracketSet } from './types';
 import { openedEventSource, resetEventSources } from './test-eventsource';
 
@@ -33,6 +33,8 @@ vi.mock('./api', async (importOriginal) => ({
   fetchAccount: vi.fn().mockResolvedValue({ displayName: 'FireSlam23', startggSlug: null, topXBo5: null }),
   updateTopXBo5: vi.fn().mockResolvedValue({ topXBo5: null }),
   startSet: vi.fn(),
+  updatePlayerMain: vi.fn().mockResolvedValue({ characterId: null }),
+  poolEventsUrl: (id: number) => `/api/sets/phase-group/${id}/events`,
 }));
 
 // Imported after the mock is registered so App picks up the mocked ./api.
@@ -1175,5 +1177,70 @@ describe('App — live pool updates', () => {
       await vi.advanceTimersByTimeAsync(5000);
     });
     expect(fetchOpenSetsMock.mock.calls.length).toBeGreaterThan(afterDrop);
+  });
+});
+
+
+describe('App — setting a main by hand', () => {
+  const fetchOpenSetsMock = vi.mocked(fetchOpenSets);
+  const updatePlayerMainMock = vi.mocked(updatePlayerMain);
+
+  beforeEach(() => {
+    localStorage.clear();
+    seedEvent();
+    seedPool();
+    fetchMeMock.mockResolvedValue({ user: { id: 1, displayName: 'FireSlam23' } });
+    resetApiDefaults();
+    updatePlayerMainMock.mockReset();
+    updatePlayerMainMock.mockResolvedValue({ characterId: 100 });
+    vi.mocked(fetchCharacters).mockResolvedValue({ characters: [{ id: 100, name: 'Fox' }] });
+    fetchOpenSetsMock.mockResolvedValue({
+      sets: [
+        {
+          id: 1,
+          isPreview: false,
+          isStarted: false,
+          fullRoundText: 'Winners Round 1',
+          identifier: 'A',
+          lPlacement: null,
+          entrants: [
+            { id: 10, name: 'Ada', playerId: 11 },
+            { id: 20, name: 'mudd', playerId: 12 },
+          ],
+        },
+      ],
+    });
+  });
+
+  afterEach(() => {
+    fetchMeMock.mockReset();
+    fetchOpenSetsMock.mockReset();
+  });
+
+  it('opens from the header and saves a main against the player', async () => {
+    render(<App />);
+    await screen.findByPlaceholderText(/winner's name/i);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Player mains' }));
+    fireEvent.change(await screen.findByLabelText('Main for Ada'), { target: { value: '100' } });
+
+    // Keyed to the start.gg player, not the entrant, so it is still there at
+    // their next tournament.
+    await waitFor(() => expect(updatePlayerMainMock).toHaveBeenCalledWith(11, TEST_EVENT.videogame.id, 100));
+  });
+
+  it('shows the new main straight away instead of waiting for a poll', async () => {
+    render(<App />);
+    await screen.findByPlaceholderText(/winner's name/i);
+    fireEvent.click(screen.getByRole('button', { name: 'Player mains' }));
+
+    fireEvent.change(await screen.findByLabelText('Main for Ada'), { target: { value: '100' } });
+
+    // Polling is up to 12s away now that the change stream carries the urgent
+    // updates; a main the TO just set must not look ignored for that long.
+    await waitFor(() => {
+      const row = [...document.querySelectorAll('.mains-list li')].find((li) => li.textContent?.includes('Ada'));
+      expect(row?.querySelector('.mains-current')?.textContent).toBe('Fox');
+    });
   });
 });
