@@ -25,7 +25,7 @@ Last updated: 2026-09-12, working top to bottom.
        is how far apart the buckets are (seed 7 over seed 2 ≈ 4). Not an upset, or same bucket →
        checkmark. Echoes supermajor.gg.
 
-[ ] 17. Mobile: the interface isn't aware that the focused set may be covered by the expanded set
+[x] 17. Mobile: the interface isn't aware that the focused set may be covered by the expanded set
         list widget. With the list expanded you can't scroll the bottom-left corner of the bracket
         into view — it stays covered.
 

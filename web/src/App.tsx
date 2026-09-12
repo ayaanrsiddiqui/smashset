@@ -971,7 +971,7 @@ export default function App() {
   }
 
   return (
-    <div className="app-shell unified">
+    <div className={`app-shell unified${panelExpanded ? ' panel-expanded' : ''}`}>
       {outboxEl}
       {headerFor(event, phaseGroups, phaseGroupId)}
 

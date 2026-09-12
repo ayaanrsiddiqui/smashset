@@ -2319,8 +2319,17 @@ kbd {
     height: 40vh;
   }
 
+  /* The stage reserves whatever the panel is currently covering, so the
+     bottom of the bracket can always be scrolled clear of it. Expanded the
+     panel is 62vh and this used to stay at 44vh, which left the bottom-left
+     corner permanently underneath it with no way to reach it. Bracket's
+     visibleArea reads this back, so fit and centring follow it too. */
   .bracket-stage {
     padding-bottom: 44vh;
+  }
+
+  .panel-expanded .bracket-stage {
+    padding-bottom: 66vh;
   }
 }
 
