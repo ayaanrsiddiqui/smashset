@@ -850,6 +850,13 @@ kbd {
   gap: 8px;
 }
 
+/* Says what a not-yet-complete score is still missing. Muted, not an error:
+   it fires while the TO is mid-entry and is guidance, not a rejection. */
+.score-shortfall {
+  font-size: 13px;
+  color: #9aa0ac;
+}
+
 .score-line {
   font-size: 20px;
   font-weight: 700;

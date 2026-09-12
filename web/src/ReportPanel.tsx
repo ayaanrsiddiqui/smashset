@@ -169,6 +169,26 @@ export function ReportPanel({
   const loserGameCount = displayGames.length - winnerGameCount;
   const showError = parseError != null && displayGames.length === 0;
 
+  /**
+   * Why the Report button is dead, when the error itself is deliberately not
+   * shown.
+   *
+   * showError hides parseError while the preview still has something to draw,
+   * because every such buffer is a valid prefix of a real score — typing
+   * "wwlw" passes through "w", "ww" and "wwl", and flashing an error at each
+   * would fight the TO on a correct entry. But the button is disabled in
+   * exactly those states, and a dead control with no reason is its own bug.
+   *
+   * In all of them the set winner is simply short of requiredWins, so one
+   * sentence covers them — and it names the Bo toggle, because the realistic
+   * way a TO gets stuck here is guessRequiredWins picking Bo5 for a set that
+   * was actually Bo3. Their 2-0 is right; the format is wrong.
+   */
+  const shortfallHint =
+    parseError != null && displayGames.length > 0 && winnerGameCount < requiredWins
+      ? `${winnerGameCount} of ${requiredWins} wins — Bo${requiredWins * 2 - 1} (press b to change)`
+      : null;
+
   const effectiveRequiredWins = scoreSource === 'quick' && games ? submitRequiredWins : requiredWins;
   const maxRows = Math.max(requiredWins * 2 - 1, displayGames.length);
   const clinchedAt = displayGames.length > 0 && winnerGameCount >= effectiveRequiredWins ? displayGames.length : null;
@@ -783,6 +803,7 @@ export function ReportPanel({
             <span className="score-line">
               {winner.name} {winnerGameCount}–{loserGameCount} {loser.name}
             </span>
+            {shortfallHint && <span className="score-shortfall">{shortfallHint}</span>}
           </div>
         )}
       </div>
