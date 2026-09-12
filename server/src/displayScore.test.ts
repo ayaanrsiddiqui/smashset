@@ -83,3 +83,20 @@ describe('the winner as a cross-check', () => {
     expect(parseDisplayScore('hwon 2 - Curve_Ball917 2', 'hwon', 'Curve_Ball917', 0)).toEqual([null, null]);
   });
 });
+
+describe('one tag containing the other', () => {
+  // "Chief" is a substring of "AlphaChief". The patterns are anchored at both
+  // ends, which is what keeps the shorter tag from matching inside the longer
+  // one — worth pinning down, since it is not obvious from the call site.
+  it('reads the string correctly whichever way round the names are', () => {
+    expect(parseDisplayScore('Chief 2 - AlphaChief 1', 'Chief', 'AlphaChief', 0)).toEqual([2, 1]);
+    expect(parseDisplayScore('AlphaChief 3 - Chief 1', 'Chief', 'AlphaChief', 1)).toEqual([1, 3]);
+    expect(parseDisplayScore('Chief 2 - AlphaChief 1', 'AlphaChief', 'Chief', 1)).toEqual([1, 2]);
+  });
+
+  it('does not let the shorter tag match inside the longer one', () => {
+    // If "Chief" could match the tail of "AlphaChief", this would parse as a
+    // score for the wrong slot rather than reporting nothing.
+    expect(parseDisplayScore('AlphaChief 2 - BetaChief 1', 'Chief', 'BetaChief', 0)).toEqual([null, null]);
+  });
+});

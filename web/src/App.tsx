@@ -455,6 +455,37 @@ export default function App() {
     .slice()
     .sort((a, b) => (b.completedAt ?? 0) - (a.completedAt ?? 0));
 
+  // Every player whose tag matches, by entrant id — not by name, because two
+  // different players can share a tag, and collapsing them would treat them as
+  // one and hand the TO someone else's set to correct.
+  const trimmedQuery = query.trim().toLowerCase();
+  const matchedPlayers = new Map<number, string>();
+  if (trimmedQuery) {
+    for (const set of completedMatches) {
+      for (const slot of set.slots) {
+        if (slot.entrant && slot.entrant.name.toLowerCase().includes(trimmedQuery)) {
+          matchedPlayers.set(slot.entrant.id, slot.entrant.name.toLowerCase());
+        }
+      }
+    }
+  }
+
+  // One tag can contain another — "Chief" is inside "AlphaChief" — and then a
+  // substring match names two players no matter how much the TO types, so the
+  // shorter tag could never be searched for at all. Typing a tag in full is an
+  // unambiguous act, so an exact hit beats the tags merely containing it. Two
+  // players sharing that exact tag stays ambiguous, which is the real case.
+  const exactlyNamed = [...matchedPlayers].flatMap(([id, name]) => (name === trimmedQuery ? [id] : []));
+  const soleEntrantId =
+    exactlyNamed.length === 1 ? exactlyNamed[0] : matchedPlayers.size === 1 ? [...matchedPlayers.keys()][0] : null;
+
+  // Naming one player asks for that player's history, so the longer tag's sets
+  // drop out rather than sitting in the middle of it.
+  const playerHistory =
+    soleEntrantId === null
+      ? completedMatches
+      : completedMatches.filter((set) => set.slots.some((slot) => slot.entrant?.id === soleEntrantId));
+
   // Collapsed, the panel is a glance-able queue of what can be started right
   // now; expanded, it's the full search. Everything below — keyboard picks
   // included — targets whichever list is actually on screen.
@@ -464,25 +495,13 @@ export default function App() {
 
   const visibleRows: PanelRow[] =
     mode === 'completed'
-      ? completedMatches.map((set) => ({ kind: 'completed' as const, set }))
+      ? playerHistory.map((set) => ({ kind: 'completed' as const, set }))
       : (panelExpanded ? results : readyToStart).map((set) => ({ kind: 'open' as const, set }));
 
-  // A query that names exactly one player pulls up that player's history, and
-  // the top row is their latest set — so highlight it without waiting for an
-  // arrow key. Two players matched (say "JL" against two tags) stays ambiguous.
-  // Counted by entrant id, not by name: two different players can share a tag,
-  // and collapsing them would auto-open the newest set across both of them —
-  // handing the TO someone else's set to correct.
-  const playersMatchingQuery = new Set(
-    query.trim()
-      ? completedMatches.flatMap((s) =>
-          s.slots.flatMap((slot) =>
-            slot.entrant && slot.entrant.name.toLowerCase().includes(query.trim().toLowerCase()) ? [slot.entrant.id] : []
-          )
-        )
-      : []
-  );
-  const soleMatchedPlayer = mode === 'completed' && playersMatchingQuery.size === 1;
+  // A query naming exactly one player pulls up that player's history, and the
+  // top row is their latest set — so highlight it without waiting for an arrow
+  // key. Two players matched (say "JL" against two tags) stays ambiguous.
+  const soleMatchedPlayer = mode === 'completed' && soleEntrantId !== null;
 
   // A single match is unambiguous, so it stays highlighted the same way it
   // always has — only an actual choice among several needs `revealed` first.

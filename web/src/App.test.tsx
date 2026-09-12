@@ -861,6 +861,52 @@ describe('App — searching completed sets', () => {
     expect(document.querySelector('.set-panel-list li.active')).toBeNull();
   });
 
+  it('lets a tag be searched even when another tag contains it', async () => {
+    // "Chief" is inside "AlphaChief", so a substring match names two players
+    // no matter how much is typed — the shorter tag could never be searched
+    // for at all. Typing it in full is unambiguous, so it wins.
+    fetchBracketMock.mockResolvedValue({
+      phaseGroupId: 1,
+      phaseName: 'Bracket',
+      displayIdentifier: '1',
+      bracketType: 'DOUBLE_ELIMINATION',
+      sets: [completed(1, 'AlphaChief', 'goodfellow', 300), completed(2, 'Chief', 'Mr. Pi', 200)],
+    });
+    render(<App />);
+    await screen.findByPlaceholderText(/winner's name/i);
+
+    fireEvent.keyDown(window, { key: 'Tab' });
+    const search = await screen.findByPlaceholderText(/player to correct/i);
+    fireEvent.change(search, { target: { value: 'Chief' } });
+
+    // Their history alone — the longer tag's newer set is not sitting on top
+    // of it, and it is highlighted without needing an arrow key.
+    await waitFor(() => expect(rowNames()).toEqual(['Chief def. Mr. Pi 2–0']));
+    expect(document.querySelector('.set-panel-list li.active')?.querySelector('.entrant-names')?.textContent).toBe(
+      'Chief def. Mr. Pi 2–0'
+    );
+  });
+
+  it('still offers both when the query only partly names one of them', async () => {
+    fetchBracketMock.mockResolvedValue({
+      phaseGroupId: 1,
+      phaseName: 'Bracket',
+      displayIdentifier: '1',
+      bracketType: 'DOUBLE_ELIMINATION',
+      sets: [completed(1, 'AlphaChief', 'goodfellow', 300), completed(2, 'Chief', 'Mr. Pi', 200)],
+    });
+    render(<App />);
+    await screen.findByPlaceholderText(/winner's name/i);
+
+    fireEvent.keyDown(window, { key: 'Tab' });
+    const search = await screen.findByPlaceholderText(/player to correct/i);
+    fireEvent.change(search, { target: { value: 'hie' } });
+
+    // A partial match names both players, so nothing is picked for the TO.
+    await waitFor(() => expect(rowNames()).toHaveLength(2));
+    expect(document.querySelector('.set-panel-list li.active')).toBeNull();
+  });
+
   it('opens a completed set for correction when picked', async () => {
     render(<App />);
     await screen.findByPlaceholderText(/winner's name/i);
