@@ -134,6 +134,10 @@ export function ReportPanel({
   const [mainOverrides, setMainOverrides] = useState<Map<number, number | null>>(new Map());
   const [submitting, setSubmitting] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+  // Bumped each time Enter is pressed on a score that cannot be reported. A
+  // counter rather than a flag so the same refusal twice still re-triggers the
+  // highlight — the second press is exactly when a TO is wondering why.
+  const [scoreNudge, setScoreNudge] = useState(0);
   // Mirrors `submitting` but as a ref, not state: state updates aren't
   // applied until the next render, so keys dispatched faster than that
   // (mashing Enter with no gap) all see the same stale `submitting=false`
@@ -205,6 +209,9 @@ export function ReportPanel({
     parseError != null && displayGames.length > 0 && winnerGameCount < requiredWins
       ? `${winnerGameCount} of ${requiredWins} wins — Bo${requiredWins * 2 - 1} (press b to change)`
       : null;
+
+  const reportable = Boolean(games) && parseError === null;
+  const nudging = scoreNudge > 0 && !reportable;
 
   const effectiveRequiredWins = scoreSource === 'quick' && games ? submitRequiredWins : requiredWins;
   const maxRows = Math.max(requiredWins * 2 - 1, displayGames.length);
@@ -588,6 +595,13 @@ export function ReportPanel({
 
       if (e.key === 'Enter') {
         e.preventDefault();
+        // Confirming a score the panel has already decided it will not accept
+        // just moved the dead end one keypress further along: the confirm row
+        // appeared and its Enter did nothing.
+        if (!games || parseError) {
+          setScoreNudge((n) => n + 1);
+          return;
+        }
         setMode({ kind: 'confirmSubmit' });
         return;
       }
@@ -823,7 +837,7 @@ export function ReportPanel({
         {/* The result itself, rather than a line of header text: it is the one
             thing on this screen a TO has to be sure of before confirming. */}
         {mode.kind !== 'quick' && (
-          <div className="score-display">
+          <div className={`score-display${nudging ? ' nudge' : ''}`} key={scoreNudge}>
             <span className="score-line">
               {winner.name}{' '}
               <span className="score-value">
@@ -832,6 +846,9 @@ export function ReportPanel({
               {loser.name}
             </span>
             {shortfallHint && <span className="score-shortfall">{shortfallHint}</span>}
+            {/* Nothing typed leaves no shortfall line to point at, so the
+                refusal needs something of its own to say. */}
+            {nudging && !shortfallHint && !showError && <span className="score-blocked">Type a score to report this set.</span>}
           </div>
         )}
       </div>

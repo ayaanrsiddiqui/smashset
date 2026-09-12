@@ -80,15 +80,24 @@ export function MainsPanel({ phaseGroupId, characters, onClose, onSave }: Props)
     }
   }
 
-  function describe(player: PoolPlayer): string {
-    // "Never looked" and "looked and found nothing" are different facts, and a
-    // TO deciding whether to fill one in needs to tell them apart.
-    // Opening this panel starts a lookup for anyone missing one.
+  /**
+   * What this row can say that the dropdown beside it cannot.
+   *
+   * Null once a character is actually on file: the dropdown already shows its
+   * name, and repeating it in the column alongside made every filled-in row
+   * say the same thing twice. What is worth a word is the absence — "never
+   * looked" and "looked and found nothing" are different facts, and a TO
+   * deciding whether to fill one in needs to tell them apart. Opening this
+   * panel starts a lookup for anyone missing one.
+   */
+  function noteFor(player: PoolPlayer): string | null {
     if (!player.main) return 'looking up…';
     if (player.main.characterId === null) {
       return player.main.setsConsidered === 0 ? 'not set' : 'no main found';
     }
-    return byId.get(player.main.characterId)?.name ?? 'unknown character';
+    // On file, but not in this videogame's roster — worth saying, because the
+    // dropdown cannot show a name it does not have.
+    return byId.has(player.main.characterId) ? null : 'unknown character';
   }
 
   return (
@@ -121,24 +130,29 @@ export function MainsPanel({ phaseGroupId, characters, onClose, onSave }: Props)
             <ul className="mains-list">
               {players.map((player) => {
                 const icon = player.main?.characterId != null ? byId.get(player.main.characterId)?.imageUrl : undefined;
+                const note = noteFor(player);
                 return (
                   <li key={player.playerId}>
-                    {icon ? <img className="mains-icon" src={icon} alt="" /> : <span className="mains-icon" />}
                     <span className="mains-name">{player.name}</span>
-                    <span className="mains-current">{describe(player)}</span>
-                    <select
-                      aria-label={`Main for ${player.name}`}
-                      disabled={saving === player.playerId}
-                      value={player.main?.characterId ?? ''}
-                      onChange={(e) => choose(player, e.target.value)}
-                    >
-                      <option value="">— none —</option>
-                      {characters.map((character) => (
-                        <option key={character.id} value={character.id}>
-                          {character.name}
-                        </option>
-                      ))}
-                    </select>
+                    {note && <span className="mains-current">{note}</span>}
+                    {/* The icon sits with the dropdown, which is where the
+                        character it belongs to is named. */}
+                    <span className="mains-pick">
+                      {icon ? <img className="mains-icon" src={icon} alt="" /> : <span className="mains-icon" />}
+                      <select
+                        aria-label={`Main for ${player.name}`}
+                        disabled={saving === player.playerId}
+                        value={player.main?.characterId ?? ''}
+                        onChange={(e) => choose(player, e.target.value)}
+                      >
+                        <option value="">— none —</option>
+                        {characters.map((character) => (
+                          <option key={character.id} value={character.id}>
+                            {character.name}
+                          </option>
+                        ))}
+                      </select>
+                    </span>
                   </li>
                 );
               })}

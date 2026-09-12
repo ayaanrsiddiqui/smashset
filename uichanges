@@ -31,7 +31,7 @@ Last updated: 2026-09-12, working top to bottom.
 
 ## Set list widget
 
-[ ] 18. Expanding shouldn't change which sets are shown. Currently the default shows only sets to
+[x] 18. Expanding shouldn't change which sets are shown. Currently the default shows only sets to
         be started and expanding adds in-progress ones at the top. It should always show all sets
         to be reported; expanding just gives more room and makes space for the mobile keyboard.
         Both states should be a consistent size that doesn't depend on the contents.
@@ -58,7 +58,7 @@ Last updated: 2026-09-12, working top to bottom.
 
 [x] 14. Make the arrows showing who won each game bigger.
 
-[ ] 15. Pressing Enter with incomplete data still opens the confirm dialog; the second Enter
+[x] 15. Pressing Enter with incomplete data still opens the confirm dialog; the second Enter
         correctly does nothing. The first Enter should show an error or highlight the
         "x of x wins" text instead.
 
@@ -70,7 +70,7 @@ Last updated: 2026-09-12, working top to bottom.
 
 ## Mains UI
 
-[ ] 19. Disorganized. The character icon should sit next to the character name, and the dropdown
+[x] 19. Disorganized. The character icon should sit next to the character name, and the dropdown
         and the text beside it currently say the same thing unless no character is associated with
         the player. Keep the extra text only when it's actually informative.
 
@@ -87,6 +87,15 @@ Last updated: 2026-09-12, working top to bottom.
 ---
 
 ## Notes / decisions / blockers
+
+**Flaky web tests, noted not fixed.** Two runs of `npm run verify` during this
+batch failed a single App test that passes on its own and in its own file
+immediately after (`leaves a dead end on screen as NOT REPORTED`, and earlier
+`keeps trying when the failure is one that might clear up`). Both drive the
+outbox on real timers, so they wait out a real backoff while the rest of the
+suite competes for the event loop. I gave two of them a 15s budget already;
+if it keeps happening the answer is probably to drive the drain loop with
+injected time rather than wall clock. Not chased further today.
 
 **10 (desktop space) — vertical condensing done, the modal is still open.**
 The report screen was using the plain centred 640px shell while the main screen

@@ -49,18 +49,30 @@ describe('MainsPanel', () => {
     expect([...document.querySelectorAll('.mains-name')].map((e) => e.textContent)).toEqual(['Ada', 'mudd', 'Newcomer']);
   });
 
-  it('distinguishes a known main, a confirmed absence, and a lookup just started', async () => {
+  it('says only what the dropdown beside it cannot', async () => {
+    // A character already on file is named by the dropdown, so repeating it
+    // here made every filled-in row say the same thing twice. The absences are
+    // the part worth a word, and "never looked" is not "looked and found
+    // nothing".
     renderPanel();
     await waitFor(() => expect(document.querySelectorAll('.mains-list li')).toHaveLength(3));
 
     expect([...document.querySelectorAll('.mains-list li')].map((li) => [
       li.querySelector('.mains-name')?.textContent,
-      li.querySelector('.mains-current')?.textContent,
+      li.querySelector('.mains-current')?.textContent ?? null,
     ])).toEqual([
-      ['Ada', 'Fox'],
+      ['Ada', null],
       ['mudd', 'no main found'],
       ['Newcomer', 'looking up…'],
     ]);
+  });
+
+  it('keeps the icon with the dropdown that names the character', async () => {
+    renderPanel();
+    await waitFor(() => expect(document.querySelectorAll('.mains-list li')).toHaveLength(3));
+
+    const ada = [...document.querySelectorAll('.mains-list li')].find((li) => li.textContent?.includes('Ada'));
+    expect(ada?.querySelector('.mains-pick img.mains-icon')).not.toBeNull();
   });
 
   it('saves the character a TO picks and shows it at once', async () => {
@@ -68,10 +80,12 @@ describe('MainsPanel', () => {
     fireEvent.change(await screen.findByLabelText('Main for Newcomer'), { target: { value: '200' } });
 
     await waitFor(() => expect(onSave).toHaveBeenCalledWith(13, 200));
-    // Reflected locally rather than on a refetch — the panel has no poll.
+    // Reflected locally rather than on a refetch — the panel has no poll. The
+    // dropdown is where the pick shows now, and the "looking up…" note goes.
     await waitFor(() => {
       const row = [...document.querySelectorAll('.mains-list li')].find((li) => li.textContent?.includes('Newcomer'));
-      expect(row?.querySelector('.mains-current')?.textContent).toBe('Falco');
+      expect((row?.querySelector('select') as HTMLSelectElement | null)?.value).toBe('200');
+      expect(row?.querySelector('.mains-current')).toBeNull();
     });
   });
 

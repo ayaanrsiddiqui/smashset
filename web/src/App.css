@@ -702,12 +702,22 @@
 
 .mains-list li {
   display: grid;
-  grid-template-columns: 24px minmax(0, 1fr) auto auto;
+  /* Name, then a note only some rows have, then the icon and dropdown as one
+     unit — the icon belongs beside the character it names, not at the far
+     left of a row about a player. */
+  grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 10px;
   padding: 8px 10px;
   border-radius: 8px;
   background: #1c1f27;
+}
+
+.mains-pick {
+  grid-column: 3;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .mains-icon {
@@ -1047,6 +1057,33 @@ kbd {
   flex-direction: column;
   align-items: center;
   gap: 2px;
+}
+
+/* Enter on a score that cannot be reported points here rather than opening a
+   confirmation it would refuse. */
+.score-display.nudge {
+  animation: score-nudge 0.45s ease;
+}
+
+.score-display.nudge .score-shortfall,
+.score-blocked {
+  color: #fca5a5;
+}
+
+.score-blocked {
+  font-size: 13px;
+}
+
+@keyframes score-nudge {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-5px); }
+  60% { transform: translateX(5px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .score-display.nudge {
+    animation: none;
+  }
 }
 
 .score-line {
@@ -2162,8 +2199,9 @@ kbd {
   min-height: 0;
 }
 
-/* Wide: dock right, full height. Collapsed only needs to be as tall as the
-   ready-to-start queue, so it stops short rather than covering the bracket. */
+/* Wide: dock right, full height. Collapsed stops short rather than covering
+   the bracket — a fixed height either way, so the panel does not resize itself
+   as sets are reported and the bracket behind it does not reflow with it. */
 @media (min-width: 901px) {
   .set-panel {
     top: 68px;
@@ -2174,7 +2212,7 @@ kbd {
 
   .set-panel.collapsed {
     bottom: auto;
-    max-height: min(46vh, 420px);
+    height: min(46vh, 420px);
   }
 
   /* Keeps the rightmost bracket column reachable instead of parked under the
@@ -2190,11 +2228,13 @@ kbd {
     left: 8px;
     right: 8px;
     bottom: 8px;
-    max-height: 62vh;
+    /* Fixed rather than max-height: expanding is for room and for the soft
+       keyboard, not a different amount of list. */
+    height: 62vh;
   }
 
   .set-panel.collapsed {
-    max-height: 40vh;
+    height: 40vh;
   }
 
   .bracket-stage {

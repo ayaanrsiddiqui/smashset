@@ -243,3 +243,57 @@ describe('ReportPanel — handing a report to the outbox', () => {
     expect(onQueue.mock.calls[0][0].confirmReset).toBeFalsy();
   });
 });
+
+/**
+ * Reporting an unfinished score is already refused, but Enter still opened the
+ * confirmation and the second Enter silently did nothing — so the screen said
+ * "confirm?" about something it had already decided it would not accept.
+ */
+describe('ReportPanel — Enter on a score that cannot be reported', () => {
+  const confirmRow = () => document.querySelector('.submit-confirm');
+  const nudge = () => document.querySelector('.score-display.nudge');
+  const blocked = () => document.querySelector('.score-blocked')?.textContent ?? null;
+
+  it('does not offer to confirm a score that is still unfinished', () => {
+    renderPanel('Grand Final'); // best of five
+    for (const key of ['w', 'w', 'Enter']) fireEvent.keyDown(window, { key });
+
+    expect(confirmRow()).toBeNull();
+  });
+
+  it('points at what is missing instead of doing nothing visible', () => {
+    renderPanel('Grand Final');
+    for (const key of ['w', 'w', 'Enter']) fireEvent.keyDown(window, { key });
+
+    expect(nudge()).not.toBeNull();
+    expect(document.querySelector('.score-shortfall')?.textContent).toContain('2 of 3 wins');
+  });
+
+  it('says to type a score when nothing has been entered at all', () => {
+    // Nothing typed means no shortfall line to point at, so the nudge needs
+    // something of its own to say.
+    renderPanel('Winners Round 1');
+    fireEvent.keyDown(window, { key: 'Enter' });
+
+    expect(blocked()).toMatch(/type a score/i);
+    expect(confirmRow()).toBeNull();
+  });
+
+  it('still confirms a score that is actually complete', () => {
+    renderPanel('Winners Round 1'); // best of three
+    for (const key of ['w', 'w', 'Enter']) fireEvent.keyDown(window, { key });
+
+    expect(confirmRow()).not.toBeNull();
+    expect(nudge()).toBeNull();
+  });
+
+  it('clears the nudge once the score is finished', () => {
+    renderPanel('Grand Final');
+    for (const key of ['w', 'w', 'Enter']) fireEvent.keyDown(window, { key });
+    expect(nudge()).not.toBeNull();
+
+    fireEvent.keyDown(window, { key: 'w' });
+
+    expect(nudge()).toBeNull();
+  });
+});

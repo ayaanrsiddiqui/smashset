@@ -459,8 +459,8 @@ describe('App — completed and not-ready sets on the bracket', () => {
 
     await screen.findByPlaceholderText(/winner's name/i);
     expect(container.querySelectorAll('.bracket-box')).toHaveLength(0);
-    // The panel collapses to its ready-to-start summary rather than vanishing.
-    expect(container.querySelector('.set-panel-summary')?.textContent).toMatch(/ready to start/i);
+    // The panel collapses to its summary rather than vanishing.
+    expect(container.querySelector('.set-panel-summary')?.textContent).toMatch(/to report/i);
     expect(container.querySelector('.set-panel')?.className).toContain('collapsed');
   });
 

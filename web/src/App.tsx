@@ -649,14 +649,18 @@ export default function App() {
   // Collapsed, the panel is a glance-able queue of what can be started right
   // now; expanded, it's the full search. Everything below — keyboard picks
   // included — targets whichever list is actually on screen.
-  const readyToStart = results.filter((s) => !s.isStarted && !s.isPreview);
+  // Every set still to be reported, in both panel states. Collapsing used to
+  // also filter out started sets, so expanding the panel changed what the list
+  // was *of* rather than just how much of it fit — and a set already underway,
+  // which is the one most likely to be reported next, was the thing hidden.
+  const toReport = results;
   // Completed mode is always a deliberate search, so the panel stays open.
   const panelExpanded = mode === 'completed' || searchFocused || query.trim().length > 0;
 
   const visibleRows: PanelRow[] =
     mode === 'completed'
       ? playerHistory.map((set) => ({ kind: 'completed' as const, set }))
-      : (panelExpanded ? results : readyToStart).map((set) => ({ kind: 'open' as const, set }));
+      : toReport.map((set) => ({ kind: 'open' as const, set }));
 
   // A query naming exactly one player pulls up that player's history, and the
   // top row is their latest set — so highlight it without waiting for an arrow
@@ -1004,7 +1008,7 @@ export default function App() {
         onSearchBlur={() => setSearchFocused(false)}
         onModeChange={showMode}
         error={loadError ?? bracketLoadError}
-        collapsedLabel={readyToStart.length === 1 ? '1 ready to start' : `${readyToStart.length} ready to start`}
+        collapsedLabel={toReport.length === 1 ? '1 set to report' : `${toReport.length} sets to report`}
       >
         {visibleRows.map((row, i) => {
           const active = showHighlight && i === highlight;
@@ -1072,7 +1076,7 @@ export default function App() {
               ? `No completed sets match "${query}"`
               : panelExpanded
                 ? `No open sets match "${query}"`
-                : 'Nothing ready to start'}
+                : 'Nothing left to report'}
           </li>
         )}
       </SetPanel>
