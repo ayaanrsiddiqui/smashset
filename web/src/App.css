@@ -1498,6 +1498,16 @@ kbd {
   justify-content: flex-end;
 }
 
+/* One height whatever is in it. The icon is taller than the "—" that stands in
+   for it, so sizing to the content made every row grow the moment a character
+   was entered — the list shuffling downwards under the cursor mid-report. The
+   row is built for the icon from the start instead, and the empty state simply
+   sits in the space it will occupy. */
+.game-stat-char .fuzzy-cell,
+.game-stat-char .fuzzy-cell-active input {
+  min-height: 74px;
+}
+
 .game-stat-char .fuzzy-cell {
   font-size: 20px;
   padding: 3px 12px;
@@ -2538,9 +2548,15 @@ kbd {
    wins, so the same block placed earlier does nothing at all. */
 
 /* A Bo5 is the tallest thing this screen ever has to show. On a short laptop
-   window the difference between fitting and scrolling is a handful of
-   paddings, so give them back rather than make a TO scroll mid-report. */
-@media (max-height: 820px) {
+   window the difference between fitting and scrolling is a handful of paddings
+   and the roomier game row, so give those back rather than make a TO scroll
+   mid-report.
+ *
+ * 870px is measured rather than picked: five 82px rows plus everything around
+ * them need ~600px of body, and the body comes out at roughly the window less
+ * 250px of chrome. Measured directly — 860 fits, 830 overflowed by 20 — so the
+ * switch sits a little above the crossover instead of exactly on it. */
+@media (max-height: 870px) {
   .report-overlay {
     padding: 6px;
   }
@@ -2577,6 +2593,15 @@ kbd {
 
   .game-stat-row {
     padding: 2px 10px;
+  }
+
+  /* Still one fixed height — just the smallest one that does not make the row
+     grow when an icon lands in it (56px icon + 3px padding + 2px border, both
+     sides), because a short window cannot afford the roomier row and still
+     show five games at once. */
+  .game-stat-char .fuzzy-cell,
+  .game-stat-char .fuzzy-cell-active input {
+    min-height: 66px;
   }
 }
 
