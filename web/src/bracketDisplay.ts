@@ -16,6 +16,20 @@ export function isOpenable(s: BracketSet): boolean {
   return !isNotReady(s);
 }
 
+/**
+ * A Grand Final Reset that is not going to be played (yet).
+ *
+ * The reset only happens if the losers-side player wins Grand Final, but
+ * start.gg puts the set in the bracket either way — so it renders a whole
+ * extra column reading "winner of P / loser of P" at every tournament,
+ * including the majority where no reset ever occurs. start.gg only advances
+ * entrants into it once the reset is genuinely reached, so having neither slot
+ * filled is the signal that there is nothing to show.
+ */
+export function isUnreachedGrandFinalReset(s: BracketSet): boolean {
+  return /reset/i.test(s.fullRoundText) && s.slots.every((slot) => slot.entrant === null);
+}
+
 export function isWinnerSlot(set: BracketSet, slot: BracketSlot): boolean {
   return set.winnerId !== null && slot.entrant?.id === set.winnerId;
 }

@@ -350,13 +350,18 @@
   justify-content: space-between;
   gap: 6px;
   height: 50%;
-  padding: 0 8px;
+  /* Extra room on the left: the identifier badge is centred on the box edge
+     and juts about 7px inside it, so an 8px pad left the tag touching it. */
+  padding: 0 8px 0 16px;
   font-size: 13px;
   color: #9aa0ac;
 }
 
+/* Lighter than the box border it used to share a colour with, which made it
+   all but invisible against the box fill and left the two rows looking like
+   one block of text. */
 .bracket-row:first-child {
-  border-bottom: 1px solid #2a2e38;
+  border-bottom: 1px solid #363c4a;
 }
 
 .bracket-row.winner {

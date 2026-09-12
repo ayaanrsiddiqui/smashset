@@ -29,6 +29,8 @@ const ALIAS_RULES: AliasRule[] = [
   // without this it'd only reach it via a much weaker subsequence match,
   // well behind "Robin". Paired with the priority rule below.
   { test: (n) => /^r\.?\s*o\.?\s*b\.?$/i.test(n), terms: ['rob'] },
+  // "alph" is Olimar's alt costume, and players call the character by it.
+  { test: (n) => /^olimar$/i.test(n), terms: ['alph'] },
 ];
 
 // When two characters tie on fuzzy score, the one with the lower priority

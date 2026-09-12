@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isNotReady, isOpenable, isWinnerSlot, priorResultFor, slotLabel, bracketSetById } from './bracketDisplay';
+import { bracketSetById, isNotReady, isOpenable, isUnreachedGrandFinalReset, isWinnerSlot, priorResultFor, slotLabel } from './bracketDisplay';
 import type { BracketSet, BracketSlot } from './types';
 
 function slot(entrantId: number | null, score: number | null = null, prereqSetId: string | null = null, prereqPlacement: 1 | 2 | null = null): BracketSlot {
@@ -114,5 +114,47 @@ describe('priorResultFor', () => {
       winnerScore: null,
       loserScore: null,
     });
+  });
+});
+
+describe('the Grand Final Reset that usually never happens', () => {
+  function resetSet(over: Partial<BracketSet> = {}): BracketSet {
+    return {
+      id: 1,
+      identifier: 'Q',
+      round: 6,
+      fullRoundText: 'Grand Final Reset',
+      state: 1,
+      winnerId: null,
+      lPlacement: null,
+      completedAt: null,
+      slots: [
+        { entrant: null, score: null, characterId: null, prereqSetId: 'P', prereqPlacement: 1, progressionOrigin: null },
+        { entrant: null, score: null, characterId: null, prereqSetId: 'P', prereqPlacement: 2, progressionOrigin: null },
+      ],
+      winnerAdvancesToPhase: null,
+      loserAdvancesToPhase: null,
+      ...over,
+    };
+  }
+
+  it('is hidden while nobody has been advanced into it', () => {
+    expect(isUnreachedGrandFinalReset(resetSet())).toBe(true);
+  });
+
+  it('appears as soon as the reset is actually reached', () => {
+    const filled = resetSet();
+    filled.slots[0] = { ...filled.slots[0], entrant: { id: 1, name: 'Ada' } };
+    filled.slots[1] = { ...filled.slots[1], entrant: { id: 2, name: 'mudd' } };
+
+    expect(isUnreachedGrandFinalReset(filled)).toBe(false);
+  });
+
+  it('leaves the Grand Final itself alone, which always happens', () => {
+    expect(isUnreachedGrandFinalReset(resetSet({ fullRoundText: 'Grand Final' }))).toBe(false);
+  });
+
+  it('leaves every other unplayed set alone — only the reset is conditional', () => {
+    expect(isUnreachedGrandFinalReset(resetSet({ fullRoundText: 'Losers Quarter-Final' }))).toBe(false);
   });
 });

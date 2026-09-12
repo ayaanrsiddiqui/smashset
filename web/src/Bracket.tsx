@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { layoutBracket, BOX_HEIGHT, BOX_WIDTH, LINK_WIDTH } from './bracketLayout';
-import { bracketSetById, isOpenable, isWinnerSlot, slotLabel } from './bracketDisplay';
+import { bracketSetById, isOpenable, isUnreachedGrandFinalReset, isWinnerSlot, slotLabel } from './bracketDisplay';
 import { compareIdentifiers } from './identifierOrder';
 import { anchoredScroll, clampZoom, fitZoom, MAX_ZOOM, MIN_ZOOM, zoomStep } from './bracketZoom';
 import type { BracketGroup, BracketSet, Character } from './types';
@@ -90,7 +90,12 @@ function BracketTree({
     () => new Map(characters.flatMap((c) => (c.imageUrl ? ([[c.id, c.imageUrl]] as [number, string][]) : []))),
     [characters]
   );
-  const layout = layoutBracket(sets);
+  // Dropped before layout, so the whole "Grand Final Reset" column goes with
+  // it rather than leaving an empty header behind.
+  const drawn = useMemo(() => sets.filter((s) => !isUnreachedGrandFinalReset(s)), [sets]);
+  const layout = layoutBracket(drawn);
+  // Kept over every set, not just the drawn ones: slotLabel resolves "winner
+  // of X" through this, and a hidden reset is still some other slot's prereq.
   const byId = bracketSetById(sets);
   const boxById = new Map(layout.boxes.map((b) => [String(b.set.id), b]));
   const focusedRef = useRef<HTMLDivElement | null>(null);
