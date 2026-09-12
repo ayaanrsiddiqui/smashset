@@ -25,6 +25,15 @@ interface Props {
   // leaving them blank. Both null/absent for a normal not-yet-reported set.
   priorResult?: PriorResult | null;
   priorDetail?: SetDetail | null;
+  // Who start.gg currently has as the winner, or null for a set nobody has
+  // reported. Compared against the winner being submitted to decide whether
+  // this report is a plain edit or a teardown — start.gg refuses to change a
+  // finished set's winner in place, so the two are not the same operation.
+  priorWinnerEntrantId?: number | null;
+  /** Identifiers of already-played sets a teardown would wipe; see resetCascade. */
+  resetCascade?: string[];
+  /** Later phases this set feeds, which the pool being viewed cannot show. */
+  advancesToPhases?: string[];
   characters: Character[];
   stages: Stage[];
   topXBo5: number | null;
@@ -71,6 +80,9 @@ export function ReportPanel({
   presumedWinnerId,
   priorResult,
   priorDetail,
+  priorWinnerEntrantId = null,
+  resetCascade = [],
+  advancesToPhases = [],
   characters,
   stages,
   topXBo5,
@@ -188,6 +200,23 @@ export function ReportPanel({
     parseError != null && displayGames.length > 0 && winnerGameCount < requiredWins
       ? `${winnerGameCount} of ${requiredWins} wins — Bo${requiredWins * 2 - 1} (press b to change)`
       : null;
+
+  // start.gg has no way to change a finished set's winner in place: the result
+  // is torn down and re-reported, and the teardown takes every set downstream
+  // with it. That is the only thing a TO can do from this screen that destroys
+  // work, so it is named at the moment of confirming rather than described up
+  // front where it would be read once and then scrolled past.
+  const isTeardown = priorWinnerEntrantId !== null && priorWinnerEntrantId !== winnerId;
+  const resetWarning = !isTeardown
+    ? null
+    : [
+        resetCascade.length > 0
+          ? `Clears this result and ${resetCascade.length} played set${resetCascade.length === 1 ? '' : 's'} after it: ${resetCascade.join(', ')}.`
+          : 'Clears this result on start.gg, then reports the new one.',
+        advancesToPhases.length > 0 ? `This set also feeds ${advancesToPhases.join(' and ')}.` : null,
+      ]
+        .filter((part): part is string => part !== null)
+        .join(' ');
 
   const effectiveRequiredWins = scoreSource === 'quick' && games ? submitRequiredWins : requiredWins;
   const maxRows = Math.max(requiredWins * 2 - 1, displayGames.length);
@@ -461,6 +490,9 @@ export function ReportPanel({
         // So every other TO watching this pool sees the result immediately,
         // rather than each of them polling start.gg to find out.
         phaseGroupId: phaseGroupId == null ? undefined : String(phaseGroupId),
+        // The server refuses a winner change outright without this, so the
+        // destructive path cannot be reached except through the warning above.
+        confirmReset: isTeardown,
       });
       onDone();
     } catch (err) {
@@ -1020,6 +1052,7 @@ export function ReportPanel({
 
       {mode.kind === 'confirmSubmit' ? (
         <div className="confirm-row submit-confirm" ref={confirmSubmitRef}>
+          {resetWarning && <p className="reset-warning">{resetWarning}</p>}
           <button
             className="confirm-yes"
             onClick={submit}

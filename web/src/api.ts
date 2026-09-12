@@ -181,6 +181,13 @@ export interface ReportPayload {
   stages?: StageSelection[];
   /** See startSet: a hint so other watchers hear about this immediately. */
   phaseGroupId?: string;
+  /**
+   * Acknowledges that this report changes who won a finished set, which
+   * start.gg can only do by clearing the result and everything downstream of
+   * it. The server refuses the change without it rather than defaulting to the
+   * destructive reading of an ambiguous request.
+   */
+  confirmReset?: boolean;
 }
 
 export function reportSet(payload: ReportPayload): Promise<{ result: unknown }> {

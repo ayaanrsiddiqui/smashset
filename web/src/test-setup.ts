@@ -44,6 +44,14 @@ if (typeof Element !== 'undefined' && typeof Element.prototype.scrollBy !== 'fun
   Element.prototype.scrollBy = function scrollBy() {};
 }
 
+// Same gap, and this one was load-bearing: ReportPanel scrolls its confirm row
+// into view the moment submission is confirmed, so every test that tried to
+// reach the submit path threw here instead. That is why the report path had no
+// client-side coverage at all until now.
+if (typeof Element !== 'undefined' && typeof Element.prototype.scrollIntoView !== 'function') {
+  Element.prototype.scrollIntoView = function scrollIntoView() {};
+}
+
 // jsdom has no EventSource, which the pool change stream needs. Installed as a
 // controllable stub so tests can open, deliver on, and drop the stream rather
 // than merely avoid the ReferenceError; see test-eventsource.ts.

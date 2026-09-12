@@ -400,6 +400,18 @@
   color: #f1f2f6;
 }
 
+.reset-warning {
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #3a1f1f;
+  border: 1px solid #f87171;
+  color: #fecaca;
+  font-size: 0.85rem;
+  line-height: 1.35;
+  text-align: left;
+}
+
 .toast {
   position: fixed;
   bottom: 24px;

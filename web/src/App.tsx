@@ -27,6 +27,7 @@ import {
 } from './api';
 import { fuzzyMatchSets } from './fuzzy';
 import { bracketSetById, priorResultFor } from './bracketDisplay';
+import { resetCascade } from './resetCascade';
 import type {
   AccountDetails,
   BracketGroup,
@@ -544,6 +545,12 @@ export default function App() {
   // always has — only an actual choice among several needs `revealed` first.
   const showHighlight = visibleRows.length <= 1 || revealed || soleMatchedPlayer;
 
+  // Declared above the early returns, and rendered by each screen that can
+  // actually raise one, because App returns from several places and the toast
+  // used to live only in the last of them — so everything ReportPanel said
+  // while it was open (a failed report, most of all) rendered nowhere at all.
+  const toastEl = toast && <div className={`toast toast-${toast.kind}`}>{toast.message}</div>;
+
   if (user === undefined) return <div className="settings-screen"><h1>SmashSet</h1></div>;
   if (user === null) return <SignIn />;
   if (!event) return <Settings onResolved={handleResolved} />;
@@ -596,6 +603,8 @@ export default function App() {
 
   if (pickingPool || (phaseGroups.length > 1 && phaseGroupId === null)) {
     return (
+      <>
+      {toastEl}
       <PoolPicker
         eventId={event.id}
         eventName={event.name}
@@ -603,6 +612,7 @@ export default function App() {
         onPicked={pickPool}
         onBack={phaseGroupId !== null ? () => setPickingPool(false) : backToEventPicker}
       />
+      </>
     );
   }
 
@@ -705,9 +715,21 @@ export default function App() {
     // there's no search match to go on.
     const selectedBracketSet = bracketById.get(String(selectedSet.id));
     const priorResult = selectedBracketSet ? priorResultFor(selectedBracketSet) : null;
+    // Only meaningful for a set start.gg already considers finished; for any
+    // other set there is no result to clear and nothing downstream to lose.
+    const decided = selectedBracketSet?.state === 3;
+    const wouldWipe = decided ? resetCascade(allBracketSets, selectedSet.id) : [];
+    // This pool is all the bracket poll fetches, so a set feeding a later phase
+    // reaches further than wouldWipe can see. Named rather than counted.
+    const advancesToPhases = decided
+      ? [...new Set([selectedBracketSet.winnerAdvancesToPhase, selectedBracketSet.loserAdvancesToPhase])].filter(
+          (phase): phase is string => phase !== null
+        )
+      : [];
 
     return (
       <div className="app-shell">
+        {toastEl}
         <ReportPanel
           // Remounts when the set changes so the score/character initializers
           // re-read priorDetail. Without it, clicking a second completed set
@@ -723,6 +745,9 @@ export default function App() {
           presumedWinnerId={matchedEntrantId(selectedSet) ?? selectedBracketSet?.winnerId ?? null}
           priorResult={priorResult}
           priorDetail={priorDetail}
+          priorWinnerEntrantId={decided ? selectedBracketSet.winnerId : null}
+          resetCascade={wouldWipe.map((s) => s.identifier)}
+          advancesToPhases={advancesToPhases}
           characters={characters}
           stages={stages}
           topXBo5={topX}
@@ -886,7 +911,7 @@ export default function App() {
         )}
       </SetPanel>
 
-      {toast && <div className={`toast toast-${toast.kind}`}>{toast.message}</div>}
+      {toastEl}
       {showHelp && <HelpModal onClose={() => setShowHelp(false)} />}
       {showMains && phaseGroupId !== null && (
         <MainsPanel

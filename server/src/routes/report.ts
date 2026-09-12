@@ -32,6 +32,13 @@ interface ReportBody {
    * return. Absent when an older client reports; they simply poll as before.
    */
   phaseGroupId?: string;
+  /**
+   * The TO has seen what tearing down this result will unmake and said yes.
+   * Only consulted when the winner is actually changing; the route refuses
+   * that outright without it, so the destructive path cannot be reached by a
+   * client that does not know it exists.
+   */
+  confirmReset?: boolean;
 }
 
 interface GameDataInput {
@@ -39,6 +46,73 @@ interface GameDataInput {
   winnerId: number;
   stageId?: number;
   selections?: { entrantId: number; characterId: number }[];
+}
+
+const COMPLETED_STATE = 3;
+
+/**
+ * What start.gg holds for this set right now, read before writing to it.
+ *
+ * Three separate reasons, none of which the client can supply — it has only
+ * what its last poll returned, which is however old the TO's typing took:
+ *
+ *  - reportBracketSet is refused outright on a finished set ("Cannot report
+ *    completed set via API.", verified live 2026-09-12), so which mutation to
+ *    send depends on state.
+ *  - a report naming someone who is not in the set writes its game rows before
+ *    failing validation and does not roll them back (also verified live),
+ *    leaving phantom games nothing in this app can clear.
+ *  - whether the winner is changing decides whether this is destructive.
+ */
+const SET_PRECONDITION_QUERY = /* GraphQL */ `
+  query ReportPrecondition($setId: ID!) {
+    set(id: $setId) {
+      id
+      state
+      winnerId
+      slots {
+        entrant {
+          id
+          name
+        }
+      }
+    }
+  }
+`;
+
+// Edits a finished set in place. Cannot change who won — start.gg answers
+// "Set winner cannot be changed with this function" — so it is only ever sent
+// when the winner is staying put.
+const UPDATE_MUTATION = /* GraphQL */ `
+  mutation UpdateSet($setId: ID!, $winnerId: ID!, $gameData: [BracketSetGameDataInput]) {
+    updateBracketSet(setId: $setId, winnerId: $winnerId, gameData: $gameData) {
+      id
+      state
+    }
+  }
+`;
+
+// The only way start.gg allows a finished set's winner to change. Cascading is
+// not optional in practice: the old winner has already advanced, and both the
+// winner's and the loser's paths carry that forward — verified live, resetting
+// one winners-round set also cleared the losers-bracket set its loser fell
+// into. Leaving those standing would contradict the result being written.
+const RESET_MUTATION = /* GraphQL */ `
+  mutation ResetSet($setId: ID!) {
+    resetSet(setId: $setId, resetDependentSets: true) {
+      id
+      state
+    }
+  }
+`;
+
+interface PreconditionResult {
+  set: {
+    id: number | string;
+    state: number;
+    winnerId: number | null;
+    slots: { entrant: { id: number; name: string } | null }[];
+  } | null;
 }
 
 const REPORT_MUTATION = /* GraphQL */ `
@@ -110,12 +184,78 @@ reportRouter.post('/', async (req, res) => {
 
   const gameData = buildGameData(body as ReportBody, games);
 
+  let current: PreconditionResult['set'];
   try {
-    const data = await gql(req.user!.accessToken, REPORT_MUTATION, {
+    ({ set: current } = await gql<PreconditionResult>(req.user!.accessToken, SET_PRECONDITION_QUERY, {
       setId: body.setId,
-      winnerId: body.winnerEntrantId,
-      gameData,
+    }));
+  } catch (err) {
+    res.status(502).json({ error: err instanceof Error ? err.message : 'Could not check this set before reporting it' });
+    return;
+  }
+  if (!current) {
+    res.status(404).json({ error: 'start.gg no longer has this set.' });
+    return;
+  }
+
+  const entrantIds = current.slots.map((slot) => slot.entrant?.id);
+  if (entrantIds.some((id) => id == null)) {
+    res.status(409).json({ error: "This set doesn't have both players yet on start.gg, so there's nothing to report against." });
+    return;
+  }
+  // Deliberately blocks rather than letting start.gg reject it: a report
+  // naming a non-entrant is the one rejection that writes before it validates.
+  if (!entrantIds.includes(body.winnerEntrantId) || !entrantIds.includes(body.loserEntrantId)) {
+    res.status(409).json({
+      error: 'This set is between different players on start.gg now — reopen it to see who, then report again.',
     });
+    return;
+  }
+
+  const alreadyDecided = current.state === COMPLETED_STATE;
+  const winnerChanged = alreadyDecided && String(current.winnerId) !== String(body.winnerEntrantId);
+  if (winnerChanged && body.confirmReset !== true) {
+    res.status(409).json({
+      error: 'Changing who won means clearing this result and everything it fed into. Confirm to go ahead.',
+      requiresReset: true,
+    });
+    return;
+  }
+
+  try {
+    let data;
+    if (winnerChanged) {
+      await gql(req.user!.accessToken, RESET_MUTATION, { setId: body.setId });
+      try {
+        data = await gql(req.user!.accessToken, REPORT_MUTATION, {
+          setId: body.setId,
+          winnerId: body.winnerEntrantId,
+          gameData,
+        });
+      } catch (err) {
+        // start.gg has no transaction across two mutations, so this really does
+        // leave the set with nothing on it. Saying "failed to report" would be
+        // true and useless — the TO would assume the old result still stands.
+        invalidateSetCaches();
+        if (typeof body.phaseGroupId === 'string') publishPoolChanged(body.phaseGroupId);
+        res.status(502).json({
+          error: `The old result was cleared but the new one didn't save (${err instanceof Error ? err.message : 'start.gg failed'}) — this set is unreported on start.gg now. Report it again.`,
+        });
+        return;
+      }
+    } else if (alreadyDecided) {
+      data = await gql(req.user!.accessToken, UPDATE_MUTATION, {
+        setId: body.setId,
+        winnerId: body.winnerEntrantId,
+        gameData,
+      });
+    } else {
+      data = await gql(req.user!.accessToken, REPORT_MUTATION, {
+        setId: body.setId,
+        winnerId: body.winnerEntrantId,
+        gameData,
+      });
+    }
     // Without this the set the TO just reported keeps coming back as open
     // until the cache expires, so it stays in the list they are working from.
     invalidateSetCaches();

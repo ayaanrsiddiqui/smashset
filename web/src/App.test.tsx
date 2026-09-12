@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { fetchAccount, fetchBracket, fetchCharacters, fetchOpenSets, fetchPhaseGroups, fetchPoolPlayers, fetchSetDetail, fetchStages, updatePlayerMain, updateTopXBo5 } from './api';
+import { fetchAccount, fetchBracket, fetchCharacters, fetchOpenSets, fetchPhaseGroups, fetchPoolPlayers, fetchSetDetail, fetchStages, reportSet, updatePlayerMain, updateTopXBo5 } from './api';
 import { apiFailure, flushTimers, resetApiDefaults, seedEvent, seedPool, TEST_EVENT } from './test-helpers';
 import type { BracketSet } from './types';
 import { openedEventSource, resetEventSources } from './test-eventsource';
@@ -33,6 +33,7 @@ vi.mock('./api', async (importOriginal) => ({
   fetchAccount: vi.fn().mockResolvedValue({ displayName: 'FireSlam23', startggSlug: null, topXBo5: null }),
   updateTopXBo5: vi.fn().mockResolvedValue({ topXBo5: null }),
   startSet: vi.fn(),
+  reportSet: vi.fn().mockResolvedValue({ result: {} }),
   updatePlayerMain: vi.fn().mockResolvedValue({ characterId: null }),
   fetchPoolPlayers: vi.fn().mockResolvedValue({ players: [], videogameId: 1386 }),
   poolEventsUrl: (id: number) => `/api/sets/phase-group/${id}/events`,
@@ -1235,5 +1236,71 @@ describe('App — setting a main by hand', () => {
       const row = [...document.querySelectorAll('.mains-list li')].find((li) => li.textContent?.includes('Ada'));
       expect(row?.querySelector('.mains-current')?.textContent).toBe('Fox');
     });
+  });
+});
+
+/**
+ * The report screen is its own early return (App.tsx), and the toast lives in
+ * the branch below it — so every message ReportPanel raised while it was open
+ * rendered nowhere. A TO whose report failed got no error, no toast and a
+ * panel that simply stayed put, which is CLAUDE.md's "a caught error that
+ * renders nowhere is worse than a crash", exactly.
+ */
+describe('App — a report that does not land', () => {
+  const OPEN_SET = {
+    id: 5001,
+    isPreview: false,
+    isStarted: false,
+    fullRoundText: 'Winners Round 1',
+    identifier: 'A',
+    lPlacement: null,
+    entrants: [
+      { id: 6001, name: 'Ada' },
+      { id: 6002, name: 'mudd' },
+    ],
+  };
+
+  beforeEach(() => {
+    localStorage.clear();
+    seedEvent();
+    seedPool();
+    resetApiDefaults();
+    resetEventSources();
+    fetchMeMock.mockResolvedValue({ user: { id: 1, displayName: 'FireSlam23' } });
+    vi.mocked(fetchOpenSets).mockResolvedValue({ sets: [OPEN_SET] });
+  });
+
+  afterEach(() => {
+    vi.mocked(reportSet).mockReset();
+    fetchMeMock.mockReset();
+  });
+
+  /** Opens the one set in the list and submits a 2-0 for Ada. */
+  async function reportIt() {
+    const { findByText } = screen;
+    await findByText(/Ada vs mudd/);
+    fireEvent.keyDown(window, { key: '1' });
+    await findByText(/Winners Round 1 · A/);
+    for (const key of ['w', 'w', 'Enter', 'Enter']) fireEvent.keyDown(window, { key });
+  }
+
+  it('tells the TO when the report failed, instead of leaving them on a silent panel', async () => {
+    vi.mocked(reportSet).mockRejectedValue(apiFailure(0, 'Timed out reaching the server. Check your connection.'));
+    render(<App />);
+    await reportIt();
+
+    expect(await screen.findByText(/Timed out reaching the server/)).toBeInTheDocument();
+    // Still on the report screen: nothing was reported, so there is nothing
+    // to go back to the list for.
+    expect(screen.getByText(/Winners Round 1 · A/)).toBeInTheDocument();
+  });
+
+  it('does not claim a set was reported when it was not', async () => {
+    vi.mocked(reportSet).mockRejectedValue(apiFailure(502, 'start.gg is down'));
+    render(<App />);
+    await reportIt();
+
+    expect(await screen.findByText(/start\.gg is down/)).toBeInTheDocument();
+    expect(screen.queryByText(/^Reported /)).not.toBeInTheDocument();
   });
 });

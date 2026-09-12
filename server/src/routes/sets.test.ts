@@ -146,6 +146,12 @@ describe('GET /phase-group/:phaseGroupId/open-sets — auto-main integration', (
         return Promise.resolve(openSetsFixture());
       }
       if (query.includes('PlayerMainHistory')) return Promise.resolve(emptyPlayerHistory());
+      // The report route reads the set before writing to it; see report.ts.
+      if (query.includes('ReportPrecondition')) {
+        return Promise.resolve({
+          set: { id: 5001, state: 2, winnerId: null, slots: [{ entrant: { id: 6001, name: 'A' } }, { entrant: { id: 6002, name: 'B' } }] },
+        });
+      }
       if (query.includes('ReportSet')) return Promise.resolve({ reportBracketSet: { id: 5001 } });
       throw new Error(`unexpected query in test: ${query}`);
     });

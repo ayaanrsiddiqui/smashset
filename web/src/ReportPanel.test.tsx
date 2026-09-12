@@ -1,6 +1,7 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render } from '@testing-library/react';
 import { ReportPanel } from './ReportPanel';
+import { reportSet } from './api';
 import type { OpenSet } from './types';
 
 vi.mock('./api', () => ({
@@ -23,12 +24,21 @@ function setFor(fullRoundText: string): OpenSet {
   };
 }
 
+interface Extra {
+  priorWinnerEntrantId?: number | null;
+  resetCascade?: string[];
+  advancesToPhases?: string[];
+}
+
 /** Grand Final is the one round guessRequiredWins reads as best-of-five. */
-function renderPanel(fullRoundText: string) {
+function renderPanel(fullRoundText: string, extra: Extra = {}) {
   render(
     <ReportPanel
       set={setFor(fullRoundText)}
       presumedWinnerId={10}
+      priorWinnerEntrantId={extra.priorWinnerEntrantId ?? null}
+      resetCascade={extra.resetCascade ?? []}
+      advancesToPhases={extra.advancesToPhases ?? []}
       characters={[]}
       stages={[]}
       topXBo5={null}
@@ -106,5 +116,77 @@ describe('ReportPanel — why the report button is disabled', () => {
   it('shows nothing before anything is typed', () => {
     renderPanel('Grand Final');
     expect(hint()).toBeNull();
+  });
+});
+
+/**
+ * start.gg will not change a finished set's winner in place — the result has
+ * to be torn down first, and tearing it down takes everything downstream with
+ * it (verified live). So this is the one thing a TO can do from a phone that
+ * destroys work, and it must never happen on a mis-tap.
+ */
+describe('ReportPanel — changing who won a set that is already decided', () => {
+  const confirm = () => {
+    for (const key of ['w', 'w', 'Enter']) fireEvent.keyDown(window, { key });
+  };
+  const warning = () => document.querySelector('.reset-warning')?.textContent?.replace(/\s+/g, ' ').trim() ?? null;
+
+  afterEach(() => {
+    vi.mocked(reportSet).mockClear();
+  });
+
+  it('names the already-played sets it will wipe', () => {
+    renderPanel('Winners Round 1', { priorWinnerEntrantId: 20, resetCascade: ['I', 'M'] });
+    confirm();
+
+    expect(warning()).toContain('I, M');
+  });
+
+  it('still warns when nothing downstream has been played, because the result itself goes', () => {
+    renderPanel('Winners Round 1', { priorWinnerEntrantId: 20, resetCascade: [] });
+    confirm();
+
+    expect(warning()).toMatch(/clear/i);
+  });
+
+  it('says where else this set reaches, which the pool view cannot show', () => {
+    renderPanel('Winners Round 1', { priorWinnerEntrantId: 20, resetCascade: [], advancesToPhases: ['Top 8'] });
+    confirm();
+
+    expect(warning()).toContain('Top 8');
+  });
+
+  it('says nothing when the winner on file is the one being reported', () => {
+    // Correcting only the score. start.gg edits that in place, so nothing is
+    // torn down and a warning here would just train the TO to ignore it.
+    renderPanel('Winners Round 1', { priorWinnerEntrantId: 10, resetCascade: ['I', 'M'] });
+    confirm();
+
+    expect(warning()).toBeNull();
+  });
+
+  it('says nothing for a set nobody has reported yet', () => {
+    renderPanel('Winners Round 1', { resetCascade: ['I', 'M'] });
+    confirm();
+
+    expect(warning()).toBeNull();
+  });
+
+  it('only asks the server to tear anything down once the TO has confirmed it', async () => {
+    renderPanel('Winners Round 1', { priorWinnerEntrantId: 20, resetCascade: ['I'] });
+    confirm();
+    fireEvent.keyDown(window, { key: 'Enter' });
+
+    await vi.waitFor(() => expect(vi.mocked(reportSet)).toHaveBeenCalled());
+    expect(vi.mocked(reportSet).mock.calls[0][0].confirmReset).toBe(true);
+  });
+
+  it('never sends confirmReset for an ordinary report', async () => {
+    renderPanel('Winners Round 1');
+    confirm();
+    fireEvent.keyDown(window, { key: 'Enter' });
+
+    await vi.waitFor(() => expect(vi.mocked(reportSet)).toHaveBeenCalled());
+    expect(vi.mocked(reportSet).mock.calls[0][0].confirmReset).toBeFalsy();
   });
 });
