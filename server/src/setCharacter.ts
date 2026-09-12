@@ -13,80 +13,50 @@ function characterIn(game: SetGame, entrantId: number): number | null {
   return game.selections.find((s) => s.entrantId === entrantId)?.characterId ?? null;
 }
 
-function tally(games: SetGame[], entrantId: number): Map<number, number> {
-  const counts = new Map<number, number>();
-  for (const game of games) {
-    const character = characterIn(game, entrantId);
-    if (character != null) counts.set(character, (counts.get(character) ?? 0) + 1);
-  }
-  return counts;
-}
-
 /**
- * The single most-frequent character, or null when several tie and nothing
- * separates them.
+ * The character to show first for an entrant in a completed set — the one that
+ * headlines the row when several are rendered beside it.
  *
- * `lastWon` breaks a tie: a player who split games between two characters and
- * closed with one of them was, for display purposes, playing that one.
- */
-function leader(counts: Map<number, number>, lastWon: number | null): number | null {
-  if (counts.size === 0) return null;
-  const best = Math.max(...counts.values());
-  const tied = [...counts].flatMap(([character, n]) => (n === best ? [character] : []));
-  if (tied.length === 1) return tied[0];
-  return lastWon != null && tied.includes(lastWon) ? lastWon : null;
-}
-
-/**
- * The one character to show beside an entrant's tag for a completed set.
+ * Simply whichever they played most. A set is not one character, because people
+ * counterpick, and it is tempting to headline whichever character won the set
+ * instead: pick Fox, Fox, Fox, Falco, Falco and it was the Falco that closed
+ * it. But position can only carry one fact, and the one a viewer decodes from
+ * it is how much of the set each character was. Headlining Falco there does not
+ * say "the counterpick won it" — nothing about being first says that — it says
+ * "mainly Falco", which is false. What won the set is a separate fact and wants
+ * a separate visual channel, not an overloaded sort order.
  *
- * A set is not one character: people counterpick. So rather than showing the
- * first or last pick, this asks which character the set should be credited to.
- *
- * For the winner that is their most-used character when the set also ended on
- * it, and otherwise whichever character actually won them games. The two
- * clauses pull apart in a reverse 3-0: picking C1/C1/C2/C2/C1 wins more games
- * on C2, but the set belongs to C1, which they played most and closed on —
- * while C1/C1/C1/C2/C2 belongs to the counterpick that finished the job.
- *
- * The loser is simply their most-used character. Neither clause above means
- * anything for them — they never won the last game, and crediting the one game
- * they might have stolen overstates it — so what they spent the set playing is
- * the safer answer.
+ * Being purely a count also means both players are read the same way, and that
+ * the character shown first is always one of the most-played — which a rule
+ * mixing in wins cannot promise.
  *
  * Returns null when start.gg carries no character data for the set, which is
  * common — plenty of TOs never report selections — so the caller must be able
  * to show nothing.
  */
-export function pickSetCharacter(games: SetGame[], entrantId: number, setWinnerId: number | null): number | null {
-  // start.gg does not promise play order, and "the last game" is meaningless
-  // if that is assumed.
-  const ordered = [...games].sort((a, b) => a.orderNum - b.orderNum);
-  const played = ordered.filter((game) => characterIn(game, entrantId) != null);
+export function pickSetCharacter(games: SetGame[], entrantId: number): number | null {
+  // start.gg does not promise play order, and the tie-break below is
+  // meaningless if that is assumed.
+  const played = [...games]
+    .sort((a, b) => a.orderNum - b.orderNum)
+    .filter((game) => characterIn(game, entrantId) != null);
   if (played.length === 0) return null;
 
-  const won = played.filter((game) => game.winnerId === entrantId);
-  const lastPick = characterIn(played[played.length - 1], entrantId);
-  const closedWith = entrantId === setWinnerId ? characterIn(ordered[ordered.length - 1], entrantId) : null;
-
-  const mostUsed = leader(tally(played, entrantId), closedWith);
-  if (entrantId !== setWinnerId) {
-    // Ties fall to wins and then to their last pick, so the icon still resolves
-    // to something rather than blinking out on an even split.
-    return mostUsed ?? leader(tally(won, entrantId), null) ?? lastPick;
+  const counts = new Map<number, number>();
+  for (const game of played) {
+    const character = characterIn(game, entrantId)!;
+    counts.set(character, (counts.get(character) ?? 0) + 1);
   }
 
-  if (closedWith != null && mostUsed === closedWith) return mostUsed;
+  const most = Math.max(...counts.values());
+  const tied = [...counts].flatMap(([character, n]) => (n === most ? [character] : []));
+  if (tied.length === 1) return tied[0];
 
-  // Deliberately not tie-broken by the closing character, though the most-used
-  // count above is. Letting it break here credits a set to whatever finished
-  // it whenever wins split evenly — which in a Bo3 is a single counterpick
-  // game outranking a main played twice and won on once, and in a Bo5 can make
-  // the primary a character played once while another was played three times.
-  // An even split means the games do not say, so fall back to play time.
-  const mostWins = leader(tally(won, entrantId), null);
-  // They won nothing, or their wins split evenly with nothing to break the
-  // tie: show what they played most, and failing that their last pick. Still
-  // an answer, because an icon that vanishes reads as missing data.
-  return mostWins ?? mostUsed ?? lastPick;
+  // An even split says nothing about which character the set was, so fall back
+  // to whichever of them they were playing by the end.
+  for (let i = played.length - 1; i >= 0; i--) {
+    const character = characterIn(played[i], entrantId)!;
+    if (tied.includes(character)) return character;
+  }
+  return tied[0];
 }
