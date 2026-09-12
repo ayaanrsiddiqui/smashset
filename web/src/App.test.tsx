@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { StrictMode } from 'react';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { fetchAccount, fetchBracket, fetchCharacters, fetchOpenSets, fetchPhaseGroups, fetchPoolPlayers, fetchSetDetail, fetchStages, reportSet, updatePlayerMain, updateTopXBo5 } from './api';
 import { apiFailure, flushTimers, resetApiDefaults, seedEvent, seedPool, TEST_EVENT } from './test-helpers';
@@ -133,7 +133,7 @@ describe('App — sign-in gate', () => {
 
     // Sign out lives inside the account modal now, alongside the other
     // account-management controls — open it first.
-    await userEvent.click(await screen.findByRole('button', { name: 'Account' }));
+    await userEvent.click(await screen.findByRole('button', { name: /account/i }));
     const signOutBtn = await screen.findByRole('button', { name: 'sign out' });
     await userEvent.click(signOutBtn);
 
@@ -199,10 +199,11 @@ describe('App — account modal', () => {
   it('shows the signed-in account\'s name, profile link, and preferences, then closes', async () => {
     render(<App />);
 
-    await userEvent.click(await screen.findByRole('button', { name: 'Account' }));
+    await userEvent.click(await screen.findByRole('button', { name: /account/i }));
 
-    expect(await screen.findByRole('dialog', { name: 'Account' })).toBeInTheDocument();
-    expect(screen.getByText('FireSlam23')).toBeInTheDocument();
+    const dialog = await screen.findByRole('dialog', { name: 'Account' });
+    // Scoped to the dialog: the header chip shows the same name now.
+    expect(within(dialog).getByText('FireSlam23')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /start\.gg profile/i })).toHaveAttribute(
       'href',
       'https://www.start.gg/user/abc'
@@ -214,7 +215,7 @@ describe('App — account modal', () => {
 
   it('saves a changed Top X preference through the API', async () => {
     render(<App />);
-    await userEvent.click(await screen.findByRole('button', { name: 'Account' }));
+    await userEvent.click(await screen.findByRole('button', { name: /account/i }));
 
     const input = await screen.findByLabelText(/top/i);
     await userEvent.type(input, '17');
@@ -722,7 +723,7 @@ describe('App — session teardown', () => {
     await vi.advanceTimersByTimeAsync(12000);
     expect(fetchOpenSetsMock.mock.calls.length).toBeGreaterThan(before);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Account' }));
+    fireEvent.click(screen.getByRole('button', { name: /account/i }));
     await flushTimers();
     fireEvent.click(screen.getByRole('button', { name: 'sign out' }));
     await flushTimers();
@@ -741,7 +742,7 @@ describe('App — session teardown', () => {
     render(<App />);
 
     await screen.findByPlaceholderText(/winner's name/i);
-    await user.click(screen.getByRole('button', { name: 'Account' }));
+    await user.click(screen.getByRole('button', { name: /account/i }));
     await user.click(await screen.findByRole('button', { name: /sign out/i }));
     await screen.findByRole('button', { name: /sign in with start\.gg/i });
 

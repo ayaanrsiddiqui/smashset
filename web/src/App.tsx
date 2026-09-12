@@ -9,6 +9,7 @@ import { AccountModal } from './AccountModal';
 import { Bracket } from './Bracket';
 import { SetPanel } from './SetPanel';
 import { MainsPanel } from './MainsPanel';
+import { AppHeader } from './AppHeader';
 import { OutboxStrip } from './OutboxStrip';
 import { allEntries, clearOutbox, drainOnce, enqueue, remove as dropFromOutbox, retryNow, subscribe as subscribeToOutbox } from './outbox';
 import {
@@ -698,6 +699,28 @@ export default function App() {
     />
   );
 
+  /**
+   * The bar is identical on the search screen and the report screen, so it is
+   * built once — a set opened for reporting still has to say which tournament,
+   * which pool and which account it is about to go out under.
+   */
+  function headerFor(currentEvent: EventInfo, pools: PhaseGroupSummary[], poolId: number | null) {
+    const pool = pools.find((pg) => pg.id === poolId);
+    return (
+      <AppHeader
+        eventName={currentEvent.name}
+        poolName={pools.length > 1 && pool ? `${pool.phaseName} ${pool.displayIdentifier}` : null}
+        accountName={user?.displayName ?? ''}
+        canSwitchPool={pools.length > 1}
+        onHelp={() => setShowHelp(true)}
+        onMains={() => setShowMains(true)}
+        onAccount={() => setShowAccount(true)}
+        onSwitchPool={() => setPickingPool(true)}
+        onSwitchEvent={backToEventPicker}
+      />
+    );
+  }
+
   /** Hands a finished report to the outbox and gives the TO the screen back. */
   function queueReport(payload: ReportPayload, label: string) {
     enqueue(payload, label, Date.now());
@@ -899,9 +922,10 @@ export default function App() {
     const priorResult = selectedBracketSet ? priorResultFor(selectedBracketSet) : null;
 
     return (
-      <div className="app-shell">
+      <div className="app-shell unified">
         {outboxEl}
         {toastEl}
+        {headerFor(event, phaseGroups, phaseGroupId)}
         <ReportPanel
           // Remounts when the set changes so the score/character initializers
           // re-read priorDetail. Without it, clicking a second completed set
@@ -949,46 +973,7 @@ export default function App() {
   return (
     <div className="app-shell unified">
       {outboxEl}
-      <header className="app-header">
-        <span className="event-name">{event.name}</span>
-        <div className="header-controls">
-          <button
-            type="button"
-            className="help-trigger"
-            onClick={() => setShowHelp(true)}
-            title="Notation guide"
-            aria-label="Notation guide"
-          >
-            ?
-          </button>
-          <button
-            type="button"
-            className="help-trigger"
-            onClick={() => setShowMains(true)}
-            title="Player mains"
-            aria-label="Player mains"
-          >
-            ☺
-          </button>
-          <button
-            type="button"
-            className="help-trigger"
-            onClick={() => setShowAccount(true)}
-            title="Account"
-            aria-label="Account"
-          >
-            ⚙
-          </button>
-          {phaseGroups.length > 1 && (
-            <button className="settings-link" onClick={() => setPickingPool(true)}>
-              switch pool
-            </button>
-          )}
-          <button className="settings-link" onClick={backToEventPicker}>
-            switch event
-          </button>
-        </div>
-      </header>
+      {headerFor(event, phaseGroups, phaseGroupId)}
 
       <div className="bracket-stage">
         <Bracket
