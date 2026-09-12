@@ -1,0 +1,266 @@
+{
+  "$comment": [
+    "Shared behaviour fixture for the score shorthand parser, read by BOTH",
+    "web/src/scoreParser.test.ts and server/src/scoreParser.test.ts.",
+    "",
+    "The two parseScoreShorthand implementations are byte-identical copies, and",
+    "nothing stops them drifting. Pointing both test suites at this one file is",
+    "what makes a divergence fail rather than go unnoticed. A TO cannot recover",
+    "a score that was reported wrong, so this is the code where equivalence has",
+    "to be provable rather than assumed.",
+    "",
+    "'games' is one character per game from the SET WINNER's perspective: W = the",
+    "set winner won that game, L = they lost it. 'errorContains' pins which",
+    "rejection fires, not its exact prose.",
+    "",
+    "'fn' says which function a case applies to, so a suite can run only the",
+    "cases its copy actually exports."
+  ],
+  "cases": [
+    {
+      "name": "sweep: + is a clean bo3 win",
+      "fn": "parseScoreShorthand",
+      "input": "+",
+      "requiredWins": 2,
+      "games": "WW"
+    },
+    {
+      "name": "sweep: + is a clean bo5 win — the same input sized by requiredWins",
+      "fn": "parseScoreShorthand",
+      "input": "+",
+      "requiredWins": 3,
+      "games": "WWW"
+    },
+    {
+      "name": "sweep: 0 is the same sweep as +",
+      "fn": "parseScoreShorthand",
+      "input": "0",
+      "requiredWins": 3,
+      "games": "WWW"
+    },
+    {
+      "name": "sweep: a bare - is a sweep, NOT loss-mode with no digits",
+      "fn": "parseScoreShorthand",
+      "input": "-",
+      "requiredWins": 3,
+      "games": "WWW"
+    },
+
+    {
+      "name": "win-list: 124 is a bo5 3-1, and says so without needing requiredWins",
+      "fn": "parseScoreShorthand",
+      "input": "124",
+      "requiredWins": 3,
+      "games": "WWLW"
+    },
+    {
+      "name": "win-list: 12 is a bo3 2-0",
+      "fn": "parseScoreShorthand",
+      "input": "12",
+      "requiredWins": 2,
+      "games": "WW"
+    },
+    {
+      "name": "win-list: 13 is a bo3 2-1",
+      "fn": "parseScoreShorthand",
+      "input": "13",
+      "requiredWins": 2,
+      "games": "WLW"
+    },
+
+    {
+      "name": "loss form: -3 is a bo5 3-1 — the same set as 124 and WWLW",
+      "fn": "parseScoreShorthand",
+      "input": "-3",
+      "requiredWins": 3,
+      "games": "WWLW"
+    },
+    {
+      "name": "loss form: -1 is a bo3 2-1 with the loss first",
+      "fn": "parseScoreShorthand",
+      "input": "-1",
+      "requiredWins": 2,
+      "games": "LWW"
+    },
+    {
+      "name": "loss form: -2 places the loss mid-set",
+      "fn": "parseScoreShorthand",
+      "input": "-2",
+      "requiredWins": 3,
+      "games": "WLWW"
+    },
+    {
+      "name": "loss form: -12 is a bo5 3-2",
+      "fn": "parseScoreShorthand",
+      "input": "-12",
+      "requiredWins": 3,
+      "games": "LLWWW"
+    },
+
+    {
+      "name": "sequence: WWLW is a bo5 3-1 — the same set as 124 and -3",
+      "fn": "parseScoreShorthand",
+      "input": "WWLW",
+      "requiredWins": 3,
+      "games": "WWLW"
+    },
+    {
+      "name": "sequence: lowercase is accepted, since it is typed at speed",
+      "fn": "parseScoreShorthand",
+      "input": "wwlw",
+      "requiredWins": 3,
+      "games": "WWLW"
+    },
+    {
+      "name": "sequence: WLW is a bo3 2-1",
+      "fn": "parseScoreShorthand",
+      "input": "WLW",
+      "requiredWins": 2,
+      "games": "WLW"
+    },
+
+    {
+      "name": "surrounding whitespace is ignored",
+      "fn": "parseScoreShorthand",
+      "input": " 124 ",
+      "requiredWins": 3,
+      "games": "WWLW"
+    },
+
+    {
+      "name": "rejects empty input",
+      "fn": "parseScoreShorthand",
+      "input": "",
+      "requiredWins": 3,
+      "errorContains": "Enter a score"
+    },
+    {
+      "name": "rejects whitespace-only input the same way",
+      "fn": "parseScoreShorthand",
+      "input": "   ",
+      "requiredWins": 3,
+      "errorContains": "Enter a score"
+    },
+    {
+      "name": "rejects non-ascending game numbers — 121 cannot be a set",
+      "fn": "parseScoreShorthand",
+      "input": "121",
+      "requiredWins": 3,
+      "errorContains": "strictly increasing"
+    },
+    {
+      "name": "rejects a repeated game number",
+      "fn": "parseScoreShorthand",
+      "input": "11",
+      "requiredWins": 3,
+      "errorContains": "strictly increasing"
+    },
+    {
+      "name": "rejects 0 as a game number — games are 1-indexed",
+      "fn": "parseScoreShorthand",
+      "input": "10",
+      "requiredWins": 3,
+      "errorContains": "Use digits 1-9"
+    },
+    {
+      "name": "rejects a loss form with a 0 in it",
+      "fn": "parseScoreShorthand",
+      "input": "-0",
+      "requiredWins": 3,
+      "errorContains": "Use digits 1-9"
+    },
+    {
+      "name": "rejects a double minus",
+      "fn": "parseScoreShorthand",
+      "input": "--3",
+      "requiredWins": 3,
+      "errorContains": "Use digits 1-9"
+    },
+    {
+      "name": "rejects letters that are not w or l",
+      "fn": "parseScoreShorthand",
+      "input": "abc",
+      "requiredWins": 3,
+      "errorContains": "Use digits 1-9"
+    },
+    {
+      "name": "rejects a sequence that does not end in a win for the set winner",
+      "fn": "parseScoreShorthand",
+      "input": "WWL",
+      "requiredWins": 3,
+      "errorContains": "last game of the set has to be a win"
+    },
+    {
+      "name": "rejects a loss form whose final game would be the loss",
+      "fn": "parseScoreShorthand",
+      "input": "-3",
+      "requiredWins": 2,
+      "errorContains": "last game of the set has to be a win"
+    },
+    {
+      "name": "rejects a loss on the game after the winner already clinched",
+      "fn": "parseScoreShorthand",
+      "input": "-4",
+      "requiredWins": 3,
+      "errorContains": "last game of the set has to be a win"
+    },
+    {
+      "name": "rejects the winner taking more games than the set can contain",
+      "fn": "parseScoreShorthand",
+      "input": "1234",
+      "requiredWins": 3,
+      "errorContains": "ends the moment someone reaches"
+    },
+    {
+      "name": "rejects a bo3 win-list that only fits a bo5",
+      "fn": "parseScoreShorthand",
+      "input": "124",
+      "requiredWins": 2,
+      "errorContains": "ends the moment someone reaches"
+    },
+    {
+      "name": "rejects a sequence continuing past the winner's clinch",
+      "fn": "parseScoreShorthand",
+      "input": "WWW",
+      "requiredWins": 2,
+      "errorContains": "ends the moment someone reaches"
+    },
+    {
+      "name": "rejects the loser reaching requiredWins — they would have won the set",
+      "fn": "parseScoreShorthand",
+      "input": "-12",
+      "requiredWins": 2,
+      "errorContains": "ends the moment someone reaches"
+    },
+    {
+      "name": "rejects a sequence giving the loser requiredWins",
+      "fn": "parseScoreShorthand",
+      "input": "LLW",
+      "requiredWins": 2,
+      "errorContains": "ends the moment someone reaches"
+    },
+
+    {
+      "$comment": "The three below pin CURRENT behaviour, and it is arguably wrong: each describes a set the winner has not actually won yet. parseScoreShorthand bounds only the upper side — nobody may exceed requiredWins — and never requires the winner to reach it. They are recorded so that changing it is a deliberate edit to this file rather than a silent behaviour change.",
+      "name": "known gap: accepts a bo3 1-0, which is not a finished set",
+      "fn": "parseScoreShorthand",
+      "input": "W",
+      "requiredWins": 2,
+      "games": "W"
+    },
+    {
+      "name": "known gap: accepts a bo3 1-1, which is not a finished set",
+      "fn": "parseScoreShorthand",
+      "input": "LW",
+      "requiredWins": 2,
+      "games": "LW"
+    },
+    {
+      "name": "known gap: accepts a bo5 2-0, which is not a finished set",
+      "fn": "parseScoreShorthand",
+      "input": "WW",
+      "requiredWins": 3,
+      "games": "WW"
+    }
+  ]
+}
