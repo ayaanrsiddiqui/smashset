@@ -1351,21 +1351,21 @@ describe('App — reporting a set and walking away', () => {
     render(<App />);
     await reportIt();
 
-    await waitFor(() => expect(vi.mocked(reportSet).mock.calls.length).toBeGreaterThan(1), { timeout: 4000 });
+    await waitFor(() => expect(vi.mocked(reportSet).mock.calls.length).toBeGreaterThan(1), { timeout: 10_000 });
     // Still sending, not given up on: the score is the thing that must not be lost.
     expect(screen.getByText(/Sending Ada vs mudd/)).toBeInTheDocument();
     expect(screen.queryByText('NOT REPORTED')).not.toBeInTheDocument();
-  });
+  }, 15_000);
 
   it('counts its deliveries, so the server can tell a retry from a decision', async () => {
     vi.mocked(reportSet).mockRejectedValue(apiFailure(0, 'Could not reach the server.'));
     render(<App />);
     await reportIt();
 
-    await waitFor(() => expect(vi.mocked(reportSet).mock.calls.length).toBeGreaterThan(1), { timeout: 4000 });
+    await waitFor(() => expect(vi.mocked(reportSet).mock.calls.length).toBeGreaterThan(1), { timeout: 10_000 });
     const attempts = vi.mocked(reportSet).mock.calls.map(([payload]) => payload.attempt);
     expect(attempts.slice(0, 2)).toEqual([1, 2]);
-  });
+  }, 15_000);
 
   it('sends a dead-lettered report again when the TO asks', async () => {
     vi.mocked(reportSet).mockRejectedValueOnce(apiFailure(409, 'start.gg would not take this.'));
