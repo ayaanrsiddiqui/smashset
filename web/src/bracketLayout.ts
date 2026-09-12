@@ -14,10 +14,21 @@ const SECTION_GAP = 48;
 export const LINK_WIDTH = 168;
 
 export interface PhaseLink {
-  slotIndex: 0 | 1;
   side: 'left' | 'right';
   label: string;
+  /**
+   * Where the stub leaves the box, as a fraction of its height. A left link
+   * belongs to one slot, so it sits on that slot's half. A right link belongs
+   * to the set — nothing about it is per-slot — so it centres, unless the
+   * winner and the loser go to different phases and there are two to tell
+   * apart.
+   */
+  at: number;
 }
+
+const TOP_SLOT = 0.25;
+const BOTTOM_SLOT = 0.75;
+const WHOLE_BOX = 0.5;
 
 export interface LayoutBox {
   set: BracketSet;
@@ -61,26 +72,34 @@ function leftLinksFor(s: BracketSet): PhaseLink[] {
   s.slots.forEach((slot, slotIndex) => {
     if (!slot.progressionOrigin) return;
     const { phaseName, poolName } = slot.progressionOrigin;
-    links.push({ slotIndex: slotIndex as 0 | 1, side: 'left', label: poolName ? `${phaseName} ${poolName}` : phaseName });
+    links.push({
+      side: 'left',
+      at: slotIndex === 0 ? TOP_SLOT : BOTTOM_SLOT,
+      label: poolName ? `${phaseName} ${poolName}` : phaseName,
+    });
   });
   return links;
 }
 
 // A last-column set's winner/loser advancing into a later phase (a pool's
-// terminal matches), if any. Only rendered once the set is actually
-// decided — winnerProgressionSeed/loserProgressionSeed are structural
-// (set up whenever the bracket/pools are generated) and can be present
-// before the match is played, but which physical slot ends up "the
-// winner" isn't known until it is, so there's nothing correct to attach
-// the label to before then.
+// terminal matches), if any.
+//
+// This used to wait for the set to be decided, on the reasoning that until
+// then there is no slot to attach the label to. The premise was wrong: the
+// link belongs to the *set* ("whoever wins this goes to top 8"), not to a
+// slot, so there is nothing to wait for — and start.gg draws it on unplayed
+// sets, verified against its own render of fireslam23test's HUGE bracket,
+// where all four qualifying sets carry "top 8" while still undecided. Waiting
+// also hid it exactly when a TO wants it: before the set is played.
 function rightLinksFor(s: BracketSet): PhaseLink[] {
-  if (s.winnerId === null) return [];
   const links: PhaseLink[] = [];
-  s.slots.forEach((slot, slotIndex) => {
-    const isWinner = slot.entrant?.id === s.winnerId;
-    const advancesTo = isWinner ? s.winnerAdvancesToPhase : s.loserAdvancesToPhase;
-    if (advancesTo) links.push({ slotIndex: slotIndex as 0 | 1, side: 'right', label: `${advancesTo} [${isWinner ? 'W' : 'L'}]` });
-  });
+  const both = s.winnerAdvancesToPhase !== null && s.loserAdvancesToPhase !== null;
+  if (s.winnerAdvancesToPhase) {
+    links.push({ side: 'right', at: both ? TOP_SLOT : WHOLE_BOX, label: `${s.winnerAdvancesToPhase} [W]` });
+  }
+  if (s.loserAdvancesToPhase) {
+    links.push({ side: 'right', at: both ? BOTTOM_SLOT : WHOLE_BOX, label: `${s.loserAdvancesToPhase} [L]` });
+  }
   return links;
 }
 

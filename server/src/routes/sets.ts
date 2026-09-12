@@ -777,6 +777,44 @@ const CASCADE_QUERY = /* GraphQL */ `
   }
 `;
 
+/**
+ * Where each of a phase group's seeds came from, when it is fed by an earlier
+ * phase.
+ *
+ * Deliberately its own query rather than a field on BRACKET_STRUCTURE_QUERY.
+ * That one is paged, so seeds would be re-fetched once per page, and worse,
+ * fetchSetsPaged derives cost-per-set from (complexity - base) — a constant
+ * block of seed objects would be charged to the sets and shrink every later
+ * page for no reason.
+ *
+ * Measured against fireslam23test: 32 complexity for the 8-seed "top 8"
+ * phase, ~116 for a 58-seed pool. It runs once per structure-cache refresh
+ * (60s), not per page and not per bracket poll.
+ */
+const PHASE_GROUP_SEEDS_QUERY = /* GraphQL */ `
+  query PhaseGroupSeedOrigins($phaseGroupId: ID!, $perPage: Int!) {
+    phaseGroup(id: $phaseGroupId) {
+      id
+      seeds(query: { perPage: $perPage }) {
+        pageInfo {
+          total
+        }
+        nodes {
+          id
+          progressionSource {
+            originPhase {
+              name
+            }
+            originPhaseGroup {
+              displayIdentifier
+            }
+          }
+        }
+      }
+    }
+  }
+`;
+
 export const COST_MODEL = {
   budget: COMPLEXITY_BUDGET,
   cap: 1000, // start.gg's own hard limit, which `budget` stays under
@@ -884,6 +922,9 @@ const bracketCache = new Map<string, { at: number; result: BracketGroup | null }
 // and barely changes. Shared across users: unlike the caches above this holds
 // no entrant or result data, only which phase a slot came from or goes to.
 const structureCache = new Map<string, { at: number; result: Map<string, RawStructureSet> }>();
+// seedId -> where that seed progressed in from. Empty for a phase nothing
+// feeds, which is most of them.
+const seedOriginCache = new Map<string, { at: number; result: Map<string, ProgressionOrigin> }>();
 
 // The worst per-set cost actually seen, per query and phase group. start.gg
 // reports what every response cost, so this is a measurement rather than an
@@ -956,6 +997,78 @@ export async function fetchSetsPaged<N, H>(
       perPage = Math.max(1, Math.min(pageSizeFor(cost.base, measured), perPage - 1));
     }
   }
+}
+
+interface ProgressionOrigin {
+  phaseName: string;
+  poolName: string | null;
+}
+
+interface RawSeedPage {
+  phaseGroup: {
+    seeds: {
+      pageInfo: { total: number | null };
+      nodes: {
+        id: number | string;
+        progressionSource: { originPhase: { name: string } | null; originPhaseGroup: { displayIdentifier: string } | null } | null;
+      }[];
+    } | null;
+  } | null;
+}
+
+// Enough for any phase fed by earlier ones: a top 8 has 8, a top 48 has 48.
+// A first-round pool can hold more, but none of its seeds carry an origin, so
+// a short page there costs nothing that was ever going to be shown.
+const SEED_ORIGIN_PAGE = 64;
+
+/**
+ * A slot that no set feeds yet has `seed: null` on the set itself — start.gg
+ * only attaches the seed once somebody is actually in it. So the origin of an
+ * unfilled slot has to be read off the phase group's own seed list and matched
+ * back by the slot's prereqId, which is the seed's id whenever prereqType is
+ * "seed". Without this the left-hand links only ever appeared after the pools
+ * feeding them had already finished, which is the moment they stop being
+ * useful.
+ */
+async function fetchSeedOrigins(accessToken: string, phaseGroupId: string): Promise<Map<string, ProgressionOrigin>> {
+  const cached = seedOriginCache.get(phaseGroupId);
+  if (cached && Date.now() - cached.at < STRUCTURE_CACHE_TTL_MS) return cached.result;
+
+  const byId = new Map<string, ProgressionOrigin>();
+  try {
+    const { data } = await gqlWithCost<RawSeedPage>(accessToken, PHASE_GROUP_SEEDS_QUERY, {
+      phaseGroupId,
+      perPage: SEED_ORIGIN_PAGE,
+    });
+    const total = data.phaseGroup?.seeds?.pageInfo?.total ?? 0;
+    if (total > SEED_ORIGIN_PAGE) {
+      // Not paged on purpose — a phase with this many seeds is a first-round
+      // pool, where none of them carry an origin and there is nothing to show.
+      // Say so rather than quietly labelling only some of the slots.
+      console.warn(
+        `[bracket] phaseGroup ${phaseGroupId} has ${total} seeds; only the first ${SEED_ORIGIN_PAGE} are checked for a cross-phase origin`
+      );
+    }
+    for (const seed of data.phaseGroup?.seeds?.nodes ?? []) {
+      const origin = seed.progressionSource;
+      if (!origin?.originPhase) continue;
+      byId.set(String(seed.id), {
+        phaseName: origin.originPhase.name,
+        poolName: origin.originPhaseGroup?.displayIdentifier ?? null,
+      });
+    }
+  } catch (err) {
+    // Same rule as the structure fetch: these links are decoration on a
+    // bracket that reads correctly without them, so keep the last good answer
+    // and cache the failure so an outage costs one attempt a minute.
+    console.error(`[bracket] seed origin lookup failed for phaseGroup ${phaseGroupId}:`, err);
+    const fallback = cached?.result ?? new Map<string, ProgressionOrigin>();
+    seedOriginCache.set(phaseGroupId, { at: Date.now(), result: fallback });
+    return fallback;
+  }
+
+  seedOriginCache.set(phaseGroupId, { at: Date.now(), result: byId });
+  return byId;
 }
 
 async function fetchBracketStructure(accessToken: string, phaseGroupId: string): Promise<Map<string, RawStructureSet>> {
@@ -1065,7 +1178,10 @@ async function fetchBracketData(accessToken: string, userId: number, phaseGroupI
     return null;
   }
 
-  const structure = await fetchBracketStructure(accessToken, phaseGroupId);
+  const [structure, seedOrigins] = await Promise.all([
+    fetchBracketStructure(accessToken, phaseGroupId),
+    fetchSeedOrigins(accessToken, phaseGroupId),
+  ]);
 
   // Games exist only once a set is finished, and then never move unless it is
   // corrected — which changes its winner or score, and so its fingerprint. In
@@ -1114,9 +1230,12 @@ async function fetchBracketData(accessToken: string, userId: number, phaseGroupI
         characterId: slot.entrant ? (characters[slot.entrant.id] ?? null) : null,
         prereqSetId: slot.prereqType === 'set' ? slot.prereqId : null,
         prereqPlacement: slot.prereqPlacement === 1 || slot.prereqPlacement === 2 ? slot.prereqPlacement : null,
+        // The filled-in seed first, then the phase group's seed list for a
+        // slot still waiting on an upstream pool — the second is the only one
+        // that answers before that pool has finished.
         progressionOrigin: origin?.originPhase
           ? { phaseName: origin.originPhase.name, poolName: origin.originPhaseGroup?.displayIdentifier ?? null }
-          : null,
+          : (slot.prereqType === 'seed' && slot.prereqId ? seedOrigins.get(String(slot.prereqId)) ?? null : null),
       };
     }) as [BracketSlot, BracketSlot];
 

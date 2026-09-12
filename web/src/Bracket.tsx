@@ -285,10 +285,10 @@ function BracketTree({
           })}
           {layout.boxes.flatMap(({ set: s, x, y, links }) =>
             links.map((link) => {
-              const slotY = y + (link.slotIndex === 0 ? BOX_HEIGHT / 4 : (BOX_HEIGHT * 3) / 4);
+              const slotY = y + link.at * BOX_HEIGHT;
               const x0 = link.side === 'right' ? x + BOX_WIDTH : x - LINK_STUB;
               const x1 = link.side === 'right' ? x + BOX_WIDTH + LINK_STUB : x;
-              return <path key={`${s.id}-${link.slotIndex}-${link.side}`} className="bracket-link-stub" d={`M ${x0} ${slotY} H ${x1}`} />;
+              return <path key={`${s.id}-${link.side}-${link.label}`} className="bracket-link-stub" d={`M ${x0} ${slotY} H ${x1}`} />;
             })
           )}
         </svg>
@@ -346,10 +346,10 @@ function BracketTree({
               </div>
               {links.map((link) => (
                 <div
-                  key={`${link.side}-${link.slotIndex}`}
+                  key={`${link.side}-${link.label}`}
                   className={`bracket-link bracket-link-${link.side}`}
                   style={{
-                    top: y + (link.slotIndex === 0 ? BOX_HEIGHT / 4 : (BOX_HEIGHT * 3) / 4),
+                    top: y + link.at * BOX_HEIGHT,
                     ...(link.side === 'right' ? { left: x + BOX_WIDTH + LINK_STUB } : { left: x - LINK_WIDTH, width: LINK_WIDTH - LINK_STUB }),
                     width: LINK_WIDTH - LINK_STUB,
                   }}

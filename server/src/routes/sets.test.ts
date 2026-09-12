@@ -360,6 +360,26 @@ function charactersFixture(games: unknown = undefined) {
   };
 }
 
+/**
+ * A phase nothing feeds: its seeds came from registration, so none of them
+ * carry an origin. Mocked on every bracket test so the seed-origin lookup runs
+ * its real path here rather than falling into its own error handler.
+ */
+function seedOriginsFixture() {
+  return {
+    phaseGroup: {
+      id: 1,
+      seeds: {
+        pageInfo: { total: 2 },
+        nodes: [
+          { id: 111, progressionSource: null },
+          { id: 112, progressionSource: null },
+        ],
+      },
+    },
+  };
+}
+
 function structureFixture() {
   return {
     phaseGroup: {
@@ -656,6 +676,7 @@ describe('GET /phase-group/:phaseGroupId/events', () => {
     gqlMock.mockImplementation((_t: unknown, query: string) => {
       if (query.includes('PhaseGroupBracket')) return Promise.resolve(bracketFixture());
       if (query.includes('PhaseGroupProgression')) return Promise.resolve(structureFixture());
+      if (query.includes('PhaseGroupSeedOrigins')) return Promise.resolve(seedOriginsFixture());
       if (query.includes('PhaseGroupSetCharacters')) return Promise.resolve(charactersFixture());
       throw new Error(`unexpected query in test: ${query}`);
     });
@@ -673,6 +694,149 @@ describe('GET /phase-group/:phaseGroupId/events', () => {
 });
 
 describe('GET /phase-group/:phaseGroupId/bracket', () => {
+  it('says where an empty slot will come from, before the pool feeding it has finished', async () => {
+    // The whole point: nobody is in the slot yet, so start.gg returns
+    // `seed: null` on the set itself and the origin exists only on the phase
+    // group's own seed list. Reading it only off the set meant these links
+    // appeared once the upstream pools were done — after they stop mattering.
+    const header = { id: 91, displayIdentifier: '1', bracketType: 'DOUBLE_ELIMINATION', phase: { name: 'top 8' } };
+    gqlMock.mockImplementation((_t: unknown, query: string) => {
+      if (query.includes('PhaseGroupBracket')) {
+        return Promise.resolve({
+          phaseGroup: {
+            ...header,
+            sets: {
+              pageInfo: { total: 1, totalPages: 1 },
+              nodes: [
+                {
+                  id: 9101,
+                  identifier: 'A',
+                  round: 1,
+                  fullRoundText: 'Winners Semi-Final',
+                  state: 1,
+                  winnerId: null,
+                  lPlacement: null,
+                  displayScore: null,
+                  completedAt: null,
+                  slots: [
+                    { entrant: null, prereqType: 'seed', prereqId: '5001', prereqPlacement: null },
+                    { entrant: null, prereqType: 'seed', prereqId: '5002', prereqPlacement: null },
+                  ],
+                },
+              ],
+            },
+          },
+        });
+      }
+      if (query.includes('PhaseGroupProgression')) {
+        return Promise.resolve({
+          phaseGroup: {
+            ...header,
+            sets: {
+              pageInfo: { total: 1, totalPages: 1 },
+              nodes: [{ id: 9101, winnerProgressionSeed: null, loserProgressionSeed: null, slots: [{ seed: null }, { seed: null }] }],
+            },
+          },
+        });
+      }
+      if (query.includes('PhaseGroupSeedOrigins')) {
+        return Promise.resolve({
+          phaseGroup: {
+            id: 91,
+            seeds: {
+              pageInfo: { total: 2 },
+              nodes: [
+                { id: 5001, progressionSource: { originPhase: { name: 'Bracket' }, originPhaseGroup: { displayIdentifier: '1' } } },
+                { id: 5002, progressionSource: { originPhase: { name: 'Bracket' }, originPhaseGroup: { displayIdentifier: '2' } } },
+              ],
+            },
+          },
+        });
+      }
+      if (query.includes('PhaseGroupSetCharacters')) {
+        return Promise.resolve({ phaseGroup: { ...header, sets: { pageInfo: { total: 0, totalPages: 1 }, nodes: [] } } });
+      }
+      throw new Error(`unexpected query in test: ${query}`);
+    });
+    const cookie = await makeSignedInCookie('seed-origins');
+
+    const res = await request(server).get('/api/sets/phase-group/91/bracket').set('Cookie', cookie);
+
+    expect(res.status).toBe(200);
+    expect(res.body.sets[0].slots.map((slot: { progressionOrigin: unknown }) => slot.progressionOrigin)).toEqual([
+      { phaseName: 'Bracket', poolName: '1' },
+      { phaseName: 'Bracket', poolName: '2' },
+    ]);
+  });
+
+  it('leaves a slot fed by another set in this same bracket with no origin at all', async () => {
+    // A seed id and a set id are different namespaces; a slot waiting on
+    // another set in its own bracket must not be matched against the seed list.
+    const header = { id: 92, displayIdentifier: '1', bracketType: 'DOUBLE_ELIMINATION', phase: { name: 'top 8' } };
+    gqlMock.mockImplementation((_t: unknown, query: string) => {
+      if (query.includes('PhaseGroupBracket')) {
+        return Promise.resolve({
+          phaseGroup: {
+            ...header,
+            sets: {
+              pageInfo: { total: 1, totalPages: 1 },
+              nodes: [
+                {
+                  id: 9201,
+                  identifier: 'B',
+                  round: 2,
+                  fullRoundText: 'Winners Final',
+                  state: 1,
+                  winnerId: null,
+                  lPlacement: null,
+                  displayScore: null,
+                  completedAt: null,
+                  slots: [
+                    { entrant: null, prereqType: 'set', prereqId: '5001', prereqPlacement: 1 },
+                    { entrant: null, prereqType: 'bye', prereqId: null, prereqPlacement: null },
+                  ],
+                },
+              ],
+            },
+          },
+        });
+      }
+      if (query.includes('PhaseGroupProgression')) {
+        return Promise.resolve({
+          phaseGroup: {
+            ...header,
+            sets: {
+              pageInfo: { total: 1, totalPages: 1 },
+              nodes: [{ id: 9201, winnerProgressionSeed: null, loserProgressionSeed: null, slots: [{ seed: null }, { seed: null }] }],
+            },
+          },
+        });
+      }
+      if (query.includes('PhaseGroupSeedOrigins')) {
+        return Promise.resolve({
+          phaseGroup: {
+            id: 92,
+            seeds: {
+              pageInfo: { total: 1 },
+              // Same number as the set prereqId above, on purpose.
+              nodes: [{ id: 5001, progressionSource: { originPhase: { name: 'Bracket' }, originPhaseGroup: { displayIdentifier: '1' } } }],
+            },
+          },
+        });
+      }
+      if (query.includes('PhaseGroupSetCharacters')) {
+        return Promise.resolve({ phaseGroup: { ...header, sets: { pageInfo: { total: 0, totalPages: 1 }, nodes: [] } } });
+      }
+      throw new Error(`unexpected query in test: ${query}`);
+    });
+    const cookie = await makeSignedInCookie('seed-origins-setprereq');
+
+    const res = await request(server).get('/api/sets/phase-group/92/bracket').set('Cookie', cookie);
+
+    expect(res.status).toBe(200);
+    expect(res.body.sets[0].slots.map((slot: { progressionOrigin: unknown }) => slot.progressionOrigin)).toEqual([null, null]);
+  });
+
   /**
    * The character walk is deliberately not on a clock — a finished set's games
    * cannot change unless someone corrects it — so these count the calls rather
@@ -683,6 +847,7 @@ describe('GET /phase-group/:phaseGroupId/bracket', () => {
     gqlMock.mockImplementation((_t: unknown, query: string) => {
       if (query.includes('PhaseGroupBracket')) return Promise.resolve(bracketFixture(score));
       if (query.includes('PhaseGroupProgression')) return Promise.resolve(structureFixture());
+      if (query.includes('PhaseGroupSeedOrigins')) return Promise.resolve(seedOriginsFixture());
       if (query.includes('PhaseGroupSetCharacters')) {
         calls.characters += 1;
         return Promise.resolve(charactersFixture());
@@ -739,6 +904,7 @@ describe('GET /phase-group/:phaseGroupId/bracket', () => {
     gqlMock.mockImplementation((_t: unknown, query: string) => {
       if (query.includes('PhaseGroupBracket')) return Promise.resolve(bracketFixture(score));
       if (query.includes('PhaseGroupProgression')) return Promise.resolve(structureFixture());
+      if (query.includes('PhaseGroupSeedOrigins')) return Promise.resolve(seedOriginsFixture());
       if (query.includes('PhaseGroupSetCharacters')) {
         calls.characters += 1;
         return Promise.resolve(charactersFixture());
@@ -755,6 +921,7 @@ describe('GET /phase-group/:phaseGroupId/bracket', () => {
     gqlMock.mockImplementation((_token: unknown, query: string) => {
       if (query.includes('PhaseGroupBracket')) return Promise.resolve(bracketFixture());
       if (query.includes('PhaseGroupProgression')) return Promise.resolve(structureFixture());
+      if (query.includes('PhaseGroupSeedOrigins')) return Promise.resolve(seedOriginsFixture());
       if (query.includes('PhaseGroupSetCharacters')) return Promise.resolve(charactersFixture());
       throw new Error(`unexpected query in test: ${query}`);
     });
@@ -792,6 +959,7 @@ describe('GET /phase-group/:phaseGroupId/bracket', () => {
     gqlMock.mockImplementation((_token: unknown, query: string, variables: Record<string, unknown>) => {
       if (query.includes('PhaseGroupBracket') && variables.phaseGroupId === '2') return Promise.resolve(poolFixture());
       if (query.includes('PhaseGroupProgression') && variables.phaseGroupId === '2') {
+      if (query.includes('PhaseGroupSeedOrigins')) return Promise.resolve(seedOriginsFixture());
       if (query.includes('PhaseGroupSetCharacters')) return Promise.resolve(charactersFixture());
         return Promise.resolve(emptyStructure(2, 'Pool A', 'ROUND_ROBIN', 'Pools'));
       }
@@ -810,6 +978,7 @@ describe('GET /phase-group/:phaseGroupId/bracket', () => {
     const perPages: number[] = [];
     gqlMock.mockImplementation((_token: unknown, query: string, variables: Record<string, unknown>) => {
       if (query.includes('PhaseGroupProgression')) return Promise.resolve(structureFixture());
+      if (query.includes('PhaseGroupSeedOrigins')) return Promise.resolve(seedOriginsFixture());
       if (query.includes('PhaseGroupSetCharacters')) return Promise.resolve(charactersFixture());
       if (!query.includes('PhaseGroupBracket')) throw new Error(`unexpected query in test: ${query}`);
       // Only the live query's page sizes are under test here.
@@ -842,6 +1011,7 @@ describe('GET /phase-group/:phaseGroupId/bracket', () => {
   it('gives up rather than looping when no page size is small enough', async () => {
     gqlMock.mockImplementation((_token: unknown, query: string) => {
       if (query.includes('PhaseGroupProgression')) return Promise.resolve(structureFixture());
+      if (query.includes('PhaseGroupSeedOrigins')) return Promise.resolve(seedOriginsFixture());
       if (query.includes('PhaseGroupSetCharacters')) return Promise.resolve(charactersFixture());
       if (!query.includes('PhaseGroupBracket')) throw new Error(`unexpected query in test: ${query}`);
       throw new StartggComplexityError('Your query complexity is too high. (actual: 5000)', 5000);
@@ -857,6 +1027,7 @@ describe('GET /phase-group/:phaseGroupId/bracket', () => {
     gqlMock.mockImplementation((_token: unknown, query: string) => {
       if (query.includes('PhaseGroupBracket')) return Promise.resolve(bracketFixture());
       if (query.includes('PhaseGroupProgression')) return Promise.resolve(structureFixture());
+      if (query.includes('PhaseGroupSeedOrigins')) return Promise.resolve(seedOriginsFixture());
       if (query.includes('PhaseGroupSetCharacters')) return Promise.resolve(charactersFixture());
       throw new Error(`unexpected query in test: ${query}`);
     });
@@ -881,6 +1052,7 @@ describe('GET /phase-group/:phaseGroupId/bracket', () => {
     const perPages: number[] = [];
     gqlMock.mockImplementation((_token: unknown, query: string, variables: Record<string, unknown>) => {
       if (query.includes('PhaseGroupProgression')) return Promise.resolve(structureFixture());
+      if (query.includes('PhaseGroupSeedOrigins')) return Promise.resolve(seedOriginsFixture());
       if (query.includes('PhaseGroupSetCharacters')) return Promise.resolve(charactersFixture());
       if (!query.includes('PhaseGroupBracket')) throw new Error(`unexpected query in test: ${query}`);
       perPages.push(variables.perPage as number);
@@ -905,6 +1077,7 @@ describe('GET /phase-group/:phaseGroupId/bracket', () => {
     const counts = { live: 0, structure: 0 };
     gqlMock.mockImplementation((_token: unknown, query: string) => {
       if (query.includes('PhaseGroupProgression')) {
+      if (query.includes('PhaseGroupSeedOrigins')) return Promise.resolve(seedOriginsFixture());
       if (query.includes('PhaseGroupSetCharacters')) return Promise.resolve(charactersFixture());
         counts.structure++;
         return Promise.resolve(structureFixture());

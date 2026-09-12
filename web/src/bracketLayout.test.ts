@@ -176,7 +176,8 @@ describe('layoutBracket — cross-phase links', () => {
     const without = layoutBracket([set(1, 'A', 1, 'Winners Round 1', [slot(101), slot(102)]), B, I]);
 
     const a = withLink.boxes.find((b) => b.set.id === 1)!;
-    expect(a.links).toEqual([{ slotIndex: 0, side: 'left', label: 'Pools Pool B' }]);
+    // at 0.25 = the upper half of the box, i.e. slot 0's own row.
+    expect(a.links).toEqual([{ side: 'left', at: 0.25, label: 'Pools Pool B' }]);
     // A second-column box's slot is fed by a prior set, never a
     // progressionOrigin, so it never gets a left link even if one were
     // (incorrectly) present on its data.
@@ -187,7 +188,7 @@ describe('layoutBracket — cross-phase links', () => {
     expect(withLink.boxes.find((b) => b.set.id === 1)!.x).toBe(without.boxes.find((b) => b.set.id === 1)!.x + LINK_WIDTH);
   });
 
-  it('attaches a right link only to a last-column, decided set — labeled with the destination phase and W/L', () => {
+  it('attaches a right link only to a last-column set — labeled with the destination phase and W/L', () => {
     const A = set(1, 'A', 1, 'Winners Round 1', [slot(101), slot(102)], { winnerAdvancesToPhase: 'should never show — not last column' });
     const B = set(2, 'B', 1, 'Winners Round 1', [slot(103), slot(104)]);
     const I = set(3, 'I', 2, 'Winners Quarter-Final', [slot(101, '1', 1), slot(103, '2', 1)], {
@@ -203,26 +204,33 @@ describe('layoutBracket — cross-phase links', () => {
     expect(a.links).toEqual([]); // not the last column, even though the data has a value
 
     const i = layout.boxes.find((b) => b.set.id === 3)!;
-    expect(i.links).toEqual(
-      expect.arrayContaining([
-        { slotIndex: 0, side: 'right', label: 'Top 8 [W]' }, // slot 0 = entrant 101 = the winner
-        { slotIndex: 1, side: 'right', label: 'Losers Consolation [L]' },
-      ])
-    );
+    // Two destinations, so they split the box between them rather than
+    // overprinting each other at its middle.
+    expect(i.links).toEqual([
+      { side: 'right', at: 0.25, label: 'Top 8 [W]' },
+      { side: 'right', at: 0.75, label: 'Losers Consolation [L]' },
+    ]);
   });
 
-  it('omits right links entirely for an undecided set, even with progression seeds present', () => {
-    // winnerAdvancesToPhase/loserAdvancesToPhase are structural (set up when
-    // the bracket/pools are generated) and can exist before the match is
-    // played — but which physical slot is "the winner" isn't known yet.
+  it('shows where an undecided set leads, rather than waiting for it to be played', () => {
+    // This is the reverse of what it used to do. The old reasoning was that
+    // until a set is decided there is no slot to hang the label on — but the
+    // link belongs to the set, not a slot, so there was nothing to wait for.
+    // start.gg draws these on unplayed sets too: its own render of
+    // fireslam23test's HUGE bracket pool 1 carries four "top 8" links while
+    // every one of those sets is still undecided. Hiding them removed the
+    // information exactly when a TO is looking for it.
     const I = set(3, 'I', 2, 'Winners Quarter-Final', [slot(101), slot(103)], {
       state: 1,
       winnerId: null,
       winnerAdvancesToPhase: 'Top 8',
-      loserAdvancesToPhase: 'Losers Consolation',
     });
+
     const layout = layoutBracket([I]);
-    expect(layout.boxes[0].links).toEqual([]);
+
+    // One destination, so it leaves from the middle of the box — there is no
+    // winning slot yet to sit beside, and inventing one would be a guess.
+    expect(layout.boxes[0].links).toEqual([{ side: 'right', at: 0.5, label: 'Top 8 [W]' }]);
   });
 
   it('leaves width unchanged when nothing has a link', () => {
