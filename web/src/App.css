@@ -900,6 +900,27 @@
   padding: 14px 20px;
 }
 
+/* Everything that edits the set stops responding, rather than looking
+   available and silently doing nothing. The score, the matchup and the games
+   stay perfectly readable — which is the point of the screen in this mode. */
+.report-panel.read-only .game-stats-section,
+.report-panel.read-only .bo-toggle,
+.report-panel.read-only .flip-btn,
+.report-panel.read-only .loser-side {
+  pointer-events: none;
+}
+
+.report-panel.read-only .game-stats-section {
+  opacity: 0.75;
+}
+
+.read-only-note {
+  margin: 0;
+  text-align: center;
+  font-size: 13px;
+  color: #9aa0ac;
+}
+
 .report-actions {
   flex: none;
   padding: 10px 20px 14px;

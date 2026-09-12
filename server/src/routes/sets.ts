@@ -81,16 +81,39 @@ export interface PhaseGroupSummary {
 }
 
 interface PhaseGroupsQueryResult {
+  currentUser: { id: number } | null;
   event: {
+    // admins is null rather than empty for anyone who is not one — that is
+    // the distinction canReport turns on.
+    tournament: { owner: { id: number } | null; admins: { id: number }[] | null } | null;
     phaseGroups:
       | { id: number; displayIdentifier: string; bracketType: string; phase: { id: number; name: string; numSeeds: number | null } }[]
       | null;
   } | null;
 }
 
+/**
+ * Also asks whether this user may report into the event at all.
+ *
+ * start.gg only shows `tournament.admins` to an admin — for anyone else it
+ * comes back null rather than empty (verified live: my own tournament returns
+ * [], somebody else's returns null). Together with the owner that settles it,
+ * for three more objects on a query that runs once per event.
+ */
 const PHASE_GROUPS_QUERY = /* GraphQL */ `
   query EventPhaseGroups($eventId: ID!) {
+    currentUser {
+      id
+    }
     event(id: $eventId) {
+      tournament {
+        owner {
+          id
+        }
+        admins(roles: ["*"]) {
+          id
+        }
+      }
       phaseGroups {
         id
         displayIdentifier
@@ -119,7 +142,18 @@ setsRouter.get('/:eventId/phase-groups', async (req, res) => {
       phaseNumSeeds: pg.phase.numSeeds ?? 0,
       bracketType: pg.bracketType,
     }));
-    res.json({ phaseGroups });
+    // Deliberately optimistic when the answer is not clear: a TO wrongly shown
+    // a read-only screen cannot report at a venue, which is far worse than a
+    // spectator being allowed to type a score start.gg then refuses.
+    const me = data.currentUser?.id ?? null;
+    const tournament = data.event?.tournament;
+    const canReport =
+      me === null ||
+      tournament == null ||
+      tournament.owner?.id === me ||
+      (tournament.admins ?? []).some((admin) => admin.id === me);
+
+    res.json({ phaseGroups, canReport });
   } catch (err) {
     res.status(502).json({ error: err instanceof Error ? err.message : 'Failed to load phase groups' });
   }

@@ -1229,6 +1229,72 @@ describe('GET /:eventId/phase-groups', () => {
     ]);
   });
 
+  /**
+   * start.gg shows tournament.admins only to an admin — anyone else gets null
+   * rather than an empty list (verified live 2026-09-12). With the owner that
+   * settles whether a report from this user would be accepted at all.
+   */
+  function accessFixture(over: { me?: number | null; owner?: number | null; admins?: { id: number }[] | null }) {
+    return (_token: unknown, query: string) => {
+      if (!query.includes('EventPhaseGroups')) throw new Error(`unexpected query in test: ${query}`);
+      return Promise.resolve({
+        currentUser: 'me' in over && over.me === null ? null : { id: over.me ?? 500 },
+        event: {
+          tournament: { owner: over.owner === undefined ? { id: 500 } : over.owner === null ? null : { id: over.owner }, admins: 'admins' in over ? over.admins : [] },
+          phaseGroups: [{ id: 1, displayIdentifier: '1', bracketType: 'DOUBLE_ELIMINATION', phase: { id: 8, name: 'Bracket', numSeeds: 8 } }],
+        },
+      });
+    };
+  }
+
+  it('lets the tournament owner report', async () => {
+    gqlMock.mockImplementation(accessFixture({ me: 500, owner: 500 }));
+    const cookie = await makeSignedInCookie('access-owner');
+
+    const res = await request(app).get('/api/sets/12345/phase-groups').set('Cookie', cookie);
+
+    expect(res.body.canReport).toBe(true);
+  });
+
+  it('lets an admin who is not the owner report', async () => {
+    gqlMock.mockImplementation(accessFixture({ me: 501, owner: 500, admins: [{ id: 501 }] }));
+    const cookie = await makeSignedInCookie('access-admin');
+
+    const res = await request(app).get('/api/sets/12345/phase-groups').set('Cookie', cookie);
+
+    expect(res.body.canReport).toBe(true);
+  });
+
+  it('marks a spectator read-only — start.gg will not even show them the admin list', async () => {
+    gqlMock.mockImplementation(accessFixture({ me: 999, owner: 500, admins: null }));
+    const cookie = await makeSignedInCookie('access-spectator');
+
+    const res = await request(app).get('/api/sets/12345/phase-groups').set('Cookie', cookie);
+
+    expect(res.body.canReport).toBe(false);
+  });
+
+  it('assumes reporting is allowed when start.gg will not say', async () => {
+    // Being wrongly locked out mid-tournament is far worse than typing a score
+    // start.gg then refuses, so an unclear answer resolves toward letting the
+    // TO work.
+    gqlMock.mockImplementation(accessFixture({ me: null, owner: 500, admins: null }));
+    const cookie = await makeSignedInCookie('access-unknown');
+
+    const res = await request(app).get('/api/sets/12345/phase-groups').set('Cookie', cookie);
+
+    expect(res.body.canReport).toBe(true);
+  });
+
+  it('still lists the pools for someone who cannot report — reading is the point', async () => {
+    gqlMock.mockImplementation(accessFixture({ me: 999, owner: 500, admins: null }));
+    const cookie = await makeSignedInCookie('access-still-lists');
+
+    const res = await request(app).get('/api/sets/12345/phase-groups').set('Cookie', cookie);
+
+    expect(res.body.phaseGroups).toHaveLength(1);
+  });
+
   it('reports a phase with no seeds yet as 0 rather than dropping it', async () => {
     // numSeeds is null before a phase is seeded. It sorts last, which is where
     // an unseeded phase belongs, but the pool still has to be pickable.

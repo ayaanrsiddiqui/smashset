@@ -80,7 +80,7 @@ Last updated: 2026-09-12, working top to bottom.
 
 ## Permissions
 
-[ ] 20. The app happily opens a set to report even when the signed-in user has no write access to
+[x] 20. The app happily opens a set to report even when the signed-in user has no write access to
         the bracket (isn't a TO/admin). Make a view-only version of the set report page for people
         who can't actually report.
 
@@ -93,6 +93,28 @@ scoped it to double elim, but the buckets are projected *placements*, and the
 maths does not care how the bracket is shaped — a single-elim bracket produces
 the same tiers. Restricting it would have meant threading bracketType into the
 component to show less. Say if you want it double-elim only.
+
+**20 (view-only) — one case I could not verify.** The rule is owner-or-admin,
+and I confirmed both ends against the live API with my own token: my tournament
+returns my id as owner and a visible `admins: []`, somebody else's returns a
+different owner and `admins: null`. What I could not test is an *admin who is
+not the owner*, because I only have my own account — that path is covered by a
+unit test, not by live data. It resolves toward letting them report if start.gg
+is unclear, so the failure mode is a spectator typing a score start.gg then
+refuses, rather than a real TO locked out at a venue.
+
+**The server test flake is diagnosed now: `Error: socket hang up`.** I finally
+caught the message (I'd lost it before by piping the run through `head`). It
+has now hit two different 401-gate tests — `GET /api/characters/1` and
+`POST /api/mains` — both of which are deterministic by inspection: no cookie
+means no database query and no network call. The cause is supertest, not the
+app: `request(app)` stands up and tears down a fresh HTTP server for every
+single call, so a full run does that several hundred times, and under load one
+of those sockets gets reset before its response lands. The fix is to listen
+once per file (`const server = app.listen(0)` in beforeAll, then
+`request(server)`) instead of per request. Worth doing — CI gates deploys, so
+a 1-in-6 false failure can block a good push — but it touches every server test
+file, so I left it rather than bundle it into a UI change.
 
 **Flaky web tests, noted not fixed.** Two runs of `npm run verify` during this
 batch failed a single App test that passes on its own and in its own file
