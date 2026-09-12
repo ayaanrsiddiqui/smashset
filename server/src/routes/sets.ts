@@ -63,13 +63,25 @@ const MAX_SETS = 700;
 export interface PhaseGroupSummary {
   id: number;
   displayIdentifier: string;
+  phaseId: number;
   phaseName: string;
+  /**
+   * How the phases are ordered. phaseOrder looks like the field for this and
+   * isn't: Supernova 2026 reports Phase 1=2, Phase 2=7, Phase 3=4, which puts
+   * Phase 2 last, and start.gg's own bracket page doesn't show it that way.
+   * Seed count does order them correctly there (1581 > 512 > 128 > 24 > 8),
+   * and it holds generally, because a phase fed by another can only ever
+   * carry a subset of it forward.
+   */
+  phaseNumSeeds: number;
   bracketType: string;
 }
 
 interface PhaseGroupsQueryResult {
   event: {
-    phaseGroups: { id: number; displayIdentifier: string; bracketType: string; phase: { name: string } }[] | null;
+    phaseGroups:
+      | { id: number; displayIdentifier: string; bracketType: string; phase: { id: number; name: string; numSeeds: number | null } }[]
+      | null;
   } | null;
 }
 
@@ -81,7 +93,9 @@ const PHASE_GROUPS_QUERY = /* GraphQL */ `
         displayIdentifier
         bracketType
         phase {
+          id
           name
+          numSeeds
         }
       }
     }
@@ -95,7 +109,11 @@ setsRouter.get('/:eventId/phase-groups', async (req, res) => {
     const phaseGroups: PhaseGroupSummary[] = (data.event?.phaseGroups ?? []).map((pg) => ({
       id: pg.id,
       displayIdentifier: pg.displayIdentifier,
+      phaseId: pg.phase.id,
       phaseName: pg.phase.name,
+      // Null on a phase with no seeds yet; 0 just sorts it last, which is
+      // where an unseeded phase belongs anyway.
+      phaseNumSeeds: pg.phase.numSeeds ?? 0,
       bracketType: pg.bracketType,
     }));
     res.json({ phaseGroups });

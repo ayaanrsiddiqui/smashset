@@ -607,7 +607,9 @@ describe('GET /phase-group/:phaseGroupId/bracket', () => {
 interface ResponsePhaseGroupSummary {
   id: number;
   displayIdentifier: string;
+  phaseId: number;
   phaseName: string;
+  phaseNumSeeds: number;
   bracketType: string;
 }
 
@@ -622,9 +624,9 @@ describe('GET /:eventId/phase-groups', () => {
         return Promise.resolve({
           event: {
             phaseGroups: [
-              { id: 2, displayIdentifier: 'Pool A', bracketType: 'ROUND_ROBIN', phase: { name: 'Pools' } },
-              { id: 3, displayIdentifier: 'Pool B', bracketType: 'ROUND_ROBIN', phase: { name: 'Pools' } },
-              { id: 1, displayIdentifier: '1', bracketType: 'DOUBLE_ELIMINATION', phase: { name: 'Bracket' } },
+              { id: 2, displayIdentifier: 'Pool A', bracketType: 'ROUND_ROBIN', phase: { id: 7, name: 'Pools', numSeeds: 32 } },
+              { id: 3, displayIdentifier: 'Pool B', bracketType: 'ROUND_ROBIN', phase: { id: 7, name: 'Pools', numSeeds: 32 } },
+              { id: 1, displayIdentifier: '1', bracketType: 'DOUBLE_ELIMINATION', phase: { id: 8, name: 'Bracket', numSeeds: 8 } },
             ],
           },
         });
@@ -638,9 +640,32 @@ describe('GET /:eventId/phase-groups', () => {
     expect(res.status).toBe(200);
     const phaseGroups: ResponsePhaseGroupSummary[] = res.body.phaseGroups;
     expect(phaseGroups).toEqual([
-      { id: 2, displayIdentifier: 'Pool A', bracketType: 'ROUND_ROBIN', phaseName: 'Pools' },
-      { id: 3, displayIdentifier: 'Pool B', bracketType: 'ROUND_ROBIN', phaseName: 'Pools' },
-      { id: 1, displayIdentifier: '1', bracketType: 'DOUBLE_ELIMINATION', phaseName: 'Bracket' },
+      { id: 2, displayIdentifier: 'Pool A', bracketType: 'ROUND_ROBIN', phaseId: 7, phaseName: 'Pools', phaseNumSeeds: 32 },
+      { id: 3, displayIdentifier: 'Pool B', bracketType: 'ROUND_ROBIN', phaseId: 7, phaseName: 'Pools', phaseNumSeeds: 32 },
+      { id: 1, displayIdentifier: '1', bracketType: 'DOUBLE_ELIMINATION', phaseId: 8, phaseName: 'Bracket', phaseNumSeeds: 8 },
+    ]);
+  });
+
+  it('reports a phase with no seeds yet as 0 rather than dropping it', async () => {
+    // numSeeds is null before a phase is seeded. It sorts last, which is where
+    // an unseeded phase belongs, but the pool still has to be pickable.
+    gqlMock.mockImplementation((_token: unknown, query: string) => {
+      if (query.includes('EventPhaseGroups')) {
+        return Promise.resolve({
+          event: {
+            phaseGroups: [{ id: 4, displayIdentifier: '1', bracketType: 'SINGLE_ELIMINATION', phase: { id: 9, name: 'Top 8', numSeeds: null } }],
+          },
+        });
+      }
+      throw new Error(`unexpected query in test: ${query}`);
+    });
+    const cookie = await makeSignedInCookie('phase-groups-unseeded');
+
+    const res = await request(app).get('/api/sets/12345/phase-groups').set('Cookie', cookie);
+
+    expect(res.status).toBe(200);
+    expect(res.body.phaseGroups).toEqual([
+      { id: 4, displayIdentifier: '1', bracketType: 'SINGLE_ELIMINATION', phaseId: 9, phaseName: 'Top 8', phaseNumSeeds: 0 },
     ]);
   });
 

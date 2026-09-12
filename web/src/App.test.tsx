@@ -484,8 +484,8 @@ describe('App — multiple pools', () => {
     resetApiDefaults();
     fetchPhaseGroupsMock.mockResolvedValue({
       phaseGroups: [
-        { id: 10, displayIdentifier: 'A', phaseName: 'Pools', bracketType: 'ROUND_ROBIN' },
-        { id: 20, displayIdentifier: 'B', phaseName: 'Pools', bracketType: 'ROUND_ROBIN' },
+        { id: 10, displayIdentifier: 'A', phaseId: 1, phaseName: 'Pools', phaseNumSeeds: 16, bracketType: 'ROUND_ROBIN' },
+        { id: 20, displayIdentifier: 'B', phaseId: 1, phaseName: 'Pools', phaseNumSeeds: 16, bracketType: 'ROUND_ROBIN' },
       ],
     });
     fetchBracketMock.mockResolvedValue({ phaseGroupId: 10, phaseName: 'Pools', displayIdentifier: 'A', bracketType: 'ROUND_ROBIN', sets: [] });
@@ -497,6 +497,12 @@ describe('App — multiple pools', () => {
     fetchBracketMock.mockReset();
   });
 
+  /** Pools live under their phase now, so picking one means opening it first. */
+  async function pickPool(identifier: string) {
+    await userEvent.click(await screen.findByRole('button', { name: /Pools/ }));
+    await userEvent.click(screen.getByText(identifier));
+  }
+
   it('shows a pool picker for an event with more than one pool, and proceeds to the main app once one is picked', async () => {
     render(<App />);
 
@@ -504,7 +510,7 @@ describe('App — multiple pools', () => {
     // Nothing is fetched for any pool until one is actually chosen.
     expect(fetchBracketMock).not.toHaveBeenCalled();
 
-    await userEvent.click(screen.getByText('Pools A'));
+    await pickPool('A');
 
     expect(await screen.findByPlaceholderText(/winner's name/i)).toBeInTheDocument();
     expect(fetchBracketMock).toHaveBeenCalledWith(10);
@@ -514,13 +520,13 @@ describe('App — multiple pools', () => {
 
   it('lets a TO switch pools later via the header control, and cancels back to the current pool (not event selection) on Back', async () => {
     render(<App />);
-    await userEvent.click(await screen.findByText('Pools A'));
+    await pickPool('A');
     await screen.findByPlaceholderText(/winner's name/i);
 
     await userEvent.click(screen.getByRole('button', { name: 'switch pool' }));
     expect(await screen.findByText(/has multiple pools\/brackets/i)).toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole('button', { name: 'back' }));
+    await userEvent.click(screen.getByRole('button', { name: /back/i }));
     // Cancelling a re-opened picker returns straight to the app, still on
     // the previously chosen pool — no re-fetch of the phase group list, and
     // the event itself was never touched.
@@ -540,11 +546,11 @@ describe('App — multiple pools', () => {
       id === 10 ? poolAHangs : Promise.resolve({ sets: [] })) as never);
 
     render(<App />);
-    await userEvent.click(await screen.findByText('Pools A'));
+    await pickPool('A');
 
     // Switch to B while A's request is still in flight.
     await userEvent.click(await screen.findByRole('button', { name: 'switch pool' }));
-    await userEvent.click(await screen.findByText('Pools B'));
+    await pickPool('B');
     await screen.findByPlaceholderText(/winner's name/i);
 
     // A finally answers, with a set that belongs to the pool we left.
@@ -572,12 +578,12 @@ describe('App — multiple pools', () => {
 
   it('switching pools re-fetches bracket data scoped to the newly picked pool', async () => {
     render(<App />);
-    await userEvent.click(await screen.findByText('Pools A'));
+    await pickPool('A');
     await screen.findByPlaceholderText(/winner's name/i);
 
     fetchBracketMock.mockResolvedValue({ phaseGroupId: 20, phaseName: 'Pools', displayIdentifier: 'B', bracketType: 'ROUND_ROBIN', sets: [] });
     await userEvent.click(screen.getByRole('button', { name: 'switch pool' }));
-    await userEvent.click(await screen.findByText('Pools B'));
+    await pickPool('B');
 
     await screen.findByPlaceholderText(/winner's name/i);
     expect(fetchBracketMock).toHaveBeenLastCalledWith(20);

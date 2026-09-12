@@ -482,6 +482,57 @@
   outline: none;
 }
 
+/* .settings-screen button is the big primary action; back is not one, and
+   without this it outranks .back-link on specificity and looks like one. */
+.settings-screen .back-link {
+  align-self: flex-start;
+  padding: 0;
+  border: none;
+  background: none;
+  color: #9aa0ac;
+  font-size: 14px;
+  font-weight: 400;
+  text-decoration: underline;
+}
+
+/* Phase list on the pool picker. A phase is a disclosure row; its pools only
+   render while it's open, so a 64-pool phase costs nothing until asked for. */
+.phase-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.settings-screen .phase-row {
+  width: 100%;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 10px;
+  text-align: left;
+  padding: 14px;
+  border-radius: 10px;
+  border: 2px solid #2a2e38;
+  background: #1c1f27;
+  color: #f1f2f6;
+}
+
+.settings-screen .phase-row[aria-expanded='true'] {
+  border-color: #5865f2;
+}
+
+.phase-caret {
+  color: #9aa0ac;
+  font-size: 12px;
+}
+
+.pool-list {
+  margin: 6px 0 2px 18px;
+}
+
 .settings-screen button {
   padding: 12px;
   border-radius: 10px;

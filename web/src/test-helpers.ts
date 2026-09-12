@@ -1,6 +1,7 @@
 import { vi } from 'vitest';
 import * as api from './api';
 import { ApiError } from './api';
+import type { PhaseGroupSummary } from './types';
 
 // Only usable from a test file that has already called vi.mock('./api', ...) —
 // the vi.mocked() calls below assume the module registry is serving mocks.
@@ -13,10 +14,12 @@ export const TEST_EVENT = {
   tournament: { id: 1, name: 'x' },
 };
 
-export const SOLE_PHASE_GROUP = {
+export const SOLE_PHASE_GROUP: PhaseGroupSummary = {
   id: 1,
   displayIdentifier: '1',
+  phaseId: 1,
   phaseName: 'Bracket',
+  phaseNumSeeds: 16,
   bracketType: 'DOUBLE_ELIMINATION',
 };
 

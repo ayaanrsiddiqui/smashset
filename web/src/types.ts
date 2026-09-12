@@ -61,7 +61,10 @@ export interface EventInfo {
 export interface PhaseGroupSummary {
   id: number;
   displayIdentifier: string;
+  phaseId: number;
   phaseName: string;
+  /** Sorts phases; see the server's PhaseGroupSummary for why not phaseOrder. */
+  phaseNumSeeds: number;
   bracketType: string;
 }
 
