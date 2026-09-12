@@ -230,3 +230,55 @@ describe('layoutBracket — cross-phase links', () => {
     expect(layout.boxes.every((b) => b.links.length === 0)).toBe(true);
   });
 });
+
+// A losers round can hold more sets than the round feeding it, because byes
+// fill the rest — and start.gg does not return those bye sets, so some of its
+// sets have no same-row feeder at all. Modelled on Losers Round 2 of a real
+// 116-entrant bracket (fireslam23test "HUGE bracket", pool 1), where 16 sets
+// are fed by only 10: P and R stand in for the bye-fed ones.
+function byeFedRound(): BracketSet[] {
+  const X = set(1, 'X', -3, 'Losers Round 1', [slot(101), slot(102)]);
+  const Y = set(2, 'Y', -3, 'Losers Round 1', [slot(103), slot(104)]);
+  // P and R take a winners-bracket dropdown on one side and a bye on the
+  // other, so neither slot names a set in the round before them.
+  const P = set(3, 'P', -4, 'Losers Round 2', [slot(105), slot(null)]);
+  const Q = set(4, 'Q', -4, 'Losers Round 2', [slot(106), slot(101, '1', 1)]);
+  const R = set(5, 'R', -4, 'Losers Round 2', [slot(107), slot(null)]);
+  const S = set(6, 'S', -4, 'Losers Round 2', [slot(108), slot(103, '2', 1)]);
+  return [X, Y, P, Q, R, S];
+}
+
+describe('layoutBracket — a round the previous one only partly feeds', () => {
+  it('gives every set in the column its own row, instead of stacking a bye-fed set on a fed one', () => {
+    const { boxes } = layoutBracket(byeFedRound());
+    const round2 = boxes.filter((b) => b.set.round === -4);
+
+    expect(round2).toHaveLength(4);
+    const ys = round2.map((b) => b.y);
+    expect(new Set(ys).size).toBe(4);
+    // Not merely distinct — far enough apart that no box covers another.
+    const sorted = [...ys].sort((a, b) => a - b);
+    for (let i = 1; i < sorted.length; i++) expect(sorted[i] - sorted[i - 1]).toBeGreaterThanOrEqual(BOX_HEIGHT);
+  });
+
+  it('keeps the column in identifier order top to bottom', () => {
+    const { boxes } = layoutBracket(byeFedRound());
+    const order = boxes
+      .filter((b) => b.set.round === -4)
+      .sort((a, b) => a.y - b.y)
+      .map((b) => b.set.identifier);
+
+    expect(order).toEqual(['P', 'Q', 'R', 'S']);
+  });
+
+  it('lines an earlier set up with the one it feeds, rather than with the top of the column', () => {
+    const { boxes } = layoutBracket(byeFedRound());
+    const at = (identifier: string) => boxes.find((b) => b.set.identifier === identifier)!.y;
+
+    // This is what start.gg does, and why its early losers rounds have uneven
+    // gaps: X and Y sit beside Q and S, skipping the rows the bye-fed P and R
+    // took.
+    expect(at('X')).toBe(at('Q'));
+    expect(at('Y')).toBe(at('S'));
+  });
+});

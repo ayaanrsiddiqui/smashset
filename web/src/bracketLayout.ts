@@ -110,42 +110,85 @@ function layoutRow(sets: BracketSet[], columnCompare: (a: BracketSet, b: Bracket
   // assignment order (see identifierOrder.ts) — no seeding math needed.
   for (const col of columnsOfSets) col.sort((a, b) => compareIdentifiers(a.identifier, b.identifier));
 
-  const boxes: LayoutBox[] = [];
-  const columns: LayoutColumn[] = [];
+  // Which sets in the immediately preceding column feed each set. Only
+  // same-row, same-hop links count — a losers set's winners-bracket dropdown
+  // is deliberately not a feeder, matching start.gg, which draws no connector
+  // for it either.
+  const feedersOf = new Map<string, BracketSet[]>();
+  columnsOfSets.forEach((col, colIndex) => {
+    const prev = colIndex > 0 ? new Map(columnsOfSets[colIndex - 1].map((p) => [String(p.id), p])) : null;
+    for (const s of col) {
+      const feeders: BracketSet[] = [];
+      if (prev) {
+        for (const slot of s.slots) {
+          const feeder = slot.prereqSetId ? prev.get(slot.prereqSetId) : undefined;
+          if (feeder && !feeders.includes(feeder)) feeders.push(feeder);
+        }
+      }
+      feeders.sort((a, b) => compareIdentifiers(a.identifier, b.identifier));
+      feedersOf.set(String(s.id), feeders);
+    }
+  });
+
   const edges: LayoutEdge[] = [];
   const yById = new Map<string, number>();
+  let nextLeafRow = 0;
+
+  // Depth-first from the last column back, handing every *unfed* set the next
+  // free row as it is reached. A set with no feeders is not necessarily in the
+  // first column: byes mean a losers round can hold sets whose loser-side slot
+  // comes from a bye set start.gg does not return, and whose winner-side slot
+  // is a cross-row dropdown. Positioning those by their index within the
+  // column — which is what this used to do — puts them at a y another set in
+  // the same column has already been given, so they render exactly on top of
+  // each other and one of the two is invisible.
+  //
+  // Walking the tree instead gives each such set a row *where it belongs in
+  // the bracket*, and reproduces start.gg's own geometry exactly, including
+  // the uneven gaps an early losers column gets when only some of the sets it
+  // feeds are fed in turn. Feeders are always in the preceding column, so the
+  // recursion strictly decreases in column index and cannot cycle.
+  const place = (s: BracketSet): number => {
+    const key = String(s.id);
+    const already = yById.get(key);
+    if (already !== undefined) return already;
+
+    const feeders = feedersOf.get(key) ?? [];
+    let y: number;
+    if (feeders.length === 0) {
+      y = HEADER_HEIGHT + nextLeafRow * ROW_STEP;
+      nextLeafRow += 1;
+    } else {
+      const feederYs = feeders.map((f) => {
+        edges.push({ fromId: String(f.id), toId: key });
+        return place(f);
+      });
+      y = feederYs.reduce((a, b) => a + b, 0) / feederYs.length;
+    }
+    yById.set(key, y);
+    return y;
+  };
+
+  // The final column holds the roots; anything earlier that nothing feeds into
+  // is unreachable from them and only gets a row once they are all placed.
+  for (let colIndex = columnsOfSets.length - 1; colIndex >= 0; colIndex--) {
+    for (const s of columnsOfSets[colIndex]) place(s);
+  }
+
+  const boxes: LayoutBox[] = [];
+  const columns: LayoutColumn[] = [];
   let maxY = 0;
   const lastColIndex = columnsOfSets.length - 1;
 
   columnsOfSets.forEach((col, colIndex) => {
     const x = colIndex * COLUMN_STEP;
     columns.push({ x, y: 0, text: col[0].fullRoundText });
-    const prevCol = colIndex > 0 ? columnsOfSets[colIndex - 1] : null;
-    const prevIds = prevCol ? new Set(prevCol.map((p) => String(p.id))) : null;
-
-    col.forEach((s, rowIndex) => {
-      let y: number;
-      const sourceIds = new Set<string>();
-      if (prevIds) {
-        for (const slot of s.slots) {
-          if (slot.prereqSetId && prevIds.has(slot.prereqSetId)) sourceIds.add(slot.prereqSetId);
-        }
-      }
-      if (sourceIds.size > 0) {
-        const sourceYs = [...sourceIds].map((id) => yById.get(id)!);
-        y = sourceYs.reduce((a, b) => a + b, 0) / sourceYs.length;
-        for (const id of sourceIds) edges.push({ fromId: id, toId: String(s.id) });
-      } else {
-        // First column of this row, or (defensively) a match whose prereqs
-        // don't resolve within this row — fall back to even spacing rather
-        // than stacking every box at y 0.
-        y = HEADER_HEIGHT + rowIndex * ROW_STEP;
-      }
-      yById.set(String(s.id), y);
+    for (const s of col) {
+      const y = yById.get(String(s.id))!;
       const links = [...(colIndex === 0 ? leftLinksFor(s) : []), ...(colIndex === lastColIndex ? rightLinksFor(s) : [])];
       boxes.push({ set: s, x, y, links });
       maxY = Math.max(maxY, y);
-    });
+    }
   });
 
   return { boxes, columns, edges, height: maxY + BOX_HEIGHT };
