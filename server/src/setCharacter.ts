@@ -78,7 +78,13 @@ export function pickSetCharacter(games: SetGame[], entrantId: number, setWinnerI
 
   if (closedWith != null && mostUsed === closedWith) return mostUsed;
 
-  const mostWins = leader(tally(won, entrantId), closedWith);
+  // Deliberately not tie-broken by the closing character, though the most-used
+  // count above is. Letting it break here credits a set to whatever finished
+  // it whenever wins split evenly — which in a Bo3 is a single counterpick
+  // game outranking a main played twice and won on once, and in a Bo5 can make
+  // the primary a character played once while another was played three times.
+  // An even split means the games do not say, so fall back to play time.
+  const mostWins = leader(tally(won, entrantId), null);
   // They won nothing, or their wins split evenly with nothing to break the
   // tie: show what they played most, and failing that their last pick. Still
   // an answer, because an icon that vanishes reads as missing data.

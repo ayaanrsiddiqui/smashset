@@ -155,3 +155,22 @@ describe('pickSetCharacter — missing data', () => {
     expect(pickSetCharacter(shuffled, ME, ME)).toBe(pickSetCharacter(inOrder, ME, ME));
   });
 });
+
+describe('pickSetCharacter — an even split of won games', () => {
+  it('does not let one counterpick game outrank a main played twice', () => {
+    // Bo3: main won g1, lost g2, counterpick won g3. Wins are 1-1, so the
+    // games do not say which character took the set — and play time does.
+    // Tie-breaking on the closing game here would credit the counterpick,
+    // contradicting the Bo5 reading of the same story.
+    const games = [game(1, ME, FOX), game(2, THEM, FOX), game(3, ME, FALCO)];
+    expect(pickSetCharacter(games, ME, ME)).toBe(FOX);
+  });
+
+  it('never makes the primary a character played less than the runner-up by more than one', () => {
+    // Bo5, three characters, wins split 1/1/1. Tie-breaking on the closing
+    // game would make the primary a character played once while another was
+    // played three times — which reads as nonsense beside its own runner-up.
+    const games = [game(1, ME, FOX), game(2, ME, FALCO), game(3, THEM, FOX), game(4, THEM, FOX), game(5, ME, MARTH)];
+    expect(pickSetCharacter(games, ME, ME)).toBe(FOX);
+  });
+});
