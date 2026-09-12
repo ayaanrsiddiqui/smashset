@@ -25,6 +25,9 @@ const NETWORK_TIMEOUT_MS = 180_000;
 // survives the bracket being rebuilt.
 const TOURNAMENT_SLUG = 'fireslam23test';
 
+/** Below this a phase is too small for its per-pool cost to mean anything. */
+const MIN_POOLS_TO_MEASURE = 4;
+
 interface Measured {
   complexity: number | null;
   sets: number;
@@ -235,6 +238,71 @@ describe.skipIf(!ENABLED)('start.gg contract', () => {
 // string is both, and TournamentPageFilter has no slug field to query by.
 // That makes the redirect load-bearing, and load-bearing assumptions about
 // someone else's service belong in a check that fails when they drift.
+/**
+ * A phase with real pools in it, from some recent public tournament.
+ *
+ * Deliberately not the disposable test tournament: every phase there holds a
+ * single pool, which measures at 2 objects/pool against a model that assumes
+ * 9 — so it passes no matter how far the real cost drifts, which is a check
+ * that cannot fail rather than a check that passes.
+ */
+async function multiPoolPhaseId(): Promise<string | null> {
+  const { raw } = await post(
+    `query{tournaments(query:{perPage:8,filter:{past:true,videogameIds:[1386]}}){nodes{` + `events(filter:{videogameId:[1386]}){phases{id groupCount}}}}}`,
+    {}
+  );
+  try {
+    const body = JSON.parse(raw) as {
+      data?: { tournaments?: { nodes: { events?: { phases?: { id: number; groupCount: number }[] }[] }[] } };
+    };
+    const phases = (body.data?.tournaments?.nodes ?? []).flatMap((t) => (t.events ?? []).flatMap((e) => e.phases ?? []));
+    const biggest = phases.filter((p) => (p.groupCount ?? 0) >= MIN_POOLS_TO_MEASURE).sort((a, b) => b.groupCount - a.groupCount)[0];
+    return biggest ? String(biggest.id) : null;
+  } catch {
+    return null;
+  }
+}
+
+// The pool-preview pager sizes its pages from a per-pool cost measured live on
+// 2026-09-11. That number is exactly the kind that expires silently when
+// start.gg adds a field, so it is asserted rather than commented.
+describe.skipIf(!ENABLED)('start.gg pool previews', () => {
+  it('still charges no more per pool than the cost model assumes', async () => {
+    const phaseId = await multiPoolPhaseId();
+    if (!phaseId) {
+      // Measuring a one-pool phase would re-check the cheap case and look
+      // like proof, which is exactly the failure this file exists to prevent.
+      console.warn(`[contract] found no phase with >= ${MIN_POOLS_TO_MEASURE} pools; per-pool cost not measured`);
+      return;
+    }
+
+    const { raw } = await post(COST_MODEL.poolPreview.query, {
+      phaseId,
+      page: 1,
+      perPage: 8,
+      names: COST_MODEL.poolPreview.names,
+    });
+    const body = JSON.parse(raw) as {
+      data?: { phase?: { phaseGroups?: { nodes: unknown[] } | null } | null };
+      errors?: { message: string }[];
+      extensions?: { queryComplexity?: number };
+    };
+    expect(body.errors?.[0]?.message ?? null, 'pool preview query failed').toBeNull();
+
+    const pools = body.data?.phase?.phaseGroups?.nodes?.length ?? 0;
+    expect(pools, 'pool preview query returned no pools to measure').toBeGreaterThan(0);
+    expect(body.extensions?.queryComplexity, 'no complexity reported').not.toBeUndefined();
+
+    const perPool = (body.extensions!.queryComplexity! - COST_MODEL.poolPreview.base) / pools;
+    expect(
+      perPool,
+      `a pool preview now costs ${perPool.toFixed(2)} objects, above the assumed ` +
+        `${COST_MODEL.poolPreview.maxPerPool}. Re-derive POOL_PREVIEW_COST_PER_POOL in ` +
+        `server/src/routes/sets.ts before a phase with many pools starts being rejected.`
+    ).toBeLessThanOrEqual(COST_MODEL.poolPreview.maxPerPool);
+  }, NETWORK_TIMEOUT_MS);
+});
+
 describe.skipIf(!ENABLED)('start.gg short URLs', () => {
   it('redirects a short URL to its canonical tournament slug', async () => {
     expect(await resolveShortUrl(TOURNAMENT_SLUG)).toBe('definitely-real-tournament');

@@ -203,6 +203,15 @@ const POOL_PREVIEW_BASE_COST = 3;
 /** Measured live on 2026-09-11: 8 pools x 4 names came back at complexity 65. */
 const POOL_PREVIEW_COST_PER_POOL = 9;
 const POOL_PREVIEW_CACHE_TTL_MS = 30_000;
+/**
+ * A ceiling on how far the pager will walk a single phase. The page size
+ * already keeps each request inside the complexity budget, so this is not
+ * about complexity — it's so a phase reporting an absurd page count can't turn
+ * one screen into hundreds of requests against a ~80/minute limit. The largest
+ * real phase seen is 64 pools; anything past this loses its name preview and
+ * falls back to showing the bracket type, which is a row that still works.
+ */
+const MAX_POOLS_PREVIEWED = 512;
 
 export interface PoolPreview {
   phaseGroupId: number;
@@ -277,6 +286,10 @@ async function fetchPoolPreviews(accessToken: string, phaseId: string): Promise<
         });
       }
       if (page >= (groups?.pageInfo.totalPages ?? 1)) return previews;
+      if (previews.length >= MAX_POOLS_PREVIEWED) {
+        console.warn(`[pool-preview] phase ${phaseId} has more than ${MAX_POOLS_PREVIEWED} pools; the rest will show no names`);
+        return previews;
+      }
       page += 1;
     } catch (err) {
       if (!(err instanceof StartggComplexityError)) throw err;
@@ -637,6 +650,13 @@ export const COST_MODEL = {
   live: { base: BRACKET_BASE_COST, maxPerSet: BRACKET_MAX_COST_PER_SET, query: BRACKET_LIVE_QUERY },
   structure: { base: STRUCTURE_BASE_COST, maxPerSet: STRUCTURE_MAX_COST_PER_SET, query: BRACKET_STRUCTURE_QUERY },
   openSets: { base: SETS_BASE_COST, maxPerSet: SETS_MAX_COST_PER_SET, query: SETS_QUERY },
+  poolPreview: {
+    base: POOL_PREVIEW_BASE_COST,
+    maxPerPool: POOL_PREVIEW_COST_PER_POOL,
+    names: POOL_PREVIEW_NAMES,
+    maxPools: MAX_POOLS_PREVIEWED,
+    query: POOL_PREVIEW_QUERY,
+  },
 } as const;
 
 interface OpenSetsResult {

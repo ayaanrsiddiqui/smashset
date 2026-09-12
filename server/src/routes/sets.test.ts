@@ -26,6 +26,7 @@ vi.mock('../startgg.js', async (importOriginal) => ({
 // middleware/auth.test.ts already uses, for the same reason.
 const { createApp } = await import('../app.js');
 const { StartggComplexityError } = await import('../startgg.js');
+const { COST_MODEL } = await import('./sets.js');
 const app = createApp();
 
 const PREFIX = `test-sets-route-${Date.now()}-`;
@@ -706,6 +707,84 @@ describe('GET /phase/:phaseId/pool-preview', () => {
 
     expect(res.status).toBe(200);
     expect(res.body.previews).toEqual([{ phaseGroupId: 3, names: ['Real'], total: 2 }]);
+  });
+
+  // A phase far larger than any real one, which is the case a fixed page size
+  // would quietly fail on.
+  function hugePhase(pools: number, costPerPool: number, seen: number[]) {
+    return (_t: unknown, _q: string, vars: { page: number; perPage: number }) => {
+      seen.push(vars.perPage);
+      const cost = COST_MODEL.poolPreview.base + vars.perPage * costPerPool;
+      if (cost > 1000) throw new StartggComplexityError(`Your query complexity is too high. (actual: ${cost})`, cost);
+      const start = (vars.page - 1) * vars.perPage;
+      const nodes = Array.from({ length: Math.max(0, Math.min(vars.perPage, pools - start)) }, (_, i) => ({
+        id: start + i + 1,
+        standings: { pageInfo: { total: 4 }, nodes: [{ entrant: { name: `P${start + i + 1}` } }] },
+      }));
+      return Promise.resolve({ phase: { phaseGroups: { pageInfo: { totalPages: Math.ceil(pools / vars.perPage) }, nodes } } });
+    };
+  }
+
+  it('splits a phase with far more pools than one request can hold', async () => {
+    const seen: number[] = [];
+    gqlMock.mockImplementation(hugePhase(250, COST_MODEL.poolPreview.maxPerPool, seen));
+    const cookie = await makeSignedInCookie('pool-preview-huge');
+
+    const res = await request(app).get('/api/sets/phase/781/pool-preview').set('Cookie', cookie);
+
+    expect(res.status).toBe(200);
+    // Every pool, none dropped, across however many requests that took.
+    expect(res.body.previews).toHaveLength(250);
+    expect(seen.length).toBeGreaterThan(1);
+    for (const perPage of seen) {
+      expect(COST_MODEL.poolPreview.base + perPage * COST_MODEL.poolPreview.maxPerPool).toBeLessThanOrEqual(1000);
+    }
+  });
+
+  it('recovers everything when pools cost more than the model says', async () => {
+    // The failure the cost model cannot see coming: start.gg adds a field, or
+    // the measurement goes stale, and the derived page size is now too big.
+    const seen: number[] = [];
+    gqlMock.mockImplementation(hugePhase(150, 30, seen));
+    const cookie = await makeSignedInCookie('pool-preview-drift');
+
+    const res = await request(app).get('/api/sets/phase/782/pool-preview').set('Cookie', cookie);
+
+    expect(res.status).toBe(200);
+    expect(res.body.previews).toHaveLength(150);
+    // It asked too big once, was told so, and came back under the cap.
+    expect(seen[0]).toBeGreaterThan(seen[seen.length - 1]);
+    expect(COST_MODEL.poolPreview.base + seen[seen.length - 1] * 30).toBeLessThanOrEqual(1000);
+  });
+
+  it('gives up rather than looping when even one pool is too complex', async () => {
+    let calls = 0;
+    gqlMock.mockImplementation(() => {
+      calls += 1;
+      throw new StartggComplexityError('Your query complexity is too high. (actual: 5000)', 5000);
+    });
+    const cookie = await makeSignedInCookie('pool-preview-hopeless');
+
+    const res = await request(app).get('/api/sets/phase/783/pool-preview').set('Cookie', cookie);
+
+    // Nothing can make a single pool fit, so it has to stop. The page size
+    // strictly decreases every retry, which is what makes that terminate.
+    expect(res.status).toBe(502);
+    expect(calls).toBeLessThan(15);
+  });
+
+  it('stops walking a phase that claims an absurd number of pools', async () => {
+    const seen: number[] = [];
+    gqlMock.mockImplementation(hugePhase(100_000, COST_MODEL.poolPreview.maxPerPool, seen));
+    const cookie = await makeSignedInCookie('pool-preview-runaway');
+
+    const res = await request(app).get('/api/sets/phase/784/pool-preview').set('Cookie', cookie);
+
+    // Rows past the cap fall back to showing the bracket type, which still
+    // works — far better than hundreds of requests against an 80/minute limit.
+    expect(res.status).toBe(200);
+    expect(res.body.previews.length).toBeLessThanOrEqual(COST_MODEL.poolPreview.maxPools + 99);
+    expect(seen.length).toBeLessThan(12);
   });
 
   it('rejects an unauthenticated request', async () => {
