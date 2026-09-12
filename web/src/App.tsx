@@ -60,6 +60,8 @@ const POLL_MS = 4000;
  * the stream goes down, which degrades to exactly today's behaviour.
  */
 const POLL_MS_LIVE = 60000;
+/** How soon to ask again when the session check could not reach the server. */
+const SESSION_RETRY_MS = 3000;
 
 /**
  * A row in the set panel. The two piles a TO searches — sets waiting to be
@@ -72,6 +74,12 @@ type PanelRow = { kind: 'open'; set: OpenSet } | { kind: 'completed'; set: Brack
 export default function App() {
   // undefined = still checking; null = checked, not signed in.
   const [user, setUser] = useState<CurrentUser | null | undefined>(undefined);
+  // Why the session check has not answered, when the reason is the connection
+  // rather than the server saying nobody is signed in. Only ever read while
+  // `user` is undefined, and nothing sets it back to undefined, so this is
+  // written once and never needs clearing.
+  const [sessionError, setSessionError] = useState<string | null>(null);
+  const recheckSession = useRef<() => void>(() => {});
   const [event, setEvent] = useState<EventInfo | null>(() => {
     const raw = localStorage.getItem(STORAGE_KEY);
     return raw ? (JSON.parse(raw) as EventInfo) : null;
@@ -148,10 +156,41 @@ export default function App() {
     poolRef.current = phaseGroupId;
   }, [phaseGroupId]);
 
+  /**
+   * /api/me answers 200 with a null user when nobody is signed in — it is a
+   * probe, not a protected resource (server/src/routes/me.ts). So a rejection
+   * here never means "signed out", only that the question could not be asked,
+   * and answering it anyway threw a TO with a perfectly good session onto the
+   * sign-in screen every time they reloaded on venue wifi.
+   */
   useEffect(() => {
-    fetchMe()
-      .then(({ user }) => setUser(user))
-      .catch(() => setUser(null));
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const check = async () => {
+      try {
+        const { user } = await fetchMe();
+        if (cancelled) return;
+        setUser(user);
+      } catch (err) {
+        if (cancelled) return;
+        setSessionError(err instanceof Error ? err.message : 'Could not reach the server. Check your connection.');
+        clearTimeout(timer);
+        timer = setTimeout(check, SESSION_RETRY_MS);
+      }
+    };
+    recheckSession.current = () => {
+      clearTimeout(timer);
+      void check();
+    };
+    void check();
+    // Back on a network is the moment worth asking again, not three seconds
+    // after it.
+    window.addEventListener('online', recheckSession.current);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+      window.removeEventListener('online', recheckSession.current);
+    };
   }, []);
 
   useEffect(() => {
@@ -656,7 +695,22 @@ export default function App() {
     drainNow.current();
   }
 
-  if (user === undefined) return <div className="settings-screen"><h1>SmashSet</h1></div>;
+  if (user === undefined)
+    return (
+      <>
+        {outboxEl}
+        <div className="settings-screen">
+          <h1>SmashSet</h1>
+          {sessionError && (
+            <>
+              <p className="error">{sessionError}</p>
+              <p className="subtitle">Not signed out — smashset just can't be reached. Retrying.</p>
+              <button onClick={() => recheckSession.current()}>try again</button>
+            </>
+          )}
+        </div>
+      </>
+    );
   if (user === null)
     return (
       <>

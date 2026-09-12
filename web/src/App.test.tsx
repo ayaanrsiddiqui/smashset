@@ -97,11 +97,18 @@ describe('App — sign-in gate', () => {
     expect(screen.queryByRole('button', { name: /sign in with start\.gg/i })).not.toBeInTheDocument();
   });
 
-  it('treats a failed /api/me check the same as "not signed in", not stuck loading forever', async () => {
+  it('does not claim the TO is signed out when the check simply failed', async () => {
+    // This used to fall through to Sign In, to avoid being stuck on a blank
+    // splash forever. But /api/me answers 200 with a null user when nobody is
+    // signed in (server/src/routes/me.ts), so a rejection here says nothing
+    // about the session — and a TO reloading on venue wifi was told they were
+    // signed out when they were not. The stuck-forever worry is answered by
+    // saying what happened and retrying, not by guessing.
     fetchMeMock.mockRejectedValue(new Error('network error'));
     render(<App />);
 
-    expect(await screen.findByRole('button', { name: /sign in with start\.gg/i })).toBeInTheDocument();
+    expect(await screen.findByText(/network error/i)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /sign in with start\.gg/i })).not.toBeInTheDocument();
   });
 
   it('survives a keypress on a screen that has no set list', async () => {
@@ -1394,7 +1401,7 @@ describe('App — reporting a set and walking away', () => {
     vi.mocked(reportSet).mockReturnValue(new Promise(() => {}));
     render(<App />);
 
-    expect(await screen.findByText('NOT REPORTED')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText('NOT REPORTED')).toBeInTheDocument());
   });
 });
 
@@ -1451,10 +1458,101 @@ describe('App — a queued report that was already in storage at start-up', () =
         <App />
       </StrictMode>
     );
-    expect(await screen.findByText(/Sending Ada vs mudd/)).toBeInTheDocument();
+    // Re-queried at assertion time rather than held: under StrictMode React
+    // renders twice and discards the first pass, so a node captured by findBy
+    // can be the detached one even though the text is on screen.
+    await waitFor(() => expect(screen.getByText(/Sending Ada vs mudd/)).toBeInTheDocument());
 
     act(() => dropFromOutbox('5001'));
 
     await waitFor(() => expect(screen.queryByText(/Sending Ada vs mudd/)).not.toBeInTheDocument());
+  });
+});
+
+/**
+ * /api/me answers 200 with a null user when nobody is signed in — it is a
+ * probe, not a protected resource. So a *failure* there never means "signed
+ * out", it means the question could not be asked. Treating the two as one
+ * threw a TO with a perfectly good session onto the sign-in screen every time
+ * they reloaded on flaky venue wifi.
+ */
+describe('App — when the session check cannot reach the server', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    resetOutbox();
+    seedEvent();
+    seedPool();
+    resetApiDefaults();
+    resetEventSources();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    fetchMeMock.mockReset();
+    localStorage.clear();
+    resetOutbox();
+  });
+
+  it('does not sign the TO out just because it could not ask', async () => {
+    fetchMeMock.mockRejectedValue(apiFailure(0, 'Could not reach the server. Check your connection.'));
+    render(<App />);
+
+    expect(await screen.findByText(/could not reach the server/i)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /sign in with start\.gg/i })).not.toBeInTheDocument();
+  });
+
+  it('keeps the remembered event, so signing back in is not required to get it back', async () => {
+    fetchMeMock.mockRejectedValue(apiFailure(0));
+    render(<App />);
+    await screen.findByText(/could not reach the server/i);
+
+    expect(localStorage.getItem('smashset.event')).not.toBeNull();
+  });
+
+  it('lets itself back in when the server comes back, without a reload', async () => {
+    vi.useFakeTimers();
+    fetchMeMock.mockRejectedValueOnce(apiFailure(0));
+    fetchMeMock.mockResolvedValue({ user: { id: 1, displayName: 'FireSlam23' } });
+    render(<App />);
+    await flushTimers();
+    expect(screen.getByText(/could not reach the server/i)).toBeInTheDocument();
+
+    await vi.advanceTimersByTimeAsync(3000);
+    await flushTimers();
+
+    expect(screen.queryByText(/could not reach the server/i)).not.toBeInTheDocument();
+    expect(screen.getByPlaceholderText(/winner's name/i)).toBeInTheDocument();
+  });
+
+  it('retries at once when the TO asks, rather than waiting out the clock', async () => {
+    fetchMeMock.mockRejectedValueOnce(apiFailure(0));
+    fetchMeMock.mockResolvedValue({ user: { id: 1, displayName: 'FireSlam23' } });
+    render(<App />);
+    await screen.findByText(/could not reach the server/i);
+
+    fireEvent.click(screen.getByRole('button', { name: 'try again' }));
+
+    expect(await screen.findByPlaceholderText(/winner's name/i)).toBeInTheDocument();
+  });
+
+  it('still shows sign-in when the server actually says nobody is signed in', async () => {
+    // The real signed-out answer is a 200 carrying a null user, and that must
+    // keep working exactly as before.
+    fetchMeMock.mockResolvedValue({ user: null });
+    render(<App />);
+
+    expect(await screen.findByRole('button', { name: /sign in with start\.gg/i })).toBeInTheDocument();
+  });
+
+  it('shows queued reports on that screen, since they are why it matters', async () => {
+    enqueue(
+      { setId: 5001, winnerEntrantId: 6001, loserEntrantId: 6002, requiredWins: 2, shorthand: '+' },
+      'Ada vs mudd',
+      Date.now()
+    );
+    fetchMeMock.mockRejectedValue(apiFailure(0));
+    render(<App />);
+
+    expect(await screen.findByText(/Sending Ada vs mudd/)).toBeInTheDocument();
   });
 });
