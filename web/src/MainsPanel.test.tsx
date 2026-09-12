@@ -13,8 +13,8 @@ const FALCO: Character = { id: 200, name: 'Falco' };
 const PLAYERS: PoolPlayer[] = [
   { playerId: 11, name: 'Ada', main: { characterId: 100, gamesTallied: 9, setsConsidered: 3 } },
   { playerId: 12, name: 'mudd', main: { characterId: null, gamesTallied: 0, setsConsidered: 4 } },
-  // Nobody has looked this player up — distinct from having looked and found
-  // nothing, which is why the panel says something different for each.
+  // Nobody has looked this player up yet. Opening the panel starts one, so the
+  // panel says "looking up…" — distinct from having looked and found nothing.
   { playerId: 13, name: 'Newcomer', main: null },
 ];
 
@@ -49,7 +49,7 @@ describe('MainsPanel', () => {
     expect([...document.querySelectorAll('.mains-name')].map((e) => e.textContent)).toEqual(['Ada', 'mudd', 'Newcomer']);
   });
 
-  it('distinguishes a known main, a confirmed absence, and a player never looked up', async () => {
+  it('distinguishes a known main, a confirmed absence, and a lookup just started', async () => {
     renderPanel();
     await waitFor(() => expect(document.querySelectorAll('.mains-list li')).toHaveLength(3));
 
@@ -59,7 +59,7 @@ describe('MainsPanel', () => {
     ])).toEqual([
       ['Ada', 'Fox'],
       ['mudd', 'no main found'],
-      ['Newcomer', 'not looked up'],
+      ['Newcomer', 'looking up…'],
     ]);
   });
 

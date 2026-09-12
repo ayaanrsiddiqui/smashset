@@ -135,6 +135,20 @@ function releaseSlot(): void {
   }
 }
 
+/**
+ * Test-only. The slot counter, the in-flight map and the failure cooldown are
+ * module state that outlives a test: a test which triggers a lookup whose
+ * mocked request never resolves holds its slot forever, and a later test then
+ * waits for a slot that never frees. In production the 20s request timeout in
+ * gql() frees it instead, which is why this is a test seam and not a fix.
+ */
+export function resetMainLookupState(): void {
+  mainsInFlight.clear();
+  mainsFailedAt.clear();
+  activeCount = 0;
+  waiting.length = 0;
+}
+
 // Exported directly (not just via ensureMainComputed) so tests can await it.
 export async function computePlayerMain(accessToken: string, playerId: number, videogameId: number): Promise<void> {
   await acquireSlot();

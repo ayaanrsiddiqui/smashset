@@ -83,7 +83,8 @@ export function MainsPanel({ phaseGroupId, characters, onClose, onSave }: Props)
   function describe(player: PoolPlayer): string {
     // "Never looked" and "looked and found nothing" are different facts, and a
     // TO deciding whether to fill one in needs to tell them apart.
-    if (!player.main) return 'not looked up';
+    // Opening this panel starts a lookup for anyone missing one.
+    if (!player.main) return 'looking up…';
     if (player.main.characterId === null) {
       return player.main.setsConsidered === 0 ? 'not set' : 'no main found';
     }

@@ -1077,11 +1077,13 @@ const HEARTBEAT_MS = 25_000;
  * useful filled in *before* anything starts, and a player whose current set is
  * finished still has later ones. Seeds carry every entrant in the pool.
  *
- * Deliberately does not kick off the background main lookup for anyone missing
- * one. That lookup is a request per player against an ~80/minute limit, and
- * firing it for a whole 116-entrant bracket because someone opened a panel is
- * exactly the cost this app keeps having to avoid. Players in upcoming sets
- * still get it from the open-sets path.
+ * Kicks off the background main lookup for anyone without one, the same way
+ * open-sets does. That is a request per player, but ensureMainComputed already
+ * bounds the burst to six concurrent calls, de-dupes in flight, and backs off
+ * after a failure — machinery written for precisely this case ("~100 entrants
+ * all uncached on a large bracket's first poll"). Not firing it here would
+ * leave a player who has no set outstanding permanently unlooked, which is the
+ * half of the pool this endpoint exists to reach.
  */
 const POOL_PLAYERS_BASE_COST = 3;
 /** Measured live: 3.06 objects per seed, entrant plus participant plus player. */
@@ -1190,6 +1192,15 @@ setsRouter.get('/phase-group/:phaseGroupId/players', async (req, res) => {
         main: main ? { characterId: main.characterId, gamesTallied: main.gamesTallied, setsConsidered: main.setsConsidered } : null,
       };
     });
+
+    // Fire-and-forget, throttled inside ensureMainComputed. A player with no
+    // set outstanding is never reached by the open-sets path, so without this
+    // they stay unlooked however long the tournament runs.
+    if (roster.videogameId !== null) {
+      for (const player of players) {
+        if (!player.main) ensureMainComputed(req.user!.accessToken, player.playerId, roster.videogameId);
+      }
+    }
     res.json({ players, videogameId: roster.videogameId });
   } catch (err) {
     res.status(502).json({ error: err instanceof Error ? err.message : 'Failed to load pool players' });

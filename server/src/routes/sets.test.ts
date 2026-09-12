@@ -1,4 +1,4 @@
-import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { sign } from 'cookie-signature';
 import request from 'supertest';
 import { pool } from '../db/pool.js';
@@ -29,6 +29,7 @@ const { createApp } = await import('../app.js');
 const { StartggComplexityError } = await import('../startgg.js');
 const { COST_MODEL, invalidateSetCaches } = await import('./sets.js');
 const { hasSeenPool, resetPoolEvents } = await import('../poolEvents.js');
+const { resetMainLookupState } = await import('../mainLookup.js');
 const app = createApp();
 
 const PREFIX = `test-sets-route-${Date.now()}-`;
@@ -454,11 +455,21 @@ interface ResponseBracketGroup {
 }
 
 describe('GET /phase-group/:phaseGroupId/players', () => {
-  // This file's own slice of the player id space; see vitest.config.ts.
-  const SEEDED_WITH_MAIN = -301;
-  const SEEDED_NO_MAIN_FOUND = -302;
-  const SEEDED_NEVER_LOOKED = -303;
   const VIDEOGAME_ID = 1386;
+  // Each test takes its own ids. A background main lookup is fire-and-forget,
+  // so one started by an earlier test can write player_mains in the middle of
+  // a later one — and overwrite the very row that test is asserting on.
+  let idBase = -300;
+  let SEEDED_WITH_MAIN = idBase;
+  let SEEDED_NO_MAIN_FOUND = idBase - 1;
+  let SEEDED_NEVER_LOOKED = idBase - 2;
+
+  function freshIds() {
+    idBase -= 10;
+    SEEDED_WITH_MAIN = idBase;
+    SEEDED_NO_MAIN_FOUND = idBase - 1;
+    SEEDED_NEVER_LOOKED = idBase - 2;
+  }
 
   function playersFixture(totalPages = 1, page = 1) {
     const all = [
@@ -474,6 +485,20 @@ describe('GET /phase-group/:phaseGroupId/players', () => {
     };
   }
 
+  beforeEach(async () => {
+    // Earlier tests leave lookups holding concurrency slots their mocks never
+    // release, so without this the lookup below waits for a slot forever.
+    resetMainLookupState();
+    freshIds();
+    // Also cleared up front, not only afterwards: a fire-and-forget lookup can
+    // finish writing its row *after* the afterEach delete, leaving it behind
+    // for the next run of this file — which then reads a main where the test
+    // expects none.
+    await pool.query('DELETE FROM player_mains WHERE player_id = ANY($1)', [
+      [SEEDED_WITH_MAIN, SEEDED_NO_MAIN_FOUND, SEEDED_NEVER_LOOKED],
+    ]);
+  });
+
   afterEach(async () => {
     gqlMock.mockReset();
     await pool.query('DELETE FROM player_mains WHERE player_id = ANY($1)', [
@@ -488,6 +513,8 @@ describe('GET /phase-group/:phaseGroupId/players', () => {
     await upsertPlayerMain(SEEDED_NO_MAIN_FOUND, VIDEOGAME_ID, null, 0, 5);
     gqlMock.mockImplementation((_t: unknown, query: string) => {
       if (query.includes('PhaseGroupPlayers')) return Promise.resolve(playersFixture());
+      // Fire-and-forget lookups from an earlier test can land mid-request.
+      if (query.includes('PlayerMainHistory')) return Promise.resolve({ player: { sets: { nodes: [] } } });
       throw new Error(`unexpected query in test: ${query}`);
     });
     const cookie = await makeSignedInCookie('pool-players');
@@ -506,6 +533,8 @@ describe('GET /phase-group/:phaseGroupId/players', () => {
   it('reads the roster once but the mains every time', async () => {
     gqlMock.mockImplementation((_t: unknown, query: string) => {
       if (query.includes('PhaseGroupPlayers')) return Promise.resolve(playersFixture());
+      // Fire-and-forget lookups from an earlier test can land mid-request.
+      if (query.includes('PlayerMainHistory')) return Promise.resolve({ player: { sets: { nodes: [] } } });
       throw new Error(`unexpected query in test: ${query}`);
     });
     const cookie = await makeSignedInCookie('pool-players-cache');
@@ -525,6 +554,8 @@ describe('GET /phase-group/:phaseGroupId/players', () => {
   it('pages a pool with more seeds than fit in one request', async () => {
     gqlMock.mockImplementation((_t: unknown, query: string, vars: { page: number }) => {
       if (query.includes('PhaseGroupPlayers')) return Promise.resolve(playersFixture(3, vars.page));
+      // Fire-and-forget lookups from an earlier test can land mid-request.
+      if (query.includes('PlayerMainHistory')) return Promise.resolve({ player: { sets: { nodes: [] } } });
       throw new Error(`unexpected query in test: ${query}`);
     });
     const cookie = await makeSignedInCookie('pool-players-paged');
@@ -532,7 +563,10 @@ describe('GET /phase-group/:phaseGroupId/players', () => {
     const res = await request(app).get('/api/sets/phase-group/57/players').set('Cookie', cookie);
 
     expect(res.body.players).toHaveLength(3);
-    expect(gqlMock.mock.calls.map((c) => c[2].page)).toEqual([1, 2, 3]);
+    // Background main lookups land in the same mock; only the roster query
+    // pages, so only its calls are the subject here.
+    const rosterPages = gqlMock.mock.calls.filter((c) => String(c[1]).includes('PhaseGroupPlayers')).map((c) => c[2].page);
+    expect(rosterPages).toEqual([1, 2, 3]);
   });
 
   it('skips a seed with no entrant drawn into it yet', async () => {
@@ -550,6 +584,38 @@ describe('GET /phase-group/:phaseGroupId/players', () => {
     const res = await request(app).get('/api/sets/phase-group/58/players').set('Cookie', cookie);
 
     expect(res.body.players.map((p: { name: string }) => p.name)).toEqual(['Real']);
+  });
+
+  it('starts a lookup only for players nobody has checked yet', async () => {
+    await upsertPlayerMain(SEEDED_WITH_MAIN, VIDEOGAME_ID, 1286, 7, 3);
+    // Looked up before and genuinely found nothing. Asking again every time
+    // the panel opens would spend a request to re-learn the same answer.
+    await upsertPlayerMain(SEEDED_NO_MAIN_FOUND, VIDEOGAME_ID, null, 0, 5);
+
+    const lookedUp: number[] = [];
+    gqlMock.mockImplementation((_t: unknown, query: string, vars: { playerId?: number }) => {
+      if (query.includes('PhaseGroupPlayers')) return Promise.resolve(playersFixture());
+      if (query.includes('PlayerMainHistory')) {
+        lookedUp.push(Number(vars.playerId));
+        return Promise.resolve({ player: { sets: { nodes: [] } } });
+      }
+      // Fire-and-forget lookups from an earlier test can land mid-request.
+      if (query.includes('PlayerMainHistory')) return Promise.resolve({ player: { sets: { nodes: [] } } });
+      throw new Error(`unexpected query in test: ${query}`);
+    });
+    const cookie = await makeSignedInCookie('pool-players-lookup');
+
+    const res = await request(app).get('/api/sets/phase-group/59/players').set('Cookie', cookie);
+    expect(res.status).toBe(200);
+
+    // Fire-and-forget, so the response does not wait on start.gg — the work
+    // lands afterwards, bounded by ensureMainComputed's own concurrency cap.
+    // Asserted per player rather than as a whole list: fire-and-forget lookups
+    // started by earlier tests land in this same mock, and they are not the
+    // subject here.
+    await vi.waitFor(() => expect(lookedUp).toContain(SEEDED_NEVER_LOOKED));
+    expect(lookedUp).not.toContain(SEEDED_WITH_MAIN);
+    expect(lookedUp).not.toContain(SEEDED_NO_MAIN_FOUND);
   });
 
   it('rejects an unauthenticated request', async () => {
