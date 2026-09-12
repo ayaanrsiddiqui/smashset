@@ -1157,14 +1157,15 @@ describe('App — live pool updates', () => {
     await flushTimers(5);
     const afterOpen = fetchOpenSetsMock.mock.calls.length;
 
-    // Five seconds would have been more than one poll at the fallback rate.
+    // Ten seconds would have been two polls at the fallback rate; while the
+    // stream is up the client's own poll is only a safety net.
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(5000);
+      await vi.advanceTimersByTimeAsync(10000);
     });
     expect(fetchOpenSetsMock.mock.calls.length).toBe(afterOpen);
 
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(8000);
+      await vi.advanceTimersByTimeAsync(55000);
     });
     expect(fetchOpenSetsMock.mock.calls.length).toBeGreaterThan(afterOpen);
 

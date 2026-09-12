@@ -48,13 +48,14 @@ const STORAGE_KEY = 'smashset.event';
 const POOL_STORAGE_KEY = 'smashset.phaseGroup';
 const POLL_MS = 4000;
 /**
- * Used instead while the pool's change stream is connected. Reports made
- * through smashset arrive on that stream instantly and at no cost against
- * start.gg's rate limit, so polling is left doing only what it alone can do —
- * noticing edits made on start.gg directly. Drops back to POLL_MS the moment
- * the stream goes down, so losing it degrades to exactly today's behaviour.
+ * Used instead while the pool's change stream is connected, where polling is
+ * only a safety net. Reports made through smashset arrive on the stream
+ * immediately, and edits made on start.gg directly are caught by the server's
+ * one detector per pool — so a client asking for itself is just insurance
+ * against a change neither of those noticed. Drops back to POLL_MS the moment
+ * the stream goes down, which degrades to exactly today's behaviour.
  */
-const POLL_MS_LIVE = 12000;
+const POLL_MS_LIVE = 60000;
 
 /**
  * A row in the set panel. The two piles a TO searches — sets waiting to be

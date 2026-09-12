@@ -1,7 +1,8 @@
 import { Router } from 'express';
 import { gql, gqlWithCost, StartggComplexityError } from '../startgg.js';
 import { getPlayerMains } from '../db/mains.js';
-import { hasSeenPool, publishPoolChanged, recordPoolAccess, subscribe } from '../poolEvents.js';
+import { hasSeenPool, publishPoolChanged, recordPoolAccess, subscribe, subscriberCount } from '../poolEvents.js';
+import { startWatching, stopWatching } from '../poolWatcher.js';
 import { ensureMainComputed } from '../mainLookup.js';
 import { parseDisplayScore } from '../displayScore.js';
 import { pickSetCharacter, type SetGame } from '../setCharacter.js';
@@ -1089,6 +1090,9 @@ setsRouter.get('/phase-group/:phaseGroupId/events', (req, res) => {
   res.flushHeaders();
   res.write(': connected\n\n');
 
+  // One detector for the pool, however many TOs are watching it.
+  startWatching(phaseGroupId);
+
   const unsubscribe = subscribe(phaseGroupId, {
     userId,
     send: (event) => {
@@ -1107,6 +1111,8 @@ setsRouter.get('/phase-group/:phaseGroupId/events', (req, res) => {
   req.on('close', () => {
     clearInterval(heartbeat);
     unsubscribe();
+    // Nobody left to tell, so stop asking start.gg about this pool at all.
+    if (subscriberCount(phaseGroupId) === 0) stopWatching(phaseGroupId);
   });
 });
 

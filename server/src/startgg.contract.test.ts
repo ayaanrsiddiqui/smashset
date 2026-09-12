@@ -1,5 +1,6 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { COST_MODEL } from './routes/sets.js';
+import { PULSE } from './poolWatcher.js';
 import { parseDisplayScore } from './displayScore.js';
 import { resolveShortUrl } from './startgg.js';
 
@@ -155,6 +156,10 @@ describe.skipIf(!ENABLED)('start.gg contract', () => {
       live: COST_MODEL.live,
       structure: COST_MODEL.structure,
       openSets: COST_MODEL.openSets,
+      // The change detector. Every field is a scalar on the set, so unlike the
+      // character and pool-preview models this one is measurable on any pool
+      // with sets in it — no need to go hunting for data that happens to exist.
+      pulse: PULSE,
     })) {
       const r = await run(model.query, { phaseGroupId, page: 1, perPage: 20 });
       expect(r.error, `${name} query failed: ${r.error}`).toBeNull();

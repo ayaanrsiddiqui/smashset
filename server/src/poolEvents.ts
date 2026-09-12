@@ -75,6 +75,15 @@ export function subscriberCount(phaseGroupId: string): number {
   return channels.get(String(phaseGroupId))?.size ?? 0;
 }
 
+/**
+ * Who is currently watching, deduplicated — one TO with two tabs open is one
+ * person, and should not take two turns in the detector's token rotation.
+ */
+export function subscriberUserIds(phaseGroupId: string): number[] {
+  const subscribers = channels.get(String(phaseGroupId));
+  return subscribers ? [...new Set([...subscribers].map((s) => s.userId))] : [];
+}
+
 /** Test-only: channels and access records outlive individual requests. */
 export function resetPoolEvents(): void {
   channels.clear();
