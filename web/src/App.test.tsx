@@ -558,13 +558,13 @@ describe('App — completed and not-ready sets on the bracket', () => {
     // Read off the element rather than matched as one text node: the score is
     // rendered in parts now so each side can be coloured separately.
     await waitFor(() =>
-      expect(document.querySelector('.score-line')?.textContent?.replace(/\s+/g, ' ').trim()).toBe(
-        'Winner Player 2–0 Loser Player'
-      )
+      expect(document.querySelector('.score-line')?.textContent?.replace(/\s+/g, ' ').trim()).toBe('2–0')
     );
     // Derived from that same history: a 2-0 set is a Bo3, so Bo3 is already
     // selected rather than whatever guessRequiredWins would've picked blind.
-    expect(container.querySelector('.bo-toggle button.selected')?.textContent).toBe('Bo3');
+    // The button shows just the number now, with "BO" standing beside the
+    // column, so the full format name lives on the label instead.
+    expect(container.querySelector('.bo-toggle button.selected')?.getAttribute('aria-label')).toBe('Bo3');
     // Game 1's recorded character pick is already filled in.
     expect(screen.getByText('Bowser')).toBeInTheDocument();
   });

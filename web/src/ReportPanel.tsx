@@ -153,8 +153,8 @@ export function ReportPanel({
   // sees the flip. `submitting` itself stays purely for rendering.
   const submittingRef = useRef(false);
   const quickRef = useRef<HTMLInputElement>(null);
-  const confirmLeaveRef = useRef<HTMLDivElement>(null);
   const confirmSubmitRef = useRef<HTMLDivElement>(null);
+  const boToggleRef = useRef<HTMLDivElement>(null);
 
   const loser = winnerId === entrantA.id ? entrantB : entrantA;
   const winner = winnerId === entrantA.id ? entrantA : entrantB;
@@ -164,8 +164,12 @@ export function ReportPanel({
   }, [mode.kind]);
 
   useEffect(() => {
-    if (mode.kind === 'confirmLeave') confirmLeaveRef.current?.scrollIntoView({ block: 'nearest' });
+    // confirmLeave is deliberately absent: it covers the panel rather than
+    // sitting in the flow, so there is nothing to scroll to.
     if (mode.kind === 'confirmSubmit' || mode.kind === 'confirmReset') confirmSubmitRef.current?.scrollIntoView({ block: 'nearest' });
+    // b now reaches for a control down in the games list, which can be below
+    // the fold on a long set.
+    if (mode.kind === 'boInput') boToggleRef.current?.scrollIntoView({ block: 'nearest' });
   }, [mode.kind]);
 
   let games: ParsedGame[] | null = null;
@@ -825,22 +829,17 @@ export function ReportPanel({
       {/* Fixed: the whole page used to scroll, so this scrolled away for a
           moment before sticking, which read as a glitch. */}
       <div className="report-header">
-      {mode.kind === 'confirmLeave' ? (
-        <div className="confirm-row leave-confirm" ref={confirmLeaveRef}>
-          <button className="confirm-leave-btn" onClick={onCancel} aria-label="Leave without submitting">
-            ←
+        {/* Back and the set's identity live in the corners: they are reference
+            rather than the task, and a row each pushed the players — the thing
+            the TO actually has to read — that much further down the screen. */}
+        <div className="report-topbar">
+          <button className="back-link" onClick={() => setMode({ kind: 'confirmLeave' })}>
+            ← back
           </button>
-          <button onClick={() => setMode({ kind: 'game' })}>stay</button>
+          <div className="round-label">
+            {set.fullRoundText} · {set.identifier}
+          </div>
         </div>
-      ) : (
-        <button className="back-link" onClick={() => setMode({ kind: 'confirmLeave' })}>
-          ← back to search
-        </button>
-      )}
-
-      <div className="round-label">
-        {set.fullRoundText} · {set.identifier}
-      </div>
 
       {priorResult && (
         <p className="prior-result">
@@ -872,31 +871,16 @@ export function ReportPanel({
           </button>
         </div>
 
-        <div className={`bo-toggle ${mode.kind === 'boInput' ? 'focused' : ''}`}>
-          {BO_OPTIONS.map((opt) => (
-            <button
-              key={opt.label}
-              className={requiredWins === opt.requiredWins ? 'selected' : ''}
-              onClick={() => setRequiredWins(opt.requiredWins)}
-            >
-              {opt.label}
-            </button>
-          ))}
-          {!BO_OPTIONS.some((o) => o.requiredWins === requiredWins) && (
-            <span className="bo-current">{boLabel(requiredWins)}</span>
-          )}
-        </div>
-
         {/* The result itself, rather than a line of header text: it is the one
-            thing on this screen a TO has to be sure of before confirming. */}
+            thing on this screen a TO has to be sure of before confirming. The
+            names are not repeated here — they are directly above, and reading
+            them twice is what made this a line of prose instead of a score. */}
         {mode.kind !== 'quick' && (
           <div className={`score-display${nudging ? ' nudge' : ''}`} key={scoreNudge}>
             <span className="score-line">
-              {winner.name}{' '}
               <span className="score-value">
                 <span className="score-won">{winnerGameCount}</span>–<span className="score-lost">{loserGameCount}</span>
-              </span>{' '}
-              {loser.name}
+              </span>
             </span>
             {shortfallHint && <span className="score-shortfall">{shortfallHint}</span>}
             {/* Nothing typed leaves no shortfall line to point at, so the
@@ -997,9 +981,33 @@ export function ReportPanel({
                 />
               </div>
             </div>
-            <div className="game-stat-mid invisible" aria-hidden="true">
-              <span className="game-stat-arrow-btn left">←</span>
-              <span className="game-stat-arrow-btn right">→</span>
+            {/* The best-of picker sits in the gap the per-game arrows leave
+                empty on this row. It applies to the whole set rather than to
+                one game, the space was doing nothing, and moving it out of the
+                header buys back a row above the players. */}
+            <div className="game-stat-mid bo-mid">
+              <div className={`bo-toggle ${mode.kind === 'boInput' ? 'focused' : ''}`} ref={boToggleRef}>
+                <span className="bo-label" aria-hidden="true">
+                  BO
+                </span>
+                <div className="bo-options">
+                  {BO_OPTIONS.map((opt) => (
+                    <button
+                      key={opt.label}
+                      className={requiredWins === opt.requiredWins ? 'selected' : ''}
+                      onClick={() => setRequiredWins(opt.requiredWins)}
+                      // The visible text is just the number now that "BO" is
+                      // its own standing label, so the full name has to live here.
+                      aria-label={opt.label}
+                    >
+                      {opt.requiredWins * 2 - 1}
+                    </button>
+                  ))}
+                </div>
+                {!BO_OPTIONS.some((o) => o.requiredWins === requiredWins) && (
+                  <span className="bo-current">{boLabel(requiredWins)}</span>
+                )}
+              </div>
             </div>
             <div className="game-stat-side">
               <div className="game-stat-char">
@@ -1141,6 +1149,23 @@ export function ReportPanel({
       )}
 
       </div>
+
+      {/* Covers the panel instead of taking a slot in the header: as a row it
+          was taller than the back button it replaced, so answering it moved
+          the score and the games down a step underneath the question. */}
+      {mode.kind === 'confirmLeave' && (
+        <div className="leave-confirm-overlay">
+          <div className="leave-confirm-card">
+            <p className="leave-confirm-question">Leave without reporting this set?</p>
+            <div className="confirm-row leave-confirm">
+              <button className="confirm-leave-btn" onClick={onCancel} aria-label="Leave without submitting">
+                ←
+              </button>
+              <button onClick={() => setMode({ kind: 'game' })}>stay</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="report-actions">
       {readOnly ? (

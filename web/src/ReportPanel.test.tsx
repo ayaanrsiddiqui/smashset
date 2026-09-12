@@ -63,7 +63,7 @@ describe('ReportPanel — why the report button is disabled', () => {
     renderPanel('Grand Final');
     type('ww');
 
-    expect(scoreLine()).toBe('Ada 2–0 mudd');
+    expect(scoreLine()).toBe('2–0');
     expect(hint()).toBe('2 of 3 wins — Bo5 (press b to change)');
     // The hint exists because this state is unreachable otherwise: the error
     // is suppressed while the preview has something to draw.
@@ -75,7 +75,7 @@ describe('ReportPanel — why the report button is disabled', () => {
     renderPanel('Grand Final');
     type('www');
 
-    expect(scoreLine()).toBe('Ada 3–0 mudd');
+    expect(scoreLine()).toBe('3–0');
     expect(hint()).toBeNull();
     expect(reportDisabled()).toBe(false);
   });
@@ -86,7 +86,7 @@ describe('ReportPanel — why the report button is disabled', () => {
     renderPanel('Winners Round 1');
     type('ww');
 
-    expect(scoreLine()).toBe('Ada 2–0 mudd');
+    expect(scoreLine()).toBe('2–0');
     expect(hint()).toBeNull();
     expect(reportDisabled()).toBe(false);
   });
@@ -95,7 +95,7 @@ describe('ReportPanel — why the report button is disabled', () => {
     renderPanel('Grand Final');
     type('wlw');
 
-    expect(scoreLine()).toBe('Ada 2–1 mudd');
+    expect(scoreLine()).toBe('2–1');
     expect(hint()).toBe('2 of 3 wins — Bo5 (press b to change)');
   });
 
@@ -403,16 +403,18 @@ describe('ReportPanel — a set opened by someone who cannot report it', () => {
   it('still shows the set — reading it is the point', () => {
     renderReadOnly();
 
-    // Both names appear in the matchup and again in the score line.
+    // The names are shown once, in the matchup. The score below them is the
+    // number on its own — repeating the names there is what turned it into a
+    // sentence instead of a score.
     expect([...document.querySelectorAll('.side-name')].map((e) => e.textContent)).toEqual(['Ada', 'mudd']);
-    expect(document.querySelector('.score-line')).not.toBeNull();
+    expect(document.querySelector('.score-line')?.textContent).not.toMatch(/Ada|mudd/);
   });
 
   it('does not let a score be typed into a form that cannot send it', () => {
     renderReadOnly();
     for (const key of ['w', 'w']) fireEvent.keyDown(window, { key });
 
-    expect(document.querySelector('.score-line')?.textContent?.replace(/\s+/g, ' ').trim()).toBe('Ada 0–0 mudd');
+    expect(document.querySelector('.score-line')?.textContent?.replace(/\s+/g, ' ').trim()).toBe('0–0');
   });
 
   it('never queues anything, even if Enter is pressed', () => {
@@ -444,5 +446,43 @@ describe('ReportPanel — a set opened by someone who cannot report it', () => {
     fireEvent.keyDown(window, { key: 'Escape' });
 
     expect(onCancel).toHaveBeenCalled();
+  });
+});
+
+describe('ReportPanel layout', () => {
+  afterEach(() => {
+    onQueue.mockReset();
+  });
+
+  it('asks about leaving over the panel, leaving the header it used to sit in intact', () => {
+    renderPanel('Winners Round 1');
+    fireEvent.click(screen.getByRole('button', { name: /back/i }));
+
+    expect(document.querySelector('.leave-confirm-overlay')).not.toBeNull();
+    // The question used to *replace* the back button inside the header, and
+    // being taller than it pushed the score and every game row down a step
+    // while the TO was reading it. As an overlay, the header is untouched.
+    expect(document.querySelector('.report-header .back-link')).not.toBeNull();
+    expect(document.querySelector('.report-header .score-display')).not.toBeNull();
+    expect(document.querySelector('.report-header .leave-confirm')).toBeNull();
+  });
+
+  it('keeps back and the round label in the top bar rather than above the players', () => {
+    renderPanel('Winners Round 1');
+    const topbar = document.querySelector('.report-topbar')!;
+
+    expect(topbar.querySelector('.back-link')).not.toBeNull();
+    expect(topbar.querySelector('.round-label')?.textContent).toContain('Winners Round 1');
+    // The matchup is a sibling below, not something the bar is stacked on top of.
+    expect(topbar.querySelector('.matchup')).toBeNull();
+  });
+
+  it('puts the best-of picker in the gap on the all-games row', () => {
+    renderPanel('Winners Round 1');
+
+    expect(document.querySelector('.all-games-row .bo-toggle')).not.toBeNull();
+    expect(document.querySelector('.report-header .bo-toggle')).toBeNull();
+    // Numbers only, since "BO" is now a standing label beside them.
+    expect([...document.querySelectorAll('.bo-toggle button')].map((b) => b.textContent)).toEqual(['1', '3', '5']);
   });
 });

@@ -918,6 +918,7 @@
 }
 
 .report-panel {
+  position: relative;
   display: flex;
   flex-direction: column;
   flex: 1;
@@ -933,9 +934,19 @@
   flex: none;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 12px 20px 10px;
+  gap: 6px;
+  padding: 6px 14px 8px;
   border-bottom: 1px solid #22252d;
+}
+
+/* Back on one side, the set's identity on the other, sharing a single short
+   line instead of each taking a row above the players. */
+.report-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 22px;
 }
 
 .report-body {
@@ -945,8 +956,8 @@
   -webkit-overflow-scrolling: touch;
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  padding: 14px 20px;
+  gap: 8px;
+  padding: 10px 16px;
 }
 
 /* Everything that edits the set stops responding, rather than looking
@@ -972,7 +983,7 @@
 
 .report-actions {
   flex: none;
-  padding: 10px 20px 14px;
+  padding: 8px 16px 10px;
   border-top: 1px solid #22252d;
 }
 
@@ -988,7 +999,8 @@
 
 .round-label {
   color: #9aa0ac;
-  font-size: 14px;
+  font-size: 13px;
+  text-align: right;
 }
 
 .matchup {
@@ -1003,7 +1015,7 @@
 
 .side {
   flex: 1;
-  padding: 16px;
+  padding: 7px 14px;
   border-radius: 10px;
   border: 2px solid #2a2e38;
   background: #1c1f27;
@@ -1076,9 +1088,22 @@ kbd {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: 5px;
   padding: 2px;
   border-radius: 8px;
+}
+
+.bo-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  color: #6b7280;
+}
+
+.bo-options {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 
 .bo-toggle.focused {
@@ -1087,13 +1112,15 @@ kbd {
 
 .bo-toggle button {
   flex: 0 0 auto;
-  padding: 4px 10px;
-  border-radius: 7px;
+  min-width: 26px;
+  padding: 1px 6px;
+  border-radius: 6px;
   border: 1px solid #2a2e38;
   background: #1c1f27;
   color: #9aa0ac;
   font-weight: 600;
   font-size: 12px;
+  line-height: 1.35;
 }
 
 .bo-toggle button.selected {
@@ -1197,7 +1224,6 @@ kbd {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 12px;
   font-size: 14px;
   font-weight: 600;
   color: #9aa0ac;
@@ -1205,7 +1231,7 @@ kbd {
 }
 
 .score-value {
-  font-size: 32px;
+  font-size: 44px;
   font-weight: 800;
   line-height: 1;
   letter-spacing: 0.01em;
@@ -1223,9 +1249,9 @@ kbd {
 .game-stats-section {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
   border-radius: 12px;
-  padding: 4px;
+  padding: 3px;
 }
 
 .game-stats-section.focused {
@@ -1277,14 +1303,15 @@ kbd {
 .game-stat-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
 }
 
 .game-stat-row {
   display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 10px;
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 10px;
   border-radius: 10px;
   background: #1a1d25;
 }
@@ -1306,14 +1333,18 @@ kbd {
 }
 
 .game-stat-title {
-  font-size: 13px;
+  flex: 0 0 auto;
+  width: 56px;
+  font-size: 12px;
   color: #9aa0ac;
 }
 
 .game-stat-sides {
+  flex: 1;
+  min-width: 0;
   display: flex;
   align-items: center;
-  gap: 26px;
+  gap: 14px;
 }
 
 .game-stat-side {
@@ -1332,8 +1363,10 @@ kbd {
 .game-stat-mid {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 2px;
-  flex-shrink: 0;
+  flex: 0 0 auto;
+  width: 70px;
 }
 
 .game-stat-mid.invisible {
@@ -1460,13 +1493,14 @@ kbd {
 }
 
 .game-stat-footer {
+  flex: 0 0 auto;
   display: flex;
   justify-content: flex-end;
 }
 
 .game-stat-char .fuzzy-cell {
   font-size: 20px;
-  padding: 14px 18px;
+  padding: 3px 12px;
   gap: 12px;
   justify-content: space-between;
 }
@@ -1479,7 +1513,7 @@ kbd {
 
 .game-stat-char .fuzzy-cell-active input {
   font-size: 20px;
-  padding: 14px 18px;
+  padding: 3px 12px;
 }
 
 .game-stat-char .fuzzy-dropdown li {
@@ -1619,7 +1653,7 @@ kbd {
 }
 
 .submit-btn {
-  padding: 16px;
+  padding: 13px;
   border-radius: 12px;
   border: none;
   background: #22c55e;
@@ -1654,8 +1688,39 @@ kbd {
   cursor: default;
 }
 
+/* Covers the panel rather than sitting in the header. As a row it was taller
+   than the back button it replaced, so opening it nudged the score and every
+   game row down a step — exactly while asking a question about them. */
+.leave-confirm-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(10, 11, 15, 0.84);
+}
+
+.leave-confirm-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+  width: 100%;
+  max-width: 340px;
+}
+
+.leave-confirm-question {
+  margin: 0;
+  text-align: center;
+  font-size: 20px;
+  font-weight: 600;
+  color: #f1f2f6;
+}
+
 .leave-confirm {
-  max-width: 260px;
+  width: 100%;
 }
 
 .confirm-leave-btn {
@@ -2465,4 +2530,82 @@ kbd {
 
 .set-panel-list .start-btn {
   grid-area: action;
+}
+
+/* ---------- Report screen, where the window is short or narrow ----------
+   These have to come last in the file: they override base rules declared
+   further up, and at equal specificity the later declaration is the one that
+   wins, so the same block placed earlier does nothing at all. */
+
+/* A Bo5 is the tallest thing this screen ever has to show. On a short laptop
+   window the difference between fitting and scrolling is a handful of
+   paddings, so give them back rather than make a TO scroll mid-report. */
+@media (max-height: 820px) {
+  .report-overlay {
+    padding: 6px;
+  }
+
+  .report-header {
+    gap: 4px;
+    padding: 4px 14px 6px;
+  }
+
+  .side {
+    padding: 5px 14px;
+  }
+
+  .report-body {
+    gap: 6px;
+    padding: 6px 16px;
+  }
+
+  .report-actions {
+    padding: 6px 16px 8px;
+  }
+
+  .submit-btn {
+    padding: 10px;
+  }
+
+  .game-stats-section {
+    gap: 6px;
+  }
+
+  .game-stat-list {
+    gap: 4px;
+  }
+
+  .game-stat-row {
+    padding: 2px 10px;
+  }
+}
+
+/* On a phone the row's fixed columns take enough of the width to truncate the
+   character cells' own labels, so hand some of it back. */
+@media (max-width: 560px) {
+  /* Character names are short; it is the "all games" placeholder that needs
+     the room, and clipping it to "all ..." on the one row whose own title
+     already reads "All games" is just noise. */
+  .game-stat-char .fuzzy-cell,
+  .game-stat-char .fuzzy-cell-active input {
+    font-size: 16px;
+    padding: 3px 8px;
+  }
+
+  .game-stat-title {
+    width: 46px;
+  }
+
+  .game-stat-mid {
+    width: 58px;
+  }
+
+  .game-stat-sides {
+    gap: 8px;
+  }
+
+  .game-stat-row {
+    gap: 6px;
+    padding: 4px 8px;
+  }
 }
