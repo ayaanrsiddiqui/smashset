@@ -7,8 +7,24 @@ import { closeTestPool } from '../test-helpers.js';
 // collision-proof way to mark rows this file created, cleaned up in afterAll.
 // (player_id is a plain INTEGER with no natural string-prefix hook like
 // users.startgg_user_id has.)
-let nextTestId = -1;
+//
+// Negative is not enough on its own, though: several files share one database
+// and vitest runs them concurrently, so each owns a block. This file owns
+// -1..-99; routes/sets.test.ts owns -101, -102 and -300 downward;
+// routes/mains.test.ts owns -201. Walking past the end of this block would
+// start handing out ids another file is asserting on, while the afterAll below
+// — which deletes exactly this range — left those rows behind. Both failures
+// would surface in a different file, so it stops loudly here instead.
+const FIRST_TEST_ID = -1;
+const LAST_TEST_ID = -99;
+let nextTestId = FIRST_TEST_ID;
 function testPlayerId(): number {
+  if (nextTestId < LAST_TEST_ID) {
+    throw new Error(
+      `db/mains.test.ts owns player ids ${FIRST_TEST_ID}..${LAST_TEST_ID} and has used every one. ` +
+        'Widen the block and the afterAll delete together, keeping clear of the blocks the other files own.'
+    );
+  }
   return nextTestId--;
 }
 
@@ -16,10 +32,10 @@ const VIDEOGAME_ID = 1386; // Super Smash Bros. Ultimate
 
 describe('db/mains', () => {
   afterAll(async () => {
-    // Scoped to this file's own id range: three test files share one
-    // database and vitest runs them in parallel, so a blanket delete of
-    // every negative player id wipes the others' rows mid-test.
-    await pool.query('DELETE FROM player_mains WHERE player_id BETWEEN -99 AND -1');
+    // Scoped to this file's own id block (see testPlayerId): three test files
+    // share one database and vitest runs them in parallel, so a blanket delete
+    // of every negative player id wipes the others' rows mid-test.
+    await pool.query('DELETE FROM player_mains WHERE player_id BETWEEN $1 AND $2', [LAST_TEST_ID, FIRST_TEST_ID]);
     await closeTestPool();
   });
 
