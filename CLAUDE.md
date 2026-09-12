@@ -33,9 +33,12 @@ Keep the tone light. Rigour in the engineering, not in the prose.
 146 passing tests, because every mock resolved and no test could express failure. So:
 
 - `npm run verify` at the root runs both typechecks and both suites. Use it before calling something
-  done. `npm run build` on top catches what typecheck can't: the web build uses `tsc -b` with
-  `erasableSyntaxOnly`, a stricter config than `tsc --noEmit`, and it has caught a broken production
-  build that 170 green tests missed.
+  done, and `npm run build` on top — vitest transpiles without typechecking, so a type error in a
+  test file is invisible to the suite it lives in.
+- **Web must typecheck with `tsc -b`, never `tsc --noEmit`.** `web/tsconfig.json` is a solution file
+  (`"files": []` plus references), so `tsc --noEmit` on it compiles zero files and exits 0 no matter
+  what. That is not a stricter-config difference — it is the check doing nothing at all, which it did
+  unnoticed until a test importing `node:fs` sailed through verify and broke the build.
 - Server tests need a disposable Postgres — they delete rows, and they used to point at production.
   `.env.test` overrides `DATABASE_URL` for tests only (see `.env.test.example`), and `test-setup.ts`
   refuses to run against a non-local host unless `ALLOW_REMOTE_TEST_DB=1`. Set up with

@@ -241,26 +241,54 @@
     },
 
     {
-      "$comment": "The three below pin CURRENT behaviour, and it is arguably wrong: each describes a set the winner has not actually won yet. parseScoreShorthand bounds only the upper side — nobody may exceed requiredWins — and never requires the winner to reach it. They are recorded so that changing it is a deliberate edit to this file rather than a silent behaviour change.",
-      "name": "known gap: accepts a bo3 1-0, which is not a finished set",
+      "$comment": "A set is over when someone reaches requiredWins, so the winner must have exactly that many. Bounding only the upper side let a score describing an unfinished set through, and it would have been reported as final.",
+      "name": "rejects a bo3 1-0 — the set is not over",
       "fn": "parseScoreShorthand",
       "input": "W",
       "requiredWins": 2,
-      "games": "W"
+      "errorContains": "leaves the set unfinished"
     },
     {
-      "name": "known gap: accepts a bo3 1-1, which is not a finished set",
+      "name": "rejects a bo3 1-1 — nobody has won yet",
       "fn": "parseScoreShorthand",
       "input": "LW",
       "requiredWins": 2,
-      "games": "LW"
+      "errorContains": "leaves the set unfinished"
     },
     {
-      "name": "known gap: accepts a bo5 2-0, which is not a finished set",
+      "name": "rejects a bo5 2-0 — two wins do not finish a best of five",
       "fn": "parseScoreShorthand",
       "input": "WW",
       "requiredWins": 3,
-      "games": "WW"
+      "errorContains": "leaves the set unfinished"
+    },
+    {
+      "name": "rejects a win list that stops short of the win requirement",
+      "fn": "parseScoreShorthand",
+      "input": "12",
+      "requiredWins": 3,
+      "errorContains": "leaves the set unfinished"
+    },
+    {
+      "name": "rejects a bo5 sequence that only reaches two wins",
+      "fn": "parseScoreShorthand",
+      "input": "WLW",
+      "requiredWins": 3,
+      "errorContains": "leaves the set unfinished"
+    },
+    {
+      "name": "the same two-win score is still valid at bo3, where it does finish the set",
+      "fn": "parseScoreShorthand",
+      "input": "WLW",
+      "requiredWins": 2,
+      "games": "WLW"
+    },
+    {
+      "name": "a loss form still reaches the requirement, so it stays valid",
+      "fn": "parseScoreShorthand",
+      "input": "-1",
+      "requiredWins": 3,
+      "games": "LWWW"
     }
   ]
 }

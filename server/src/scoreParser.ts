@@ -79,10 +79,19 @@ export function parseScoreShorthand(raw: string, requiredWins: number): ParsedGa
   }
 
   const loserGameCount = totalGames - winnerGameNumbers.size;
+  const bestOf = requiredWins * 2 - 1;
+  const win = requiredWins === 1 ? 'win' : 'wins';
   if (winnerGameNumbers.size > requiredWins || loserGameCount >= requiredWins) {
-    const win = requiredWins === 1 ? 'win' : 'wins';
     throw new Error(
-      `Best of ${requiredWins * 2 - 1} ends the moment someone reaches ${requiredWins} ${win} — "${trimmed}" has a game past that`
+      `Best of ${bestOf} ends the moment someone reaches ${requiredWins} ${win} — "${trimmed}" has a game past that`
+    );
+  }
+  // The other half of the same rule. Bounding only the top let "WW" through as
+  // a finished best-of-five, and a set that has not been won yet would then be
+  // reported as final — which is the one thing a TO cannot take back.
+  if (winnerGameNumbers.size < requiredWins) {
+    throw new Error(
+      `Best of ${bestOf} is not over until someone reaches ${requiredWins} ${win} — "${trimmed}" leaves the set unfinished`
     );
   }
 
