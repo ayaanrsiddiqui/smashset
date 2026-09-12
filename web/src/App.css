@@ -495,6 +495,39 @@
   text-decoration: underline;
 }
 
+/* Player lookup on the pool picker. Pool names mean little on their own, so
+   this is usually the fastest route to the right one. */
+.player-lookup {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* The panel's search box is sized for a phone at arm's length; here it sits
+   above a list and doesn't need to dominate it. */
+.player-lookup .search-box {
+  font-size: 17px;
+  padding: 11px 14px;
+}
+
+.lookup-note {
+  margin: 0;
+  font-size: 13px;
+  color: #9aa0ac;
+}
+
+.lookup-matches {
+  margin: 0;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+/* A phase this player never reached: still listed, so the shape of their run
+   is visible, but plainly not somewhere to go looking for them. */
+.settings-screen .phase-row.absent {
+  opacity: 0.45;
+}
+
 /* Phase list on the pool picker. A phase is a disclosure row; its pools only
    render while it's open, so a 64-pool phase costs nothing until asked for. */
 .phase-list {

@@ -122,6 +122,76 @@ setsRouter.get('/:eventId/phase-groups', async (req, res) => {
   }
 });
 
+/**
+ * Short queries are refused rather than run. Filtering Supernova's 1581
+ * entrants by "a" matches 900 of them, so one or two characters is all noise
+ * and all rate limit — and start.gg's limit is ~80 requests/minute per token,
+ * shared with the polling this TO is already doing.
+ */
+const MIN_ENTRANT_QUERY = 3;
+/** Measured at complexity 51 against the worst case above; the cap is 1000. */
+const ENTRANT_SEARCH_PER_PAGE = 20;
+
+export interface EntrantMatch {
+  id: number;
+  name: string;
+  /** Every pool this entrant was seeded into, across all phases of the event. */
+  phaseGroupIds: number[];
+}
+
+interface EntrantSearchResult {
+  event: {
+    entrants: { nodes: { id: number; name: string; seeds: { phaseGroup: { id: number } | null }[] | null }[] | null } | null;
+  } | null;
+}
+
+// seeds carries the whole run in one request — a player who reached top 8 came
+// back with all five of their pools — so no per-phase lookup is needed.
+const ENTRANT_SEARCH_QUERY = /* GraphQL */ `
+  query EventEntrantSearch($eventId: ID!, $name: String!, $perPage: Int!) {
+    event(id: $eventId) {
+      entrants(query: { perPage: $perPage, filter: { name: $name } }) {
+        nodes {
+          id
+          name
+          seeds {
+            phaseGroup {
+              id
+            }
+          }
+        }
+      }
+    }
+  }
+`;
+
+setsRouter.get('/:eventId/entrants', async (req, res) => {
+  const { eventId } = req.params;
+  const name = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+  if (name.length < MIN_ENTRANT_QUERY) {
+    res.status(400).json({ error: `Type at least ${MIN_ENTRANT_QUERY} characters to look up a player` });
+    return;
+  }
+
+  try {
+    const data = await gql<EntrantSearchResult>(req.user!.accessToken, ENTRANT_SEARCH_QUERY, {
+      eventId,
+      name,
+      perPage: ENTRANT_SEARCH_PER_PAGE,
+    });
+    const entrants: EntrantMatch[] = (data.event?.entrants?.nodes ?? []).map((entrant) => ({
+      id: entrant.id,
+      name: entrant.name,
+      // A seed with no phaseGroup is one not yet drawn into a pool, which is a
+      // real state during setup rather than something to paper over.
+      phaseGroupIds: (entrant.seeds ?? []).flatMap((seed) => (seed.phaseGroup ? [seed.phaseGroup.id] : [])),
+    }));
+    res.json({ entrants });
+  } catch (err) {
+    res.status(502).json({ error: err instanceof Error ? err.message : 'Failed to look up players' });
+  }
+});
+
 interface RawSet {
   // Real sets have a numeric id; sets in an un-started/preview bracket come
   // back as a synthetic "preview_..." string instead.

@@ -1,7 +1,12 @@
-import { describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { PoolPicker, groupIntoPhases } from './PoolPicker';
-import type { PhaseGroupSummary } from './types';
+import { searchEntrants } from './api';
+import type { EntrantMatch, PhaseGroupSummary } from './types';
+
+vi.mock('./api', () => ({ searchEntrants: vi.fn() }));
+
+const searchEntrantsMock = vi.mocked(searchEntrants);
 
 let nextId = 1;
 function pool(displayIdentifier: string, phaseId: number, phaseName: string, phaseNumSeeds: number): PhaseGroupSummary {
@@ -21,8 +26,23 @@ const SUPERNOVA: PhaseGroupSummary[] = [
 ];
 
 function renderPicker(phaseGroups = SUPERNOVA, onPicked = vi.fn(), onBack = vi.fn()) {
-  render(<PoolPicker eventName="Ultimate - 1v1 Singles" phaseGroups={phaseGroups} onPicked={onPicked} onBack={onBack} />);
+  render(
+    <PoolPicker eventId={1614806} eventName="Ultimate - 1v1 Singles" phaseGroups={phaseGroups} onPicked={onPicked} onBack={onBack} />
+  );
   return { onPicked, onBack };
+}
+
+const poolId = (identifier: string) => SUPERNOVA.find((p) => p.displayIdentifier === identifier)!.id;
+
+function lookup(): HTMLInputElement {
+  return screen.getByPlaceholderText(/find a player/i) as HTMLInputElement;
+}
+
+/** Past the lookup's debounce, then let the resolved promise land. */
+async function settleLookup(): Promise<void> {
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(300);
+  });
 }
 
 describe('groupIntoPhases', () => {
@@ -101,5 +121,138 @@ describe('PoolPicker', () => {
     renderPicker();
     expect(screen.getByRole('button', { name: /Phase 1/ })).toHaveTextContent('2 brackets');
     expect(screen.getByRole('button', { name: /Top 8/ })).toHaveTextContent('1 bracket');
+  });
+});
+
+describe('PoolPicker — player lookup', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    searchEntrantsMock.mockReset();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const deepRun: EntrantMatch = {
+    id: 1,
+    name: 'FaZe | Sparg0',
+    phaseGroupIds: [poolId('D101'), poolId('E109'), poolId('N101'), poolId('P101'), poolId('R1')],
+  };
+  const poolsOnly: EntrantMatch = { id: 2, name: 'JL | Zoruya', phaseGroupIds: [poolId('D102')] };
+
+  it('does nothing at all for one or two characters', async () => {
+    renderPicker();
+
+    fireEvent.change(lookup(), { target: { value: 'sp' } });
+    await settleLookup();
+
+    // Not a debounce that eventually fires — no request is made at any point.
+    // "a" alone matches 900 of this event's 1581 entrants.
+    expect(searchEntrantsMock).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: /Phase 1/ })).toHaveTextContent('2 brackets');
+  });
+
+  it('searches once the query is long enough', async () => {
+    searchEntrantsMock.mockResolvedValue({ entrants: [deepRun] });
+    renderPicker();
+
+    fireEvent.change(lookup(), { target: { value: 'spa' } });
+    await settleLookup();
+
+    expect(searchEntrantsMock).toHaveBeenCalledWith(1614806, 'spa');
+  });
+
+  it('debounces, so typing a name is one request and not six', async () => {
+    searchEntrantsMock.mockResolvedValue({ entrants: [deepRun] });
+    renderPicker();
+
+    for (const value of ['spa', 'spar', 'sparg', 'sparg0']) {
+      fireEvent.change(lookup(), { target: { value } });
+      await vi.advanceTimersByTimeAsync(50);
+    }
+    await settleLookup();
+
+    expect(searchEntrantsMock).toHaveBeenCalledTimes(1);
+    expect(searchEntrantsMock).toHaveBeenLastCalledWith(1614806, 'sparg0');
+  });
+
+  it('narrows every phase to that player and opens them, on a single match', async () => {
+    searchEntrantsMock.mockResolvedValue({ entrants: [deepRun] });
+    renderPicker();
+
+    fireEvent.change(lookup(), { target: { value: 'sparg0' } });
+    await settleLookup();
+
+    // Their run, one pool per phase, without expanding anything by hand.
+    expect(screen.getByText('D101')).toBeInTheDocument();
+    expect(screen.getByText('E109')).toBeInTheDocument();
+    expect(screen.getByText('R1')).toBeInTheDocument();
+    // The pool they were never in is gone, even though it shares the phase.
+    expect(screen.queryByText('D102')).not.toBeInTheDocument();
+  });
+
+  it('marks the phases a player never reached', async () => {
+    searchEntrantsMock.mockResolvedValue({ entrants: [poolsOnly] });
+    renderPicker();
+
+    fireEvent.change(lookup(), { target: { value: 'zoruya' } });
+    await settleLookup();
+
+    expect(screen.getByText('D102')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Top 8/ })).toHaveTextContent('did not reach');
+    expect(screen.getByRole('button', { name: /Phase 2/ })).toHaveTextContent('did not reach');
+  });
+
+  it('asks which player when the name is ambiguous, rather than guessing', async () => {
+    searchEntrantsMock.mockResolvedValue({ entrants: [deepRun, poolsOnly] });
+    renderPicker();
+
+    fireEvent.change(lookup(), { target: { value: 'zor' } });
+    await settleLookup();
+
+    // Both are offered and nothing is narrowed, because picking one for them
+    // would be guessing which player they meant.
+    expect(screen.getByText('FaZe | Sparg0')).toBeInTheDocument();
+    expect(screen.getByText('JL | Zoruya')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Phase 1/ })).toHaveTextContent('2 brackets');
+    expect(screen.getByRole('button', { name: /Top 8/ })).not.toHaveTextContent('did not reach');
+
+    fireEvent.click(screen.getByText('JL | Zoruya'));
+
+    expect(screen.getByRole('button', { name: /Top 8/ })).toHaveTextContent('did not reach');
+  });
+
+  it('says so when nobody matches', async () => {
+    searchEntrantsMock.mockResolvedValue({ entrants: [] });
+    renderPicker();
+
+    fireEvent.change(lookup(), { target: { value: 'nobodyhere' } });
+    await settleLookup();
+
+    expect(screen.getByText(/No player matching "nobodyhere"/)).toBeInTheDocument();
+  });
+
+  it('shows a failed lookup instead of silently listing every pool', async () => {
+    searchEntrantsMock.mockRejectedValue(new Error('start.gg is down'));
+    renderPicker();
+
+    fireEvent.change(lookup(), { target: { value: 'sparg0' } });
+    await settleLookup();
+
+    expect(screen.getByText('start.gg is down')).toBeInTheDocument();
+  });
+
+  it('goes back to every pool when the lookup is cleared', async () => {
+    searchEntrantsMock.mockResolvedValue({ entrants: [poolsOnly] });
+    renderPicker();
+
+    fireEvent.change(lookup(), { target: { value: 'zoruya' } });
+    await settleLookup();
+    fireEvent.click(screen.getByRole('button', { name: /show all/i }));
+    await settleLookup();
+
+    expect(screen.getByRole('button', { name: /Phase 1/ })).toHaveTextContent('2 brackets');
+    expect(screen.getByText('D101')).toBeInTheDocument();
   });
 });

@@ -68,6 +68,13 @@ export interface PhaseGroupSummary {
   bracketType: string;
 }
 
+/** A player matching a lookup, with every pool they were seeded into. */
+export interface EntrantMatch {
+  id: number;
+  name: string;
+  phaseGroupIds: number[];
+}
+
 export interface BracketSlot {
   entrant: { id: number; name: string } | null;
   score: number | null;

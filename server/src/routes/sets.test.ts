@@ -613,6 +613,74 @@ interface ResponsePhaseGroupSummary {
   bracketType: string;
 }
 
+describe('GET /:eventId/entrants', () => {
+  afterEach(() => {
+    gqlMock.mockReset();
+  });
+
+  function respondWith(nodes: unknown[]) {
+    gqlMock.mockImplementation((_token: unknown, query: string) => {
+      if (query.includes('EventEntrantSearch')) return Promise.resolve({ event: { entrants: { nodes } } });
+      throw new Error(`unexpected query in test: ${query}`);
+    });
+  }
+
+  it('refuses a query too short to mean anything, without asking start.gg', async () => {
+    // "a" matches 900 of Supernova's 1581 entrants, so a short query spends a
+    // request against an ~80/min per-token limit to answer nothing.
+    respondWith([]);
+    const cookie = await makeSignedInCookie('entrants-short');
+
+    const res = await request(app).get('/api/sets/12345/entrants?q=sp').set('Cookie', cookie);
+
+    expect(res.status).toBe(400);
+    expect(gqlMock).not.toHaveBeenCalled();
+  });
+
+  it('treats surrounding whitespace as not making a query longer', async () => {
+    respondWith([]);
+    const cookie = await makeSignedInCookie('entrants-blank');
+
+    const res = await request(app).get('/api/sets/12345/entrants?q=%20%20a%20%20').set('Cookie', cookie);
+
+    expect(res.status).toBe(400);
+    expect(gqlMock).not.toHaveBeenCalled();
+  });
+
+  it('returns each match with every pool they were seeded into', async () => {
+    respondWith([
+      { id: 1, name: 'FaZe | Sparg0', seeds: [{ phaseGroup: { id: 10 } }, { phaseGroup: { id: 20 } }] },
+      { id: 2, name: 'JL | Zoruya', seeds: [{ phaseGroup: { id: 11 } }] },
+    ]);
+    const cookie = await makeSignedInCookie('entrants-match');
+
+    const res = await request(app).get('/api/sets/12345/entrants?q=sparg0').set('Cookie', cookie);
+
+    expect(res.status).toBe(200);
+    expect(res.body.entrants).toEqual([
+      { id: 1, name: 'FaZe | Sparg0', phaseGroupIds: [10, 20] },
+      { id: 2, name: 'JL | Zoruya', phaseGroupIds: [11] },
+    ]);
+  });
+
+  it('keeps an entrant whose seed has no pool yet, with no pools listed', async () => {
+    // A real state while an event is being set up — the player exists, they
+    // just have not been drawn into a pool.
+    respondWith([{ id: 3, name: 'Undrawn', seeds: [{ phaseGroup: null }] }]);
+    const cookie = await makeSignedInCookie('entrants-undrawn');
+
+    const res = await request(app).get('/api/sets/12345/entrants?q=undrawn').set('Cookie', cookie);
+
+    expect(res.status).toBe(200);
+    expect(res.body.entrants).toEqual([{ id: 3, name: 'Undrawn', phaseGroupIds: [] }]);
+  });
+
+  it('rejects an unauthenticated lookup', async () => {
+    const res = await request(app).get('/api/sets/12345/entrants?q=sparg0');
+    expect(res.status).toBe(401);
+  });
+});
+
 describe('GET /:eventId/phase-groups', () => {
   afterEach(() => {
     gqlMock.mockReset();

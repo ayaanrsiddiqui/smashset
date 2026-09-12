@@ -517,6 +517,7 @@ export default function App() {
   if (pickingPool || (phaseGroups.length > 1 && phaseGroupId === null)) {
     return (
       <PoolPicker
+        eventId={event.id}
         eventName={event.name}
         phaseGroups={phaseGroups}
         onPicked={pickPool}

@@ -1,4 +1,4 @@
-import type { AccountDetails, BracketGroup, Character, CurrentUser, EventInfo, OpenSet, PhaseGroupSummary, SetDetail, Stage } from './types';
+import type { AccountDetails, BracketGroup, Character, CurrentUser, EntrantMatch, EventInfo, OpenSet, PhaseGroupSummary, SetDetail, Stage } from './types';
 
 export class ApiError extends Error {
   // Assigned explicitly rather than as a constructor parameter property: the
@@ -99,6 +99,14 @@ export function resolveEvent(input: string): Promise<{ event?: EventInfo; events
 
 export function fetchPhaseGroups(eventId: number): Promise<{ phaseGroups: PhaseGroupSummary[] }> {
   return req(`/api/sets/${eventId}/phase-groups`);
+}
+
+/**
+ * Callers must hold to MIN_PLAYER_QUERY; the server rejects anything shorter,
+ * because a one- or two-character filter matches most of a big event.
+ */
+export function searchEntrants(eventId: number, query: string): Promise<{ entrants: EntrantMatch[] }> {
+  return req(`/api/sets/${eventId}/entrants?q=${encodeURIComponent(query)}`);
 }
 
 export function fetchOpenSets(phaseGroupId: number): Promise<{ sets: OpenSet[] }> {
