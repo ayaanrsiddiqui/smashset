@@ -562,6 +562,31 @@
   font-size: 12px;
 }
 
+/* Identifier left, who's in the pool right, truncated rather than wrapped —
+   a TO scans this list, so every pool should stay one line tall. */
+.pool-list li {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: baseline;
+  column-gap: 12px;
+}
+
+.pool-preview {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
+}
+
+.pool-more {
+  white-space: nowrap;
+}
+
+.matched-player {
+  color: #f1f2f6;
+}
+
 .pool-list {
   margin: 6px 0 2px 18px;
 }

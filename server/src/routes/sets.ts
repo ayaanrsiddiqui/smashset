@@ -192,6 +192,123 @@ setsRouter.get('/:eventId/entrants', async (req, res) => {
   }
 });
 
+/**
+ * How many names a pool row previews, matching start.gg's own pool cards.
+ * standings answers this in every pool state — a finished pool returns who
+ * came out of it, a running one returns the current order — so there's no
+ * separate seeds path to keep in step.
+ */
+const POOL_PREVIEW_NAMES = 4;
+const POOL_PREVIEW_BASE_COST = 3;
+/** Measured live on 2026-09-11: 8 pools x 4 names came back at complexity 65. */
+const POOL_PREVIEW_COST_PER_POOL = 9;
+const POOL_PREVIEW_CACHE_TTL_MS = 30_000;
+
+export interface PoolPreview {
+  phaseGroupId: number;
+  names: string[];
+  /** Entrants in the pool, so a row can say how many are not shown. */
+  total: number;
+}
+
+interface PoolPreviewPage {
+  phase: {
+    phaseGroups: {
+      pageInfo: { totalPages: number };
+      nodes: { id: number; standings: { pageInfo: { total: number }; nodes: { entrant: { name: string } | null }[] | null } | null }[] | null;
+    } | null;
+  } | null;
+}
+
+const POOL_PREVIEW_QUERY = /* GraphQL */ `
+  query PhasePoolPreviews($phaseId: ID!, $page: Int!, $perPage: Int!, $names: Int!) {
+    phase(id: $phaseId) {
+      phaseGroups(query: { page: $page, perPage: $perPage }) {
+        pageInfo {
+          totalPages
+        }
+        nodes {
+          id
+          standings(query: { perPage: $names }) {
+            pageInfo {
+              total
+            }
+            nodes {
+              entrant {
+                name
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+`;
+
+const poolPreviewCache = new Map<string, { at: number; previews: PoolPreview[] }>();
+
+/**
+ * Pages through a phase's pools, sizing each page from the cost model above
+ * and shrinking when start.gg disagrees — the same self-healing shape as the
+ * set pager, because a phase with enough pools would otherwise be a hard
+ * failure that no constant can be tuned to avoid forever.
+ */
+async function fetchPoolPreviews(accessToken: string, phaseId: string): Promise<PoolPreview[]> {
+  let perPage = pageSizeFor(POOL_PREVIEW_BASE_COST, POOL_PREVIEW_COST_PER_POOL);
+  const previews: PoolPreview[] = [];
+  let page = 1;
+
+  while (true) {
+    try {
+      const { data } = await gqlWithCost<PoolPreviewPage>(accessToken, POOL_PREVIEW_QUERY, {
+        phaseId,
+        page,
+        perPage,
+        names: POOL_PREVIEW_NAMES,
+      });
+      const groups = data.phase?.phaseGroups;
+      for (const node of groups?.nodes ?? []) {
+        previews.push({
+          phaseGroupId: node.id,
+          // An entrant can be null on a seed not yet filled; that's a real
+          // state mid-setup, and the row simply has one fewer name to show.
+          names: (node.standings?.nodes ?? []).flatMap((s) => (s.entrant ? [s.entrant.name] : [])),
+          total: node.standings?.pageInfo.total ?? 0,
+        });
+      }
+      if (page >= (groups?.pageInfo.totalPages ?? 1)) return previews;
+      page += 1;
+    } catch (err) {
+      if (!(err instanceof StartggComplexityError)) throw err;
+      const measured = Math.max(1, Math.ceil((err.actual - POOL_PREVIEW_BASE_COST) / perPage));
+      const next = Math.max(1, Math.min(pageSizeFor(POOL_PREVIEW_BASE_COST, measured), perPage - 1));
+      if (next >= perPage) throw err;
+      // Offset paging, so a changed page size invalidates what was collected.
+      perPage = next;
+      previews.length = 0;
+      page = 1;
+    }
+  }
+}
+
+setsRouter.get('/phase/:phaseId/pool-preview', async (req, res) => {
+  const { phaseId } = req.params;
+  const key = `${req.user!.id}:${phaseId}`;
+  const hit = poolPreviewCache.get(key);
+  if (hit && Date.now() - hit.at < POOL_PREVIEW_CACHE_TTL_MS) {
+    res.json({ previews: hit.previews });
+    return;
+  }
+
+  try {
+    const previews = await fetchPoolPreviews(req.user!.accessToken, phaseId);
+    poolPreviewCache.set(key, { at: Date.now(), previews });
+    res.json({ previews });
+  } catch (err) {
+    res.status(502).json({ error: err instanceof Error ? err.message : 'Failed to load pool previews' });
+  }
+});
+
 interface RawSet {
   // Real sets have a numeric id; sets in an un-started/preview bracket come
   // back as a synthetic "preview_..." string instead.

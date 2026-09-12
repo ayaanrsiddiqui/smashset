@@ -613,6 +613,107 @@ interface ResponsePhaseGroupSummary {
   bracketType: string;
 }
 
+describe('GET /phase/:phaseId/pool-preview', () => {
+  afterEach(() => {
+    gqlMock.mockReset();
+  });
+
+  function standings(names: string[], total: number) {
+    return { pageInfo: { total }, nodes: names.map((name) => ({ entrant: { name } })) };
+  }
+
+  it('returns the few names each pool shows, with how many are not shown', async () => {
+    gqlMock.mockImplementation((_t: unknown, query: string) => {
+      if (!query.includes('PhasePoolPreviews')) throw new Error(`unexpected query: ${query}`);
+      return Promise.resolve({
+        phase: {
+          phaseGroups: {
+            pageInfo: { totalPages: 1 },
+            nodes: [
+              { id: 1, standings: standings(['FaZe | Sparg0', 'Dolan'], 25) },
+              { id: 2, standings: standings(['BTS | Atomic'], 1) },
+            ],
+          },
+        },
+      });
+    });
+    const cookie = await makeSignedInCookie('pool-preview');
+
+    const res = await request(app).get('/api/sets/phase/777/pool-preview').set('Cookie', cookie);
+
+    expect(res.status).toBe(200);
+    expect(res.body.previews).toEqual([
+      { phaseGroupId: 1, names: ['FaZe | Sparg0', 'Dolan'], total: 25 },
+      { phaseGroupId: 2, names: ['BTS | Atomic'], total: 1 },
+    ]);
+  });
+
+  it('pages through a phase with more pools than fit in one request', async () => {
+    gqlMock.mockImplementation((_t: unknown, _q: string, vars: { page: number }) =>
+      Promise.resolve({
+        phase: {
+          phaseGroups: {
+            pageInfo: { totalPages: 2 },
+            nodes: [{ id: vars.page, standings: standings([`Pool ${vars.page}`], 1) }],
+          },
+        },
+      })
+    );
+    const cookie = await makeSignedInCookie('pool-preview-paged');
+
+    const res = await request(app).get('/api/sets/phase/778/pool-preview').set('Cookie', cookie);
+
+    expect(res.status).toBe(200);
+    expect(res.body.previews.map((p: { phaseGroupId: number }) => p.phaseGroupId)).toEqual([1, 2]);
+  });
+
+  it('shrinks the page and starts over when start.gg calls the request too complex', async () => {
+    // The self-healing shape the set pager already uses: read start.gg's own
+    // reported cost back, rather than trusting a constant tuned once.
+    let firstPerPage = 0;
+    let retryPerPage = 0;
+    gqlMock.mockImplementation((_t: unknown, _q: string, vars: { page: number; perPage: number }) => {
+      if (firstPerPage === 0) {
+        firstPerPage = vars.perPage;
+        throw new StartggComplexityError('Your query complexity is too high. (actual: 4000)', 4000);
+      }
+      retryPerPage = vars.perPage;
+      return Promise.resolve({
+        phase: { phaseGroups: { pageInfo: { totalPages: 1 }, nodes: [{ id: 9, standings: standings(['Recovered'], 1) }] } },
+      });
+    });
+    const cookie = await makeSignedInCookie('pool-preview-complex');
+
+    const res = await request(app).get('/api/sets/phase/779/pool-preview').set('Cookie', cookie);
+
+    expect(res.status).toBe(200);
+    expect(retryPerPage).toBeLessThan(firstPerPage);
+    expect(res.body.previews).toEqual([{ phaseGroupId: 9, names: ['Recovered'], total: 1 }]);
+  });
+
+  it('keeps a pool whose standing has no entrant yet', async () => {
+    gqlMock.mockResolvedValue({
+      phase: {
+        phaseGroups: {
+          pageInfo: { totalPages: 1 },
+          nodes: [{ id: 3, standings: { pageInfo: { total: 2 }, nodes: [{ entrant: null }, { entrant: { name: 'Real' } }] } }],
+        },
+      },
+    });
+    const cookie = await makeSignedInCookie('pool-preview-null');
+
+    const res = await request(app).get('/api/sets/phase/780/pool-preview').set('Cookie', cookie);
+
+    expect(res.status).toBe(200);
+    expect(res.body.previews).toEqual([{ phaseGroupId: 3, names: ['Real'], total: 2 }]);
+  });
+
+  it('rejects an unauthenticated request', async () => {
+    const res = await request(app).get('/api/sets/phase/777/pool-preview');
+    expect(res.status).toBe(401);
+  });
+});
+
 describe('GET /:eventId/entrants', () => {
   afterEach(() => {
     gqlMock.mockReset();

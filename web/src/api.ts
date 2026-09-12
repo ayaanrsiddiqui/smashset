@@ -1,4 +1,4 @@
-import type { AccountDetails, BracketGroup, Character, CurrentUser, EntrantMatch, EventInfo, OpenSet, PhaseGroupSummary, SetDetail, Stage } from './types';
+import type { AccountDetails, BracketGroup, Character, CurrentUser, EntrantMatch, EventInfo, OpenSet, PhaseGroupSummary, PoolPreview, SetDetail, Stage } from './types';
 
 export class ApiError extends Error {
   // Assigned explicitly rather than as a constructor parameter property: the
@@ -107,6 +107,11 @@ export function fetchPhaseGroups(eventId: number): Promise<{ phaseGroups: PhaseG
  */
 export function searchEntrants(eventId: number, query: string): Promise<{ entrants: EntrantMatch[] }> {
   return req(`/api/sets/${eventId}/entrants?q=${encodeURIComponent(query)}`);
+}
+
+/** Who is in each pool of a phase. Loaded per phase, only when one is opened. */
+export function fetchPoolPreviews(phaseId: number): Promise<{ previews: PoolPreview[] }> {
+  return req(`/api/sets/phase/${phaseId}/pool-preview`);
 }
 
 export function fetchOpenSets(phaseGroupId: number): Promise<{ sets: OpenSet[] }> {

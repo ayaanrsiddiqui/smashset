@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
-import { searchEntrants } from './api';
-import type { EntrantMatch, PhaseGroupSummary } from './types';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { fetchPoolPreviews, searchEntrants } from './api';
+import type { EntrantMatch, PhaseGroupSummary, PoolPreview } from './types';
 
 interface Props {
   eventId: number;
@@ -68,6 +68,22 @@ export function PoolPicker({ eventId, eventName, phaseGroups, onPicked, onBack }
   const [searching, setSearching] = useState(false);
   const [lookupError, setLookupError] = useState<string | null>(null);
 
+  const [previews, setPreviews] = useState<Map<number, PoolPreview>>(new Map());
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  // Which phases have been asked for. A ref rather than state on purpose: as
+  // state it would be a dependency of the effect that writes it, so opening a
+  // phase would re-run the effect and its cleanup would cancel the very fetch
+  // it had just started, and no names would ever arrive.
+  const requestedPhases = useRef<Set<number>>(new Set());
+  const mounted = useRef(true);
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+
   useEffect(() => {
     const query = playerQuery.trim();
     if (query.length < MIN_PLAYER_QUERY) {
@@ -114,6 +130,42 @@ export function PoolPicker({ eventId, eventName, phaseGroups, onPicked, onBack }
     if (player) setExpanded(new Set(phases.map((phase) => phase.id)));
   }, [player, phases]);
 
+  // Pool names mean nothing on their own, so an open phase shows who is in each
+  // of its pools. Loaded per phase and only once opened, because a phase can
+  // hold 64 pools and the whole event at once would be a far bigger request
+  // than the screen needs. Skipped entirely while a player is selected: those
+  // rows show that player, and expanding every phase would otherwise fetch the
+  // entire event to display names it isn't going to use.
+  useEffect(() => {
+    if (player) return;
+    const missing = phases.filter((phase) => expanded.has(phase.id) && !requestedPhases.current.has(phase.id));
+    for (const phase of missing) {
+      requestedPhases.current.add(phase.id);
+      fetchPoolPreviews(phase.id)
+        .then(({ previews: loaded }) => {
+          if (!mounted.current) return;
+          setPreviews((current) => {
+            const next = new Map(current);
+            for (const preview of loaded) next.set(preview.phaseGroupId, preview);
+            return next;
+          });
+          setPreviewError(null);
+        })
+        .catch((err: unknown) => {
+          if (!mounted.current) return;
+          // Retryable: forget the phase so reopening it asks again.
+          requestedPhases.current.delete(phase.id);
+          setPreviewError(err instanceof Error ? err.message : 'Could not load who is in each pool');
+        });
+    }
+  }, [expanded, phases, player]);
+
+  function previewFor(pool: PhaseGroupSummary): { names: string; hidden: number } | null {
+    const preview = previews.get(pool.id);
+    if (!preview || preview.names.length === 0) return null;
+    return { names: preview.names.join(' · '), hidden: preview.total - preview.names.length };
+  }
+
   function toggle(phaseId: number) {
     setExpanded((open) => {
       const next = new Set(open);
@@ -143,6 +195,7 @@ export function PoolPicker({ eventId, eventName, phaseGroups, onPicked, onBack }
           onChange={(e) => setPlayerQuery(e.target.value)}
         />
         {lookupError && <p className="error">{lookupError}</p>}
+        {previewError && <p className="error">{previewError}</p>}
         {!lookupError && searching && <p className="lookup-note">Searching…</p>}
         {!lookupError && !searching && matches?.length === 0 && (
           <p className="lookup-note">No player matching "{playerQuery.trim()}"</p>
@@ -196,7 +249,23 @@ export function PoolPicker({ eventId, eventName, phaseGroups, onPicked, onBack }
                   {pools.map((pool) => (
                     <li key={pool.id} onClick={() => onPicked(pool.id)}>
                       <span className="entrant-names">{pool.displayIdentifier}</span>
-                      <span className="round-text">{pool.bracketType.replaceAll('_', ' ').toLowerCase()}</span>
+                      {player ? (
+                        <span className="round-text pool-preview">
+                          <strong className="matched-player">{player.name}</strong>
+                        </span>
+                      ) : (
+                        <>
+                          <span className="round-text pool-preview">
+                            {previewFor(pool)?.names ?? pool.bracketType.replaceAll('_', ' ').toLowerCase()}
+                          </span>
+                          {/* Its own column, so the count survives the name
+                              list being truncated — it's the part that says
+                              how much the row is not showing. */}
+                          {(previewFor(pool)?.hidden ?? 0) > 0 && (
+                            <span className="round-text pool-more">+{previewFor(pool)!.hidden} more</span>
+                          )}
+                        </>
+                      )}
                     </li>
                   ))}
                 </ul>

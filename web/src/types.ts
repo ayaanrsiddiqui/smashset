@@ -68,6 +68,13 @@ export interface PhaseGroupSummary {
   bracketType: string;
 }
 
+/** The few names a pool row shows, the way start.gg's own pool cards do. */
+export interface PoolPreview {
+  phaseGroupId: number;
+  names: string[];
+  total: number;
+}
+
 /** A player matching a lookup, with every pool they were seeded into. */
 export interface EntrantMatch {
   id: number;

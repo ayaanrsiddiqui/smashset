@@ -1,12 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { PoolPicker, groupIntoPhases } from './PoolPicker';
-import { searchEntrants } from './api';
+import { fetchPoolPreviews, searchEntrants } from './api';
 import type { EntrantMatch, PhaseGroupSummary } from './types';
 
-vi.mock('./api', () => ({ searchEntrants: vi.fn() }));
+vi.mock('./api', () => ({ searchEntrants: vi.fn(), fetchPoolPreviews: vi.fn() }));
 
 const searchEntrantsMock = vi.mocked(searchEntrants);
+const fetchPoolPreviewsMock = vi.mocked(fetchPoolPreviews);
 
 let nextId = 1;
 function pool(displayIdentifier: string, phaseId: number, phaseName: string, phaseNumSeeds: number): PhaseGroupSummary {
@@ -70,6 +71,11 @@ describe('groupIntoPhases', () => {
 });
 
 describe('PoolPicker', () => {
+  beforeEach(() => {
+    fetchPoolPreviewsMock.mockReset();
+    fetchPoolPreviewsMock.mockResolvedValue({ previews: [] });
+  });
+
   it('puts back above the phases, not below every pool', () => {
     renderPicker();
     const back = screen.getByRole('button', { name: /back/i });
@@ -128,6 +134,8 @@ describe('PoolPicker — player lookup', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     searchEntrantsMock.mockReset();
+    fetchPoolPreviewsMock.mockReset();
+    fetchPoolPreviewsMock.mockResolvedValue({ previews: [] });
   });
 
   afterEach(() => {
@@ -254,5 +262,119 @@ describe('PoolPicker — player lookup', () => {
 
     expect(screen.getByRole('button', { name: /Phase 1/ })).toHaveTextContent('2 brackets');
     expect(screen.getByText('D101')).toBeInTheDocument();
+  });
+});
+
+describe('PoolPicker — who is in each pool', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    searchEntrantsMock.mockReset();
+    fetchPoolPreviewsMock.mockReset();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const PHASE_1_PREVIEWS = {
+    previews: [
+      { phaseGroupId: poolId('D101'), names: ['FaZe | Sparg0', 'Dolan', 'WW | Thass', 'ebs | MarsBars'], total: 25 },
+      { phaseGroupId: poolId('D102'), names: ['BTS | Atomic', 'Aeris'], total: 2 },
+    ],
+  };
+
+  async function settle(): Promise<void> {
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300);
+    });
+  }
+
+  it('fetches nothing until a phase is actually opened', async () => {
+    fetchPoolPreviewsMock.mockResolvedValue(PHASE_1_PREVIEWS);
+    renderPicker();
+    await settle();
+
+    // 64 pools in one phase, five phases — loading it all up front would be a
+    // far bigger request than a collapsed screen needs.
+    expect(fetchPoolPreviewsMock).not.toHaveBeenCalled();
+  });
+
+  it('shows who is in each pool once the phase is opened', async () => {
+    fetchPoolPreviewsMock.mockResolvedValue(PHASE_1_PREVIEWS);
+    renderPicker();
+
+    fireEvent.click(screen.getByRole('button', { name: /Phase 1/ }));
+    await settle();
+
+    expect(fetchPoolPreviewsMock).toHaveBeenCalledWith(1);
+    expect(screen.getByText('FaZe | Sparg0 · Dolan · WW | Thass · ebs | MarsBars')).toBeInTheDocument();
+    // Its own element, so truncating the names can't take the count with it.
+    expect(screen.getByText('+21 more')).toBeInTheDocument();
+  });
+
+  it('omits the "+N more" when the pool holds nobody else', async () => {
+    fetchPoolPreviewsMock.mockResolvedValue(PHASE_1_PREVIEWS);
+    renderPicker();
+
+    fireEvent.click(screen.getByRole('button', { name: /Phase 1/ }));
+    await settle();
+
+    const row = screen.getByText('BTS | Atomic · Aeris').closest('li')!;
+    // That pool holds exactly the two it lists, so there is no remainder to
+    // report — unlike D101 above it, which does show one.
+    expect(row.textContent).not.toMatch(/more/);
+  });
+
+  it('asks once per phase, not once per render', async () => {
+    fetchPoolPreviewsMock.mockResolvedValue(PHASE_1_PREVIEWS);
+    renderPicker();
+
+    const phase1 = screen.getByRole('button', { name: /Phase 1/ });
+    fireEvent.click(phase1);
+    await settle();
+    fireEvent.click(phase1);
+    fireEvent.click(phase1);
+    await settle();
+
+    expect(fetchPoolPreviewsMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('falls back to the bracket type when a pool has no names to show', async () => {
+    fetchPoolPreviewsMock.mockResolvedValue({ previews: [] });
+    renderPicker();
+
+    fireEvent.click(screen.getByRole('button', { name: /Top 8/ }));
+    await settle();
+
+    expect(screen.getByText('double elimination')).toBeInTheDocument();
+  });
+
+  it('surfaces a failed preview load instead of showing a silently bare list', async () => {
+    fetchPoolPreviewsMock.mockRejectedValue(new Error('start.gg is down'));
+    renderPicker();
+
+    fireEvent.click(screen.getByRole('button', { name: /Phase 1/ }));
+    await settle();
+
+    expect(screen.getByText('start.gg is down')).toBeInTheDocument();
+  });
+
+  it('names the matched player on their pool, rather than the pool preview', async () => {
+    searchEntrantsMock.mockResolvedValue({
+      entrants: [{ id: 2, name: 'JL | Zoruya', phaseGroupIds: [poolId('D102')] }],
+    });
+    fetchPoolPreviewsMock.mockResolvedValue(PHASE_1_PREVIEWS);
+    renderPicker();
+
+    fireEvent.change(lookup(), { target: { value: 'zoruya' } });
+    await settle();
+
+    // The question was "where is this player", so the row answers it — and
+    // every phase auto-opens, so fetching previews here would pull the whole
+    // event to show names that are never displayed.
+    const highlighted = [...document.querySelectorAll('.matched-player')].map((el) => el.textContent);
+    expect(highlighted).toEqual(['JL | Zoruya']);
+    expect(screen.queryByText(/BTS \| Atomic/)).not.toBeInTheDocument();
+    expect(fetchPoolPreviewsMock).not.toHaveBeenCalled();
   });
 });
