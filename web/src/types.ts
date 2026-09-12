@@ -107,6 +107,9 @@ export interface BracketSlot {
   // for a slot fed by a prior set in this same group, or seeded from the
   // event's initial registration.
   progressionOrigin: { phaseName: string; poolName: string | null } | null;
+  // The entrant's seed. Comes from the bracket's slow-clock structure fetch,
+  // so a slot filled in the last minute may not carry it yet.
+  seedNum: number | null;
 }
 
 export interface BracketSet {

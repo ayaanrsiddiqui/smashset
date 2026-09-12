@@ -414,6 +414,11 @@ interface RawStructureSet {
     // seed was itself produced by an earlier phase, e.g. a pool feeding a
     // bracket) says where this entrant qualified in from.
     seed: {
+      // The entrant's seed in this phase group. Free here — a scalar on an
+      // object this query already returns — where adding it to the polled
+      // live query measured at +2 objects per set (5.95 -> 7.95), past the
+      // cost model and into a smaller page size on every poll.
+      seedNum: number | null;
       progressionSource: {
         originPhase: { name: string } | null;
         originPhaseGroup: { displayIdentifier: string } | null;
@@ -463,6 +468,9 @@ export interface BracketSlot {
   // isn't the first phase they entered — null for a slot fed by a prior set
   // in this same group, or seeded from the event's initial registration.
   progressionOrigin: { phaseName: string; poolName: string | null } | null;
+  // The entrant's seed, from the structure query's slow clock — so a slot
+  // filled in the last minute may not have it yet, which only delays a label.
+  seedNum: number | null;
 }
 
 export interface BracketSet {
@@ -630,6 +638,7 @@ const BRACKET_STRUCTURE_QUERY = /* GraphQL */ `
           }
           slots {
             seed {
+              seedNum
               progressionSource {
                 originPhase {
                   name
@@ -1060,9 +1069,13 @@ async function fetchBracketData(accessToken: string, userId: number, phaseGroupI
     const characters = setCharacterCache.get(`${userId}:${s.id}`)?.byEntrant ?? {};
 
     const slots = s.slots.map((slot, i): BracketSlot => {
-      const origin = wiring?.slots?.[i]?.seed?.progressionSource;
+      const seed = wiring?.slots?.[i]?.seed;
+      const origin = seed?.progressionSource;
       return {
         entrant: slot.entrant,
+        // Only meaningful with an entrant in the slot: start.gg returns the
+        // seed of whoever is in it, and an empty slot has nobody.
+        seedNum: slot.entrant ? (seed?.seedNum ?? null) : null,
         score: scores[i],
         characterId: slot.entrant ? (characters[slot.entrant.id] ?? null) : null,
         prereqSetId: slot.prereqType === 'set' ? slot.prereqId : null,

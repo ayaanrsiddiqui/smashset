@@ -10,6 +10,7 @@ function slot(entrantId: number | null, score: number | null = null, prereqSetId
     prereqSetId,
     prereqPlacement,
     progressionOrigin: null,
+        seedNum: null,
   };
 }
 
@@ -129,8 +130,8 @@ describe('the Grand Final Reset that usually never happens', () => {
       lPlacement: null,
       completedAt: null,
       slots: [
-        { entrant: null, score: null, characterId: null, prereqSetId: 'P', prereqPlacement: 1, progressionOrigin: null },
-        { entrant: null, score: null, characterId: null, prereqSetId: 'P', prereqPlacement: 2, progressionOrigin: null },
+        { entrant: null, score: null, characterId: null, prereqSetId: 'P', prereqPlacement: 1, progressionOrigin: null, seedNum: null },
+        { entrant: null, score: null, characterId: null, prereqSetId: 'P', prereqPlacement: 2, progressionOrigin: null, seedNum: null },
       ],
       winnerAdvancesToPhase: null,
       loserAdvancesToPhase: null,

@@ -3,6 +3,7 @@ import { layoutBracket, BOX_HEIGHT, BOX_WIDTH, LINK_WIDTH } from './bracketLayou
 import { bracketSetById, isOpenable, isUnreachedGrandFinalReset, isWinnerSlot, slotLabel } from './bracketDisplay';
 import { compareIdentifiers } from './identifierOrder';
 import { anchoredScroll, clampZoom, fitZoom, MAX_ZOOM, MIN_ZOOM, zoomStep } from './bracketZoom';
+import { upsetFactor } from './upsetFactor';
 import type { BracketGroup, BracketSet, Character } from './types';
 
 // The only two shapes with an elimination tree to draw — round robin and
@@ -301,6 +302,13 @@ function BracketTree({
         {layout.boxes.map(({ set: s, x, y, links }) => {
           const clickable = isOpenable(s);
           const focused = focusedSetId != null && String(s.id) === String(focusedSetId);
+          // Only a finished set has a result to have been an upset.
+          const winnerSlot = s.slots.find((slot) => isWinnerSlot(s, slot));
+          const loserSlot = s.slots.find((slot) => slot !== winnerSlot);
+          const upset =
+            s.state === 3 && winnerSlot && loserSlot
+              ? upsetFactor(winnerSlot.seedNum, loserSlot.seedNum)
+              : null;
           return (
             <div key={s.id}>
               <div
@@ -310,16 +318,27 @@ function BracketTree({
                 onClick={clickable ? () => onSelectSet(s) : undefined}
               >
                 <span className="bracket-badge">{s.identifier}</span>
+                {upset !== null && (
+                  <span
+                    className={`bracket-upset${upset > 0 ? ' real' : ''}`}
+                    title={upset > 0 ? `Upset factor ${upset}` : 'Seeding held'}
+                  >
+                    {upset > 0 ? upset : '✓'}
+                  </span>
+                )}
                 {s.slots.map((slot, i) => {
                   const won = isWinnerSlot(s, slot);
                   return (
                     <div key={i} className={`bracket-row${won ? ' winner' : ''}`}>
+                      {/* Seed on the left, character on the right beside the
+                          score — start.gg's own order. */}
+                      <span className="bracket-seed">{slot.seedNum ?? ''}</span>
+                      <span className="bracket-name">{slotLabel(slot, byId)}</span>
                       {/* alt is empty deliberately: the tag it sits beside is
                           already read out, so the icon is decoration. */}
                       {slot.characterId != null && iconUrlById.has(slot.characterId) && (
                         <img className="bracket-character" src={iconUrlById.get(slot.characterId)} alt="" />
                       )}
-                      <span className="bracket-name">{slotLabel(slot, byId)}</span>
                       {s.state === 3 && slot.score !== null && <span className={`bracket-score ${won ? 'won' : 'lost'}`}>{slot.score}</span>}
                     </div>
                   );

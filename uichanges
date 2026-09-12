@@ -10,7 +10,7 @@ Last updated: 2026-09-12, working top to bottom.
 
 [x] 1. Extra space around the alphabetical set identifier (A, B, C) — the text in the box is too close to it.
 
-[ ] 2. Characters are on the left before the tag. To mirror start.gg, put the character on the
+[x] 2. Characters are on the left before the tag. To mirror start.gg, put the character on the
        right just before the score, and the seed on the left before the tag. For brackets with
        pools the seed is complicated to differentiate between pools — display the whole thing for
        now, you'll figure out what looks right later.
@@ -19,7 +19,7 @@ Last updated: 2026-09-12, working top to bottom.
 
 [x] 4. Don't display Grand Final Reset until a reset is actually reached.
 
-[ ] 6. Upset factor label on the right of each set, same size as the identifier on the left.
+[x] 6. Upset factor label on the right of each set, same size as the identifier on the left.
        Double elim: bucket by projected placement — grands (1-2), losers finals (3), losers semis
        (4), losers quarters (5-6), then (7-8), then (9-12). If the result is an upset, the factor
        is how far apart the buckets are (seed 7 over seed 2 ≈ 4). Not an upset, or same bucket →
@@ -87,6 +87,12 @@ Last updated: 2026-09-12, working top to bottom.
 ---
 
 ## Notes / decisions / blockers
+
+**6 (upset factor) — built for every bracket type, not just double elim.** You
+scoped it to double elim, but the buckets are projected *placements*, and the
+maths does not care how the bracket is shaped — a single-elim bracket produces
+the same tiers. Restricting it would have meant threading bracketType into the
+component to show less. Say if you want it double-elim only.
 
 **Flaky web tests, noted not fixed.** Two runs of `npm run verify` during this
 batch failed a single App test that passes on its own and in its own file

@@ -14,6 +14,7 @@ function slot(
     characterId: null,
     prereqSetId,
     prereqPlacement,
+    seedNum: null,
     progressionOrigin,
   };
 }

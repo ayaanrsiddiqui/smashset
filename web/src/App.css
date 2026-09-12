@@ -346,15 +346,49 @@
   object-fit: cover;
 }
 
+/* Mirrors .bracket-badge on the other edge: same size, same treatment, so the
+   two read as a pair of labels on the set rather than one label and a note. */
+.bracket-upset {
+  position: absolute;
+  top: 50%;
+  right: -9px;
+  transform: translateY(-50%);
+  background: #2a2e38;
+  color: #6b7280;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 3px 5px;
+  border-radius: 6px;
+  border: 1px solid #14161c;
+  min-width: 8px;
+  text-align: center;
+}
+
+/* Only an actual upset is worth colour; seeding holding is the common case. */
+.bracket-upset.real {
+  background: #7c2d12;
+  color: #fed7aa;
+}
+
+.bracket-seed {
+  flex: none;
+  min-width: 14px;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: #5b6270;
+  text-align: right;
+}
+
 .bracket-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 6px;
   height: 50%;
-  /* Extra room on the left: the identifier badge is centred on the box edge
-     and juts about 7px inside it, so an 8px pad left the tag touching it. */
-  padding: 0 8px 0 16px;
+  /* Extra room on both edges: the identifier badge and the upset badge are
+     centred on the box edges and jut about 7px inside them. */
+  padding: 0 16px;
   font-size: 13px;
   color: #9aa0ac;
 }
