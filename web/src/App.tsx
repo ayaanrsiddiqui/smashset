@@ -917,64 +917,10 @@ export default function App() {
 
   const topX = account?.topXBo5 ?? null;
 
-  if (selectedSet) {
-    // The richer bracket-shaped view of whatever's currently selected, if
-    // any — present for anything the bracket poll has seen (which includes
-    // completed sets; the open-sets poll never does). Powers the
-    // already-reported banner and, below, a sensible default winner when
-    // there's no search match to go on.
-    const selectedBracketSet = bracketById.get(String(selectedSet.id));
-    const priorResult = selectedBracketSet ? priorResultFor(selectedBracketSet) : null;
-
-    return (
-      <div className="app-shell unified">
-        {outboxEl}
-        {toastEl}
-        {headerFor(event, phaseGroups, phaseGroupId)}
-        <ReportPanel
-          // Remounts when the set changes so the score/character initializers
-          // re-read priorDetail. Without it, clicking a second completed set
-          // while the first one's detail fetch is still in flight leaves the
-          // panel showing the new set's players pre-filled with the old set's
-          // games — one confirm away from reporting the wrong result.
-          key={selectedSet.id}
-          set={selectedSet}
-          phaseGroupId={phaseGroupId}
-          // Search-query match wins when there is one (the usual reporting
-          // flow); otherwise, correcting an already-decided set should
-          // start on the winner it actually has, not an arbitrary side.
-          presumedWinnerId={matchedEntrantId(selectedSet) ?? selectedBracketSet?.winnerId ?? null}
-          priorResult={priorResult}
-          priorDetail={priorDetail}
-          priorWinnerEntrantId={selectedBracketSet?.state === 3 ? selectedBracketSet.winnerId : null}
-          readOnly={!canReport}
-          characters={characters}
-          stages={stages}
-          topXBo5={topX}
-          videogameId={event.videogame.id}
-          onQueue={queueReport}
-          onNotify={notify}
-          onAuthError={handledAuthError}
-          onDone={() => {
-            // Reached only by the synchronous winner-change path; the queued
-            // path goes through queueReport, and its success toast fires when
-            // start.gg confirms rather than when the panel closes.
-            notify(`Reported ${selectedSet.entrants.map((e) => e.name).join(' vs ')}`, 'success');
-            // Clearing selectedSet re-arms both poll effects, which refresh
-            // immediately — calling them here too just doubled every report's
-            // start.gg traffic.
-            setSelectedSet(null);
-            setPriorDetail(null);
-            setQuery('');
-          }}
-          onCancel={() => {
-            setSelectedSet(null);
-            setPriorDetail(null);
-          }}
-        />
-      </div>
-    );
-  }
+  // Computed here rather than in a branch of its own: the report panel is an
+  // overlay over this screen now, not a screen that replaces it.
+  const selectedBracketSet = selectedSet ? bracketById.get(String(selectedSet.id)) : undefined;
+  const priorResult = selectedBracketSet ? priorResultFor(selectedBracketSet) : null;
 
   return (
     <div className={`app-shell unified${panelExpanded ? ' panel-expanded' : ''}`}>
@@ -1112,6 +1058,60 @@ export default function App() {
           </li>
         )}
       </SetPanel>
+
+
+      {selectedSet && (
+        /* An overlay rather than its own screen: on a desktop the report form
+           left most of the window empty, and the bracket underneath is the
+           context a TO is reporting against. The bracket behind is frozen on
+           purpose — both polls stop while a set is open, and dimming it says
+           "paused" rather than pretending it is live. */
+        <div className="report-overlay">
+          <div className="report-modal" role="dialog" aria-modal="true" aria-label="Report set">
+        <ReportPanel
+          // Remounts when the set changes so the score/character initializers
+          // re-read priorDetail. Without it, clicking a second completed set
+          // while the first one's detail fetch is still in flight leaves the
+          // panel showing the new set's players pre-filled with the old set's
+          // games — one confirm away from reporting the wrong result.
+          key={selectedSet.id}
+          set={selectedSet}
+          phaseGroupId={phaseGroupId}
+          // Search-query match wins when there is one (the usual reporting
+          // flow); otherwise, correcting an already-decided set should
+          // start on the winner it actually has, not an arbitrary side.
+          presumedWinnerId={matchedEntrantId(selectedSet) ?? selectedBracketSet?.winnerId ?? null}
+          priorResult={priorResult}
+          priorDetail={priorDetail}
+          priorWinnerEntrantId={selectedBracketSet?.state === 3 ? selectedBracketSet.winnerId : null}
+          readOnly={!canReport}
+          characters={characters}
+          stages={stages}
+          topXBo5={topX}
+          videogameId={event.videogame.id}
+          onQueue={queueReport}
+          onNotify={notify}
+          onAuthError={handledAuthError}
+          onDone={() => {
+            // Reached only by the synchronous winner-change path; the queued
+            // path goes through queueReport, and its success toast fires when
+            // start.gg confirms rather than when the panel closes.
+            notify(`Reported ${selectedSet.entrants.map((e) => e.name).join(' vs ')}`, 'success');
+            // Clearing selectedSet re-arms both poll effects, which refresh
+            // immediately — calling them here too just doubled every report's
+            // start.gg traffic.
+            setSelectedSet(null);
+            setPriorDetail(null);
+            setQuery('');
+          }}
+          onCancel={() => {
+            setSelectedSet(null);
+            setPriorDetail(null);
+          }}
+        />
+          </div>
+        </div>
+      )}
 
       {toastEl}
       {showHelp && <HelpModal onClose={() => setShowHelp(false)} />}

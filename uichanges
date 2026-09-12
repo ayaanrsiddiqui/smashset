@@ -2,7 +2,9 @@
 
 Legend: [ ] not started · [~] in progress · [x] done · [!] blocked / needs your call
 
-Last updated: 2026-09-12, working top to bottom.
+Last updated: 2026-09-12. **All 20 done.** Each was verified in a browser, not
+just by tests. Notes, decisions and the two things I'd push back on are at the
+bottom — worth reading before you take any of it as settled.
 
 ---
 
@@ -48,7 +50,7 @@ Last updated: 2026-09-12, working top to bottom.
 
 [x] 9. The sticky header scrolls for a bit before sticking, which is awkward. Fix it in place.
 
-[~] 10. On desktop the page doesn't use the available space well. Condense vertically. If there's
+[x] 10. On desktop the page doesn't use the available space well. Condense vertically. If there's
         still a lot of empty space, especially at the sides, make the report screen a modal
         overlay over the bracket/set list view instead of its own screen.
 
@@ -125,16 +127,17 @@ suite competes for the event loop. I gave two of them a 15s budget already;
 if it keeps happening the answer is probably to drive the drain loop with
 injected time rather than wall clock. Not chased further today.
 
-**10 (desktop space) — vertical condensing done, the modal is still open.**
-The report screen was using the plain centred 640px shell while the main screen
-had a proper full-height one; it now has a fixed header, its own scrolling
-body, a pinned action bar and a 720px content column. Measured at 1500x950
-afterwards there is still a lot of empty margin at the sides, so the condition
-you set for "make it a modal overlay" is met and I'll do that — but noting one
-real consequence first: both poll effects deliberately stop while a set is open
-(`|| selectedSet`), so a bracket visible behind a modal would look live and be
-frozen. Either it keeps polling behind the modal (more start.gg traffic while
-reporting, and the bracket moving under the TO mid-report) or it stays frozen
-and looks wrong. I'll go with keeping it frozen and dimmed, which reads as
-"paused" rather than pretending. Say if you'd rather it stayed live.
+**10 (desktop space) — condensed first, then made a modal, and one decision
+inside it is yours to overrule.** The report screen was using the plain centred
+640px shell while the main screen had a proper full-height one; it now has a
+fixed header, its own scrolling body and a pinned action bar. Measured at
+1500x950 afterwards there was still a lot of empty margin, so the condition you
+set fired and it is a modal over the bracket now.
+
+The decision: both poll effects deliberately stop while a set is open
+(`|| selectedSet`), so the bracket behind the modal is genuinely frozen. I left
+it frozen and dimmed it, because dimming reads as "paused" while a bright
+bracket would be quietly lying. The alternative is to keep polling behind the
+modal, which costs start.gg traffic during the one activity that needs to be
+fast and moves the bracket under the TO mid-report. Say if you want it live.
 

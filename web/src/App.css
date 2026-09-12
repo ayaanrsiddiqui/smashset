@@ -868,6 +868,55 @@
 }
 
 /* Report panel */
+/* Dims and covers the bracket rather than replacing the screen. The bracket
+   behind is genuinely frozen while a set is open — both polls stop — so it is
+   dimmed rather than left looking live. */
+.report-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: rgba(8, 9, 12, 0.72);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+.report-modal {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: min(960px, 100%);
+  height: min(860px, 100%);
+  background: #14161c;
+  border: 1px solid #2a2e38;
+  border-radius: 14px;
+  overflow: hidden;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.6);
+}
+
+/* On a phone there is no space to be an overlay in — it is the screen. */
+@media (max-width: 900px) {
+  .report-overlay {
+    padding: 0;
+  }
+
+  .report-modal {
+    height: 100%;
+    border: none;
+    border-radius: 0;
+  }
+}
+
+/* Wide enough now to put the matchup and the games side by side instead of
+   stacking them down the middle of an empty window. */
+@media (min-width: 901px) {
+  .report-header > *,
+  .report-actions > * {
+    max-width: 860px;
+  }
+}
+
 .report-panel {
   display: flex;
   flex-direction: column;
@@ -1193,7 +1242,9 @@ kbd {
 }
 
 .report-help-trigger {
-  position: fixed;
+  /* Anchored to the panel, not the window: as an overlay the panel no longer
+     fills the screen, and a button in the window's corner belongs to nothing. */
+  position: absolute;
   right: 16px;
   bottom: 16px;
   z-index: 30;
@@ -1209,7 +1260,7 @@ kbd {
 }
 
 .report-help-popover {
-  position: fixed;
+  position: absolute;
   right: 16px;
   bottom: 62px;
   z-index: 30;
