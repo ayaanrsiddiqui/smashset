@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import { pool } from './pool.js';
-import { getPlayerMains, upsertPlayerMain } from './mains.js';
+import { getPlayerMains, insertComputedPlayerMain, upsertPlayerMain } from './mains.js';
 import { closeTestPool } from '../test-helpers.js';
 
 // Real start.gg player ids are always positive — negative ids are a
@@ -108,5 +108,41 @@ describe('db/mains', () => {
 
     const mains = await getPlayerMains([playerId], otherVideogameId);
     expect(mains.has(playerId)).toBe(false);
+  });
+
+  it('insertComputedPlayerMain writes when there is nothing on file yet', async () => {
+    const playerId = testPlayerId();
+
+    expect(await insertComputedPlayerMain(playerId, VIDEOGAME_ID, 1338, 4, 8)).toBe(true);
+
+    const mains = await getPlayerMains([playerId], VIDEOGAME_ID);
+    expect(mains.get(playerId)?.characterId).toBe(1338);
+  });
+
+  it('insertComputedPlayerMain leaves a row that is already there alone', async () => {
+    // The race this exists for: ensureMainComputed only fires for a player
+    // with no main, so a row existing by the time the lookup returns means
+    // somebody wrote one while it was in flight — the TO, who opened the pool,
+    // read "no main on file" and corrected it. A plain upsert lands last and
+    // throws that away.
+    const playerId = testPlayerId();
+    await upsertPlayerMain(playerId, VIDEOGAME_ID, 1300, 0, 0);
+
+    expect(await insertComputedPlayerMain(playerId, VIDEOGAME_ID, 1338, 4, 8)).toBe(false);
+
+    const mains = await getPlayerMains([playerId], VIDEOGAME_ID);
+    expect(mains.get(playerId)?.characterId).toBe(1300);
+  });
+
+  it('a TO setting a main still overwrites whatever a lookup computed', async () => {
+    // The other direction has to keep working: a correction is explicit and
+    // always wins, however recently the background lookup ran.
+    const playerId = testPlayerId();
+    await insertComputedPlayerMain(playerId, VIDEOGAME_ID, 1338, 4, 8);
+
+    await upsertPlayerMain(playerId, VIDEOGAME_ID, 1300, 0, 0);
+
+    const mains = await getPlayerMains([playerId], VIDEOGAME_ID);
+    expect(mains.get(playerId)?.characterId).toBe(1300);
   });
 });

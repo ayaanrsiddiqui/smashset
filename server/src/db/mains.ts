@@ -58,3 +58,33 @@ export async function upsertPlayerMain(
   );
   return fromRow(rows[0]);
 }
+
+/**
+ * The background lookup's write: fills a gap, never overrules what is already
+ * on file.
+ *
+ * ensureMainComputed only ever fires for a player with no row, so by the time
+ * the lookup returns, a row existing at all means somebody wrote one while it
+ * was in flight — in practice the TO, who opened the pool, saw "no main on
+ * file" and corrected it in the second the lookup took. A plain upsert lands
+ * last and silently throws that correction away. DO NOTHING makes the check
+ * and the write one atomic statement, rather than a read followed by a write
+ * with the same race in the gap between them.
+ *
+ * Returns whether it actually wrote.
+ */
+export async function insertComputedPlayerMain(
+  playerId: number,
+  videogameId: number,
+  characterId: number | null,
+  gamesTallied: number,
+  setsConsidered: number
+): Promise<boolean> {
+  const { rowCount } = await pool.query(
+    `INSERT INTO player_mains (player_id, videogame_id, character_id, games_tallied, sets_considered)
+     VALUES ($1, $2, $3, $4, $5)
+     ON CONFLICT (player_id, videogame_id) DO NOTHING`,
+    [playerId, videogameId, characterId, gamesTallied, setsConsidered]
+  );
+  return (rowCount ?? 0) > 0;
+}

@@ -7,10 +7,12 @@ vi.mock('./startgg.js', async (importOriginal) => ({
   gql: (...args: unknown[]) => gqlMock(...args),
 }));
 
-const upsertPlayerMainMock = vi.fn();
+// The computed path's write, not upsertPlayerMain — mocking the wrong one
+// leaves the real query running against the test database from here.
+const insertComputedMainMock = vi.fn().mockResolvedValue(true);
 vi.mock('./db/mains.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./db/mains.js')>()),
-  upsertPlayerMain: (...args: unknown[]) => upsertPlayerMainMock(...args),
+  insertComputedPlayerMain: (...args: unknown[]) => insertComputedMainMock(...args),
 }));
 
 const PLAYER_ID = 1000;
@@ -99,7 +101,8 @@ describe('tallyMainCharacter', () => {
 describe('ensureMainComputed — failure backoff', () => {
   beforeEach(() => {
     gqlMock.mockReset();
-    upsertPlayerMainMock.mockReset();
+    insertComputedMainMock.mockReset();
+    insertComputedMainMock.mockResolvedValue(true);
   });
 
   it('does not re-fire a failed lookup on the next poll', async () => {
@@ -124,7 +127,7 @@ describe('ensureMainComputed — failure backoff', () => {
     gqlMock.mockResolvedValue({ player: { sets: { nodes: [] } } });
 
     ensureMainComputed('token', 4343, 1386);
-    await vi.waitFor(() => expect(upsertPlayerMainMock).toHaveBeenCalled());
+    await vi.waitFor(() => expect(insertComputedMainMock).toHaveBeenCalled());
 
     expect(gqlMock).toHaveBeenCalledTimes(1);
   });

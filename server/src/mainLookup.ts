@@ -1,5 +1,5 @@
 import { gql } from './startgg.js';
-import { upsertPlayerMain } from './db/mains.js';
+import { insertComputedPlayerMain } from './db/mains.js';
 
 // SetFilters has no videogameId filter (confirmed via schema introspection),
 // so Player.sets spans every game a player has ever played — over-fetch and
@@ -161,12 +161,23 @@ export async function computePlayerMain(accessToken: string, playerId: number, v
     const relevantSets = allSets.filter((s) => s.event?.videogame?.id === videogameId).slice(0, SETS_TO_CONSIDER);
     const result = tallyMainCharacter(relevantSets, playerId);
 
-    await upsertPlayerMain(playerId, videogameId, result?.characterId ?? null, result?.gamesTallied ?? 0, relevantSets.length);
-
-    console.log(
-      `[mains] computed main for player ${playerId} (videogame ${videogameId}): ` +
-        (result ? `character ${result.characterId} (${result.gamesTallied}/${relevantSets.length} sets)` : 'no computable main')
+    const wrote = await insertComputedPlayerMain(
+      playerId,
+      videogameId,
+      result?.characterId ?? null,
+      result?.gamesTallied ?? 0,
+      relevantSets.length
     );
+
+    if (!wrote) {
+      // Somebody set one while this was in flight. Theirs stands.
+      console.log(`[mains] discarded computed main for player ${playerId} (videogame ${videogameId}): one was set while it ran`);
+    } else {
+      console.log(
+        `[mains] computed main for player ${playerId} (videogame ${videogameId}): ` +
+          (result ? `character ${result.characterId} (${result.gamesTallied}/${relevantSets.length} sets)` : 'no computable main')
+      );
+    }
   } finally {
     releaseSlot();
   }
