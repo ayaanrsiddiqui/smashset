@@ -1231,6 +1231,25 @@ kbd {
   visibility: hidden;
 }
 
+.main-status-name {
+  color: #9aa0ac;
+  font-size: 13px;
+}
+
+/* Dim until the main has actually been put into the games — the difference
+   the old sentence was spending a whole row to describe. */
+.main-status-icon {
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  object-fit: cover;
+}
+
+.main-status-icon.dim {
+  filter: grayscale(1);
+  opacity: 0.45;
+}
+
 .edit-main-row {
   display: flex;
   align-items: center;
@@ -2272,6 +2291,22 @@ kbd {
 
 .set-panel-list .result-num {
   grid-area: num;
+}
+
+.entrant-with-icon {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+/* Fixed size and flex:none so a row's height never depends on whether there
+   was a character to show — most of the time there is not. */
+.row-character {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  border-radius: 3px;
+  object-fit: cover;
 }
 
 .set-panel-list .entrant-names {

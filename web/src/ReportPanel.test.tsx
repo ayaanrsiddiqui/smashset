@@ -297,3 +297,68 @@ describe('ReportPanel — Enter on a score that cannot be reported', () => {
     expect(nudge()).toBeNull();
   });
 });
+
+/**
+ * A player's main used to be a sentence — "Fox — seen in 4 games across their
+ * last 4 sets" — which said what was on file but not whether it was going in.
+ * It is the icon now, dim until m actually puts it into the games.
+ */
+describe('ReportPanel — the main on file, as an icon', () => {
+  const FOX = { id: 100, name: 'Fox', imageUrl: 'https://example.test/fox.png' };
+  const icons = () => [...document.querySelectorAll('.main-status-icon')] as HTMLImageElement[];
+
+  function renderWithMain() {
+    render(
+      <ReportPanel
+        set={{
+          ...setFor('Winners Round 1'),
+          entrants: [
+            { id: 10, name: 'Ada', playerId: 11, suggestedMain: { characterId: 100, gamesTallied: 4, setsConsidered: 4 } },
+            { id: 20, name: 'mudd', playerId: 12 },
+          ],
+        }}
+        presumedWinnerId={10}
+        priorWinnerEntrantId={null}
+        onQueue={onQueue}
+        characters={[FOX]}
+        stages={[]}
+        topXBo5={null}
+        videogameId={1386}
+        phaseGroupId={1}
+        onNotify={vi.fn()}
+        onAuthError={() => false}
+        onDone={vi.fn()}
+        onCancel={vi.fn()}
+      />
+    );
+  }
+
+  it('shows the main dim until it has actually been applied', () => {
+    renderWithMain();
+
+    expect(icons()).toHaveLength(1);
+    expect(icons()[0].alt).toBe('Fox');
+    expect(icons()[0].className).toContain('dim');
+  });
+
+  it('lights it up when m fills it into the games', () => {
+    renderWithMain();
+    fireEvent.keyDown(window, { key: 'm' });
+
+    expect(icons()[0].className).not.toContain('dim');
+  });
+
+  it('keeps what the sentence used to say, in the tooltip, without repeating the name', () => {
+    renderWithMain();
+
+    expect(icons()[0].title).toBe('Fox — seen in 4 games across their last 4 sets · press m to use it');
+  });
+
+  it('says so in words when there is no main to show', () => {
+    renderWithMain();
+
+    // mudd has none, so there is no icon for that side to be dim or lit.
+    expect(document.querySelectorAll('.main-status-text')).toHaveLength(1);
+    expect(document.querySelector('.main-status-text')?.textContent).toBe('no main on file');
+  });
+});

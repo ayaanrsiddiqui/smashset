@@ -1300,7 +1300,11 @@ describe('App — reporting a set and walking away', () => {
 
   /** Opens the one set in the list and submits a 2-0 for Ada. */
   async function reportIt() {
-    await screen.findByText(/Ada vs mudd/);
+    // Matched on the row rather than as one text node: each tag now sits in
+    // its own span so a character icon can go beside it.
+    await screen.findByText(
+      (_content, element) => element?.className === 'entrant-names' && /Ada vs mudd/.test(element.textContent ?? '')
+    );
     fireEvent.keyDown(window, { key: '1' });
     await screen.findByText(/Winners Round 1 · A/);
     for (const key of ['w', 'w', 'Enter', 'Enter']) fireEvent.keyDown(window, { key });

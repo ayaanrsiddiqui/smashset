@@ -756,6 +756,41 @@ export function ReportPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   });
 
+  /**
+   * A player's main as the icon itself rather than a sentence about it.
+   *
+   * Dim until it has actually been applied to the games — which is the whole
+   * distinction the old line of text was spending a row to make ("seen in 4
+   * games across their last 4 sets" told a TO what was on file, not whether it
+   * was going in). Pressing m fills the games and lights it up. The sentence
+   * survives as the icon's tooltip, where it costs nothing.
+   */
+  function mainStatusRow(side: CharSide) {
+    const entrant = side === 'winner' ? winner : loser;
+    const status = mainStatus(entrant);
+    const character = status.kind === 'none' ? null : status.character;
+    const applied = character !== null && allGamesChar[side]?.id === character.id;
+    return (
+      <div className="main-status-line">
+        <span className="main-status-name">{entrant.name}</span>
+        {character ? (
+          <img
+            className={`main-status-icon${applied ? '' : ' dim'}`}
+            src={character.imageUrl}
+            alt={character.name}
+            // describeMainStatus already leads with the character's name.
+            title={`${describeMainStatus(status)}${applied ? '' : ' · press m to use it'}`}
+          />
+        ) : (
+          <span className="main-status-text">no main on file</span>
+        )}
+        <button type="button" onClick={() => setMode({ kind: 'editMain', side })}>
+          ✎ correct
+        </button>
+      </div>
+    );
+  }
+
   const rowNumbers = Array.from({ length: maxRows }, (_, i) => i + 1);
 
   // When multiple games are targeted (e.g. "1 3"), only the most-recently
@@ -918,22 +953,8 @@ export function ReportPanel({
           ) : (
             (winner.playerId != null || loser.playerId != null) && (
               <div className="edit-main-row edit-main-triggers">
-                {winner.playerId != null && (
-                  <div className="main-status-line">
-                    <span className="main-status-text">{winner.name}: {describeMainStatus(mainStatus(winner))}</span>
-                    <button type="button" onClick={() => setMode({ kind: 'editMain', side: 'winner' })}>
-                      ✎ correct
-                    </button>
-                  </div>
-                )}
-                {loser.playerId != null && (
-                  <div className="main-status-line">
-                    <span className="main-status-text">{loser.name}: {describeMainStatus(mainStatus(loser))}</span>
-                    <button type="button" onClick={() => setMode({ kind: 'editMain', side: 'loser' })}>
-                      ✎ correct
-                    </button>
-                  </div>
-                )}
+                {winner.playerId != null && mainStatusRow('winner')}
+                {loser.playerId != null && mainStatusRow('loser')}
               </div>
             )
           )}

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { Fragment, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type React from 'react';
 import { Settings } from './Settings';
 import { SignIn } from './SignIn';
@@ -599,6 +599,11 @@ export default function App() {
   // that returns early and a keypress throws.
   const allBracketSets = bracketGroup?.sets ?? [];
   const bracketById = bracketSetById(allBracketSets);
+  // Same icons the bracket draws, so a tag in the list and the same tag on the
+  // bracket read as the same player rather than two lookups.
+  const iconUrlById = new Map(characters.flatMap((c) => (c.imageUrl ? ([[c.id, c.imageUrl]] as [number, string][]) : [])));
+  const iconFor = (characterId: number | null | undefined) =>
+    characterId == null ? undefined : iconUrlById.get(characterId);
 
   const results = fuzzyMatchSets(query, sets, (s) => s.entrants.map((e) => e.name))
     .map((s) => (!s.isStarted && startedIds.has(s.id) ? { ...s, isStarted: true } : s))
@@ -1031,7 +1036,28 @@ export default function App() {
                 <span className="entrant-names">
                   {prior ? (
                     <>
-                      <strong>{prior.winnerName}</strong> def. {prior.loserName}
+                      {/* Winner first, which slot order does not promise —
+                          otherwise "def." lands on the wrong side of the row.
+                          Both entrants exist here: priorResultFor returns null
+                          when either is missing. The separators are real text
+                          nodes so the row still reads as a sentence. */}
+                      {[...row.set.slots]
+                        .sort(
+                          (a, b) =>
+                            Number(b.entrant!.id === row.set.winnerId) - Number(a.entrant!.id === row.set.winnerId)
+                        )
+                        .map((slot, i) => {
+                          const icon = iconFor(slot.characterId);
+                          return (
+                            <Fragment key={slot.entrant!.id}>
+                              {i > 0 && ' def. '}
+                              <span className="entrant-with-icon">
+                                {icon && <img className="row-character" src={icon} alt="" />}
+                                {i === 0 ? <strong>{slot.entrant!.name}</strong> : slot.entrant!.name}
+                              </span>
+                            </Fragment>
+                          );
+                        })}
                       {prior.winnerScore !== null && prior.loserScore !== null
                         ? ` ${prior.winnerScore}–${prior.loserScore}`
                         : ''}
@@ -1049,7 +1075,22 @@ export default function App() {
           return (
             <li key={s.id} className={`${active ? 'active' : ''} ${s.isStarted ? 'started' : ''}`} {...rowProps}>
               {i < 9 && <span className="result-num">{i + 1}</span>}
-              <span className="entrant-names">{s.entrants.map((e) => e.name).join(' vs ')}</span>
+              <span className="entrant-names">
+                {s.entrants.map((e, i) => {
+                  const icon = iconFor(e.suggestedMain?.characterId);
+                  return (
+                    <Fragment key={e.id}>
+                      {i > 0 && ' vs '}
+                      <span className="entrant-with-icon">
+                        {/* alt is empty on purpose: the tag beside it is
+                            already read out, so the icon is decoration. */}
+                        {icon && <img className="row-character" src={icon} alt="" />}
+                        {e.name}
+                      </span>
+                    </Fragment>
+                  );
+                })}
+              </span>
               <span className="round-text">
                 {s.fullRoundText}
                 {s.isPreview && ' · bracket not started'}

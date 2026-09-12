@@ -38,7 +38,7 @@ Last updated: 2026-09-12, working top to bottom.
 
 ## Set report page
 
-[ ] 7. Character icons next to gamertags in the set list view and the set report page (currently
+[x] 7. Character icons next to gamertags in the set list view and the set report page (currently
        bracket view only). On the report page they'd replace the "[char]: seen in x games across
        the last x sets" text — a greyed-out icon of that player's main, which `m` un-greys and
        fills into the set's games.
