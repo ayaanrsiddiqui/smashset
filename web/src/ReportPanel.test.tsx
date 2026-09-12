@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render } from '@testing-library/react';
 import { ReportPanel } from './ReportPanel';
-import { reportSet } from './api';
+import { ApiError, reportSet } from './api';
 import type { OpenSet } from './types';
 
-vi.mock('./api', () => ({
+vi.mock('./api', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./api')>()),
   reportSet: vi.fn().mockResolvedValue({ result: {} }),
   updatePlayerMain: vi.fn().mockResolvedValue({ characterId: null }),
 }));
@@ -24,21 +25,12 @@ function setFor(fullRoundText: string): OpenSet {
   };
 }
 
-interface Extra {
-  priorWinnerEntrantId?: number | null;
-  resetCascade?: string[];
-  advancesToPhases?: string[];
-}
-
 /** Grand Final is the one round guessRequiredWins reads as best-of-five. */
-function renderPanel(fullRoundText: string, extra: Extra = {}) {
+function renderPanel(fullRoundText: string) {
   render(
     <ReportPanel
       set={setFor(fullRoundText)}
       presumedWinnerId={10}
-      priorWinnerEntrantId={extra.priorWinnerEntrantId ?? null}
-      resetCascade={extra.resetCascade ?? []}
-      advancesToPhases={extra.advancesToPhases ?? []}
       characters={[]}
       stages={[]}
       topXBo5={null}
@@ -122,69 +114,123 @@ describe('ReportPanel — why the report button is disabled', () => {
 /**
  * start.gg will not change a finished set's winner in place — the result has
  * to be torn down first, and tearing it down takes everything downstream with
- * it (verified live). So this is the one thing a TO can do from a phone that
- * destroys work, and it must never happen on a mis-tap.
+ * it (verified live). The panel cannot work out on its own whether that is
+ * what a report means: a losers-bracket set is reached through a bye set that
+ * start.gg leaves out of the bracket the app fetches. So the server refuses,
+ * says what it would clear, and this is where that refusal is answered.
  */
-describe('ReportPanel — changing who won a set that is already decided', () => {
-  const confirm = () => {
-    for (const key of ['w', 'w', 'Enter']) fireEvent.keyDown(window, { key });
-  };
+describe('ReportPanel — clearing a decided set to change who won', () => {
   const warning = () => document.querySelector('.reset-warning')?.textContent?.replace(/\s+/g, ' ').trim() ?? null;
+  const submit = () => {
+    for (const key of ['w', 'w', 'Enter', 'Enter']) fireEvent.keyDown(window, { key });
+  };
+  const refusal = (wouldClear: unknown) =>
+    new ApiError('Changing who won means clearing this result and everything it fed into.', 409, {
+      requiresReset: true,
+      wouldClear,
+    });
 
   afterEach(() => {
-    vi.mocked(reportSet).mockClear();
+    vi.mocked(reportSet).mockReset();
+    vi.mocked(reportSet).mockResolvedValue({ result: {} });
   });
 
-  it('names the already-played sets it will wipe', () => {
-    renderPanel('Winners Round 1', { priorWinnerEntrantId: 20, resetCascade: ['I', 'M'] });
-    confirm();
+  it('names what the teardown clears, using the list only the server can build', async () => {
+    vi.mocked(reportSet).mockRejectedValueOnce(refusal(['I', 'R']));
+    renderPanel('Winners Round 1');
+    submit();
 
-    expect(warning()).toContain('I, M');
+    await vi.waitFor(() => expect(warning()).not.toBeNull());
+    expect(warning()).toContain('I, R');
   });
 
-  it('still warns when nothing downstream has been played, because the result itself goes', () => {
-    renderPanel('Winners Round 1', { priorWinnerEntrantId: 20, resetCascade: [] });
-    confirm();
+  it('says it could not check, rather than implying nothing else is affected', async () => {
+    vi.mocked(reportSet).mockRejectedValueOnce(refusal(null));
+    renderPanel('Winners Round 1');
+    submit();
 
-    expect(warning()).toMatch(/clear/i);
+    await vi.waitFor(() => expect(warning()).not.toBeNull());
+    expect(warning()).toMatch(/couldn't check/i);
   });
 
-  it('says where else this set reaches, which the pool view cannot show', () => {
-    renderPanel('Winners Round 1', { priorWinnerEntrantId: 20, resetCascade: [], advancesToPhases: ['Top 8'] });
-    confirm();
+  it('does not report anything until the teardown is confirmed', async () => {
+    vi.mocked(reportSet).mockRejectedValueOnce(refusal(['I']));
+    renderPanel('Winners Round 1');
+    submit();
 
-    expect(warning()).toContain('Top 8');
+    await vi.waitFor(() => expect(warning()).not.toBeNull());
+    expect(vi.mocked(reportSet)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(reportSet).mock.calls[0][0].confirmReset).toBeFalsy();
   });
 
-  it('says nothing when the winner on file is the one being reported', () => {
-    // Correcting only the score. start.gg edits that in place, so nothing is
-    // torn down and a warning here would just train the TO to ignore it.
-    renderPanel('Winners Round 1', { priorWinnerEntrantId: 10, resetCascade: ['I', 'M'] });
-    confirm();
+  it('confirms the teardown only on a second, deliberate Enter', async () => {
+    vi.mocked(reportSet).mockRejectedValueOnce(refusal(['I']));
+    renderPanel('Winners Round 1');
+    submit();
 
-    expect(warning()).toBeNull();
-  });
-
-  it('says nothing for a set nobody has reported yet', () => {
-    renderPanel('Winners Round 1', { resetCascade: ['I', 'M'] });
-    confirm();
-
-    expect(warning()).toBeNull();
-  });
-
-  it('only asks the server to tear anything down once the TO has confirmed it', async () => {
-    renderPanel('Winners Round 1', { priorWinnerEntrantId: 20, resetCascade: ['I'] });
-    confirm();
+    await vi.waitFor(() => expect(warning()).not.toBeNull());
     fireEvent.keyDown(window, { key: 'Enter' });
+
+    await vi.waitFor(() => expect(vi.mocked(reportSet)).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(reportSet).mock.calls[1][0].confirmReset).toBe(true);
+  });
+
+  it('backs out on Escape without clearing anything', async () => {
+    vi.mocked(reportSet).mockRejectedValueOnce(refusal(['I']));
+    renderPanel('Winners Round 1');
+    submit();
+
+    await vi.waitFor(() => expect(warning()).not.toBeNull());
+    fireEvent.keyDown(window, { key: 'Escape' });
+
+    expect(warning()).toBeNull();
+    expect(vi.mocked(reportSet)).toHaveBeenCalledTimes(1);
+  });
+
+  it('confirms the teardown on a click, too — not only from the keyboard', async () => {
+    vi.mocked(reportSet).mockRejectedValueOnce(refusal(['I']));
+    renderPanel('Winners Round 1');
+    submit();
+
+    await vi.waitFor(() => expect(warning()).not.toBeNull());
+    const yes = [...document.querySelectorAll('button')].find((b) => /clear the old result/i.test(b.getAttribute('aria-label') ?? ''));
+    fireEvent.click(yes!);
+
+    await vi.waitFor(() => expect(vi.mocked(reportSet)).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(reportSet).mock.calls[1][0].confirmReset).toBe(true);
+  });
+
+  it('takes any other key as backing out, never as agreement', async () => {
+    // A confirmation that fires on whatever key the TO happened to hit next is
+    // not a confirmation, and this one clears results.
+    vi.mocked(reportSet).mockRejectedValueOnce(refusal(['I']));
+    renderPanel('Winners Round 1');
+    submit();
+
+    await vi.waitFor(() => expect(warning()).not.toBeNull());
+    fireEvent.keyDown(window, { key: 'w' });
+
+    expect(warning()).toBeNull();
+    expect(vi.mocked(reportSet)).toHaveBeenCalledTimes(1);
+  });
+
+  it('never asks for a teardown on an ordinary report', async () => {
+    renderPanel('Winners Round 1');
+    submit();
 
     await vi.waitFor(() => expect(vi.mocked(reportSet)).toHaveBeenCalled());
-    expect(vi.mocked(reportSet).mock.calls[0][0].confirmReset).toBe(true);
+    expect(vi.mocked(reportSet).mock.calls[0][0].confirmReset).toBeFalsy();
+    expect(warning()).toBeNull();
   });
 
-  it('never sends confirmReset for an ordinary report', async () => {
+  it('never asks for a teardown when the ordinary confirm is clicked either', async () => {
+    // submit's first parameter is confirmReset, so handing this button
+    // straight to onClick passes it a MouseEvent — truthy — and every mouse
+    // report becomes a teardown request. Caught once by tsc; pinned here.
     renderPanel('Winners Round 1');
-    confirm();
-    fireEvent.keyDown(window, { key: 'Enter' });
+    for (const key of ['w', 'w', 'Enter']) fireEvent.keyDown(window, { key });
+    const yes = [...document.querySelectorAll('button')].find((b) => b.getAttribute('aria-label') === 'Confirm report');
+    fireEvent.click(yes!);
 
     await vi.waitFor(() => expect(vi.mocked(reportSet)).toHaveBeenCalled());
     expect(vi.mocked(reportSet).mock.calls[0][0].confirmReset).toBeFalsy();

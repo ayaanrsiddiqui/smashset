@@ -702,6 +702,38 @@ const SET_CHARACTERS_QUERY = /* GraphQL */ `
   }
 `;
 
+// Only the prereq graph, for working out what resetting a set would unmake.
+//
+// showByes matters and is not cosmetic: a losers-bracket slot does not point
+// back at the winners set whose loser drops into it, it points at a bye set in
+// between, and phaseGroup.sets omits those by default. Without this filter the
+// walk sees the winner's path only — measured on the live test bracket, that
+// named 2 of the 3 sets a real reset actually cleared.
+const CASCADE_BASE_COST = 1;
+/** Measured live 2026-09-12: exactly 2 (one node plus its two slots). */
+const CASCADE_MAX_COST_PER_SET = 3;
+const CASCADE_QUERY = /* GraphQL */ `
+  query PhaseGroupCascade($phaseGroupId: ID!, $page: Int!, $perPage: Int!) {
+    phaseGroup(id: $phaseGroupId) {
+      id
+      sets(page: $page, perPage: $perPage, filters: { showByes: true }) {
+        pageInfo {
+          totalPages
+        }
+        nodes {
+          id
+          identifier
+          state
+          slots {
+            prereqId
+            prereqType
+          }
+        }
+      }
+    }
+  }
+`;
+
 export const COST_MODEL = {
   budget: COMPLEXITY_BUDGET,
   cap: 1000, // start.gg's own hard limit, which `budget` stays under
@@ -713,6 +745,7 @@ export const COST_MODEL = {
     maxPerSet: SET_CHARACTERS_MAX_COST_PER_SET,
     query: SET_CHARACTERS_QUERY,
   },
+  cascade: { base: CASCADE_BASE_COST, maxPerSet: CASCADE_MAX_COST_PER_SET, query: CASCADE_QUERY },
   poolPreview: {
     base: POOL_PREVIEW_BASE_COST,
     maxPerPool: POOL_PREVIEW_COST_PER_POOL,
@@ -833,7 +866,7 @@ interface CostModel {
  * terminates. Restarting rather than continuing is required: pages are
  * offsets, so changing perPage mid-run would skip or repeat sets.
  */
-async function fetchSetsPaged<N, H>(
+export async function fetchSetsPaged<N, H>(
   accessToken: string,
   phaseGroupId: string,
   query: string,

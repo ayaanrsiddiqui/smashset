@@ -5,10 +5,17 @@ export class ApiError extends Error {
   // web build runs with erasableSyntaxOnly, which rejects syntax that needs a
   // runtime transform.
   status: number;
+  /**
+   * The server's whole JSON body. Most errors carry only `error`, but a report
+   * refused for needing a teardown also names what the teardown would clear,
+   * and that list cannot be derived on this side — see /api/report.
+   */
+  details: Record<string, unknown> | null;
 
-  constructor(message: string, status: number) {
+  constructor(message: string, status: number, details: Record<string, unknown> | null = null) {
     super(message);
     this.status = status;
+    this.details = details;
   }
 }
 
@@ -47,7 +54,7 @@ async function req<T>(url: string, opts?: RequestInit): Promise<T> {
   }
 
   if (!res.ok) {
-    throw new ApiError(body?.error ?? `Request failed (${res.status})`, res.status);
+    throw new ApiError(body?.error ?? `Request failed (${res.status})`, res.status, body as Record<string, unknown> | null);
   }
   // A 200 that isn't JSON is a captive portal or a proxy interstitial, not
   // data. Returning it would hand callers null to destructure.

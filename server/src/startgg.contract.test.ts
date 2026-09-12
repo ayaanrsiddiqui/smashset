@@ -156,6 +156,7 @@ describe.skipIf(!ENABLED)('start.gg contract', () => {
       live: COST_MODEL.live,
       structure: COST_MODEL.structure,
       openSets: COST_MODEL.openSets,
+      cascade: COST_MODEL.cascade,
       // The change detector. Every field is a scalar on the set, so unlike the
       // character and pool-preview models this one is measurable on any pool
       // with sets in it — no need to go hunting for data that happens to exist.
@@ -223,6 +224,30 @@ describe.skipIf(!ENABLED)('start.gg contract', () => {
     const stated = r.error?.match(/maximum of (\d+) objects/i);
     if (!stated) return; // wording changed; the assertions above already caught what matters
     expect(Number(stated[1]), 'start.gg changed its object cap').toBe(COST_MODEL.cap);
+  }, NETWORK_TIMEOUT_MS);
+
+  it('still hides bye sets unless asked, which is why the cascade query asks', async () => {
+    // Load-bearing, and invisible if it ever changes: a losers-bracket slot
+    // points at a bye set rather than at the winners set whose loser drops
+    // into it. If phaseGroup.sets started including byes by default this test
+    // would go quiet and nothing would break — but if the filter stopped
+    // working, the teardown warning would silently understate what it clears,
+    // which is the worst direction for that particular message to be wrong.
+    const withByes = await run(COST_MODEL.cascade.query, { phaseGroupId, page: 1, perPage: 80 });
+    expect(withByes.error, `cascade query failed: ${withByes.error}`).toBeNull();
+
+    const withoutByes = await run(COST_MODEL.cascade.query.replace(/,\s*filters:\s*\{\s*showByes:\s*true\s*\}/, ''), {
+      phaseGroupId,
+      page: 1,
+      perPage: 80,
+    });
+    expect(withoutByes.error).toBeNull();
+
+    expect(
+      withByes.sets,
+      'showByes: true no longer returns more sets than the default — either this bracket has no byes, ' +
+        'or start.gg changed the filter. Re-check server/src/resetCascade.ts before trusting the teardown warning.'
+    ).toBeGreaterThan(withoutByes.sets);
   }, NETWORK_TIMEOUT_MS);
 
   it('still formats a completed set score the way the parser expects', async () => {

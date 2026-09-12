@@ -11,6 +11,9 @@ const gqlMock = vi.fn();
 vi.mock('../startgg.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../startgg.js')>()),
   gql: (...args: unknown[]) => gqlMock(...args),
+  // The cascade lookup pages through fetchSetsPaged, which uses this one — left
+  // real it would put every test in this file on the network.
+  gqlWithCost: async (...args: unknown[]) => ({ data: await gqlMock(...args), complexity: null }),
 }));
 
 const { createApp } = await import('../app.js');
@@ -32,18 +35,32 @@ async function makeSignedInCookie(label: string): Promise<string> {
 const VALID = { setId: 7001, winnerEntrantId: 8001, loserEntrantId: 8002, requiredWins: 2, shorthand: '+' };
 
 /** What start.gg holds for the set being reported, before this report lands. */
-const OPEN_SET = { id: 7001, state: 2, winnerId: null, slots: [{ entrant: { id: 8001, name: 'Ada' } }, { entrant: { id: 8002, name: 'mudd' } }] };
+const OPEN_SET = { id: 7001, state: 2, winnerId: null, phaseGroup: { id: 1 }, slots: [{ entrant: { id: 8001, name: 'Ada' } }, { entrant: { id: 8002, name: 'mudd' } }] };
 const COMPLETED_SET = { ...OPEN_SET, state: 3, winnerId: 8001 };
+
+/** 7001 feeds a played set directly, and another through a bye, as start.gg models it. */
+const CASCADE_SETS = [
+  { id: 7001, identifier: 'A', state: 3, slots: [{ prereqId: null, prereqType: null }] },
+  { id: 7002, identifier: 'I', state: 3, slots: [{ prereqId: '7001', prereqType: 'set' }] },
+  { id: 7003, identifier: 'AN', state: 3, slots: [{ prereqId: '7001', prereqType: 'set' }, { prereqId: '9', prereqType: 'bye' }] },
+  { id: 7004, identifier: 'R', state: 3, slots: [{ prereqId: '7003', prereqType: 'set' }] },
+];
 
 /**
  * Routes each query to its own answer. The route reads the set before writing
  * it, so a single mockResolvedValue would feed the mutation's response to the
  * read as well.
  */
-function startgg(over: { set?: unknown; report?: unknown; update?: unknown; reset?: unknown } = {}) {
+function startgg(over: { set?: unknown; report?: unknown; update?: unknown; reset?: unknown; cascade?: unknown } = {}) {
   gqlMock.mockImplementation((_token: string, query: string) => {
     if (query.includes('ReportPrecondition')) {
       return over.set instanceof Error ? Promise.reject(over.set) : Promise.resolve({ set: 'set' in over ? over.set : OPEN_SET });
+    }
+    if (query.includes('PhaseGroupCascade')) {
+      if (over.cascade instanceof Error) return Promise.reject(over.cascade);
+      return Promise.resolve(
+        over.cascade ?? { phaseGroup: { id: 1, sets: { pageInfo: { totalPages: 1 }, nodes: CASCADE_SETS } } }
+      );
     }
     if (query.includes('resetSet')) {
       return over.reset instanceof Error ? Promise.reject(over.reset) : Promise.resolve(over.reset ?? { resetSet: { id: 7001, state: 1 } });
@@ -248,5 +265,58 @@ describe('POST /api/report — a report that would corrupt the set', () => {
 
     expect(res.status).toBe(409);
     expect(mutations()).toEqual([]);
+  });
+});
+
+describe('POST /api/report — telling the TO what a teardown costs', () => {
+  afterEach(() => {
+    gqlMock.mockReset();
+    resetPoolEvents();
+  });
+
+  const flip = { ...VALID, winnerEntrantId: 8002, loserEntrantId: 8001 };
+
+  it('names the already-played sets the teardown would wipe', async () => {
+    startgg({ set: COMPLETED_SET });
+    const cookie = await makeSignedInCookie('would-clear');
+
+    const res = await request(app).post('/api/report').set('Cookie', cookie).send(flip);
+
+    // R is only reachable through the bye set start.gg hides by default.
+    expect(res.body.wouldClear).toEqual(['I', 'R']);
+  });
+
+  it('asks start.gg for bye sets, without which the losers bracket is invisible', async () => {
+    // Verified live: walking only the sets start.gg returns by default named 2
+    // of the 3 sets a real reset cleared. Understating a destructive action is
+    // the worst way for this to be wrong, so the filter is pinned here.
+    startgg({ set: COMPLETED_SET });
+    const cookie = await makeSignedInCookie('shows-byes');
+
+    await request(app).post('/api/report').set('Cookie', cookie).send(flip);
+
+    const cascadeQuery = gqlMock.mock.calls.map(([, q]) => q as string).find((q) => q.includes('PhaseGroupCascade'));
+    expect(cascadeQuery).toMatch(/showByes:\s*true/);
+  });
+
+  it('says it does not know when start.gg has no such pool, too', async () => {
+    startgg({ set: COMPLETED_SET, cascade: { phaseGroup: null } });
+    const cookie = await makeSignedInCookie('cascade-empty');
+
+    const res = await request(app).post('/api/report').set('Cookie', cookie).send(flip);
+
+    expect(res.body.wouldClear).toBeNull();
+  });
+
+  it('says it does not know rather than implying nothing else is affected', async () => {
+    // A failed lookup must not render as an empty list — that reads as "this
+    // clears nothing else", which is the opposite of what is known.
+    startgg({ set: COMPLETED_SET, cascade: new Error('start.gg is down') });
+    const cookie = await makeSignedInCookie('cascade-down');
+
+    const res = await request(app).post('/api/report').set('Cookie', cookie).send(flip);
+
+    expect(res.status).toBe(409);
+    expect(res.body.wouldClear).toBeNull();
   });
 });

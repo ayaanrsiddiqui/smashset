@@ -27,7 +27,6 @@ import {
 } from './api';
 import { fuzzyMatchSets } from './fuzzy';
 import { bracketSetById, priorResultFor } from './bracketDisplay';
-import { resetCascade } from './resetCascade';
 import type {
   AccountDetails,
   BracketGroup,
@@ -715,17 +714,6 @@ export default function App() {
     // there's no search match to go on.
     const selectedBracketSet = bracketById.get(String(selectedSet.id));
     const priorResult = selectedBracketSet ? priorResultFor(selectedBracketSet) : null;
-    // Only meaningful for a set start.gg already considers finished; for any
-    // other set there is no result to clear and nothing downstream to lose.
-    const decided = selectedBracketSet?.state === 3;
-    const wouldWipe = decided ? resetCascade(allBracketSets, selectedSet.id) : [];
-    // This pool is all the bracket poll fetches, so a set feeding a later phase
-    // reaches further than wouldWipe can see. Named rather than counted.
-    const advancesToPhases = decided
-      ? [...new Set([selectedBracketSet.winnerAdvancesToPhase, selectedBracketSet.loserAdvancesToPhase])].filter(
-          (phase): phase is string => phase !== null
-        )
-      : [];
 
     return (
       <div className="app-shell">
@@ -745,9 +733,6 @@ export default function App() {
           presumedWinnerId={matchedEntrantId(selectedSet) ?? selectedBracketSet?.winnerId ?? null}
           priorResult={priorResult}
           priorDetail={priorDetail}
-          priorWinnerEntrantId={decided ? selectedBracketSet.winnerId : null}
-          resetCascade={wouldWipe.map((s) => s.identifier)}
-          advancesToPhases={advancesToPhases}
           characters={characters}
           stages={stages}
           topXBo5={topX}

@@ -2,7 +2,8 @@ import { Router } from 'express';
 import { gql } from '../startgg.js';
 import { publishPoolChanged } from '../poolEvents.js';
 import { parseScoreShorthand } from '../scoreParser.js';
-import { invalidateSetCaches } from './sets.js';
+import { COST_MODEL, fetchSetsPaged, invalidateSetCaches } from './sets.js';
+import { resetCascade, type CascadeSet } from '../resetCascade.js';
 
 export const reportRouter = Router();
 
@@ -70,6 +71,9 @@ const SET_PRECONDITION_QUERY = /* GraphQL */ `
       id
       state
       winnerId
+      phaseGroup {
+        id
+      }
       slots {
         entrant {
           id
@@ -111,8 +115,32 @@ interface PreconditionResult {
     id: number | string;
     state: number;
     winnerId: number | null;
+    // Read from the set rather than taken from the request body, where
+    // phaseGroupId is only an untrusted notification hint.
+    phaseGroup: { id: number | string } | null;
     slots: { entrant: { id: number; name: string } | null }[];
   } | null;
+}
+
+/**
+ * The already-played sets a teardown of this one would wipe, named so the TO
+ * can see them before agreeing. Best effort: if start.gg will not answer, the
+ * confirmation still has to happen, it just cannot list what is at stake — and
+ * saying so is better than blocking a correction on a failed lookup.
+ */
+async function wouldClear(accessToken: string, phaseGroupId: string, setId: number | string): Promise<string[] | null> {
+  try {
+    const paged = await fetchSetsPaged<CascadeSet, { id: number | string }>(
+      accessToken,
+      phaseGroupId,
+      COST_MODEL.cascade.query,
+      { name: 'cascade', base: COST_MODEL.cascade.base, maxPerRow: COST_MODEL.cascade.maxPerSet }
+    );
+    if (!paged) return null;
+    return resetCascade(paged.nodes, setId).map((set) => set.identifier);
+  } catch {
+    return null;
+  }
 }
 
 const REPORT_MUTATION = /* GraphQL */ `
@@ -215,9 +243,13 @@ reportRouter.post('/', async (req, res) => {
   const alreadyDecided = current.state === COMPLETED_STATE;
   const winnerChanged = alreadyDecided && String(current.winnerId) !== String(body.winnerEntrantId);
   if (winnerChanged && body.confirmReset !== true) {
+    const clears = current.phaseGroup ? await wouldClear(req.user!.accessToken, String(current.phaseGroup.id), body.setId) : null;
     res.status(409).json({
-      error: 'Changing who won means clearing this result and everything it fed into. Confirm to go ahead.',
+      error: 'Changing who won means clearing this result and everything it fed into.',
       requiresReset: true,
+      // null means the lookup failed, which is not the same as "nothing else
+      // is affected" — the client says so rather than implying it is safe.
+      wouldClear: clears,
     });
     return;
   }

@@ -11,7 +11,7 @@ import { BO_OPTIONS, boLabel, guessRequiredWins } from './roundFormat';
 import { FuzzyCell } from './FuzzyCell';
 import { fuzzyMatchCharacters } from './characterAliases';
 import { StageToggle } from './StageToggle';
-import { reportSet, updatePlayerMain, type StageSelection } from './api';
+import { ApiError, reportSet, updatePlayerMain, type StageSelection } from './api';
 import { lookupMain } from './mains';
 import { derivePriorState } from './priorDetail';
 
@@ -25,15 +25,6 @@ interface Props {
   // leaving them blank. Both null/absent for a normal not-yet-reported set.
   priorResult?: PriorResult | null;
   priorDetail?: SetDetail | null;
-  // Who start.gg currently has as the winner, or null for a set nobody has
-  // reported. Compared against the winner being submitted to decide whether
-  // this report is a plain edit or a teardown — start.gg refuses to change a
-  // finished set's winner in place, so the two are not the same operation.
-  priorWinnerEntrantId?: number | null;
-  /** Identifiers of already-played sets a teardown would wipe; see resetCascade. */
-  resetCascade?: string[];
-  /** Later phases this set feeds, which the pool being viewed cannot show. */
-  advancesToPhases?: string[];
   characters: Character[];
   stages: Stage[];
   topXBo5: number | null;
@@ -56,6 +47,11 @@ type Mode =
   | { kind: 'game' }
   | { kind: 'confirmLeave' }
   | { kind: 'confirmSubmit' }
+  // Reached only by the server refusing a winner change: start.gg cannot edit
+  // one in place, so the result has to be torn down and everything downstream
+  // goes with it. wouldClear is null when start.gg would not say what that is,
+  // which must not read as "nothing".
+  | { kind: 'confirmReset'; wouldClear: string[] | null }
   | { kind: 'boInput' }
   | { kind: 'quick' }
   | { kind: 'stages'; game: number | null }
@@ -80,9 +76,6 @@ export function ReportPanel({
   presumedWinnerId,
   priorResult,
   priorDetail,
-  priorWinnerEntrantId = null,
-  resetCascade = [],
-  advancesToPhases = [],
   characters,
   stages,
   topXBo5,
@@ -149,7 +142,7 @@ export function ReportPanel({
 
   useEffect(() => {
     if (mode.kind === 'confirmLeave') confirmLeaveRef.current?.scrollIntoView({ block: 'nearest' });
-    if (mode.kind === 'confirmSubmit') confirmSubmitRef.current?.scrollIntoView({ block: 'nearest' });
+    if (mode.kind === 'confirmSubmit' || mode.kind === 'confirmReset') confirmSubmitRef.current?.scrollIntoView({ block: 'nearest' });
   }, [mode.kind]);
 
   let games: ParsedGame[] | null = null;
@@ -200,23 +193,6 @@ export function ReportPanel({
     parseError != null && displayGames.length > 0 && winnerGameCount < requiredWins
       ? `${winnerGameCount} of ${requiredWins} wins — Bo${requiredWins * 2 - 1} (press b to change)`
       : null;
-
-  // start.gg has no way to change a finished set's winner in place: the result
-  // is torn down and re-reported, and the teardown takes every set downstream
-  // with it. That is the only thing a TO can do from this screen that destroys
-  // work, so it is named at the moment of confirming rather than described up
-  // front where it would be read once and then scrolled past.
-  const isTeardown = priorWinnerEntrantId !== null && priorWinnerEntrantId !== winnerId;
-  const resetWarning = !isTeardown
-    ? null
-    : [
-        resetCascade.length > 0
-          ? `Clears this result and ${resetCascade.length} played set${resetCascade.length === 1 ? '' : 's'} after it: ${resetCascade.join(', ')}.`
-          : 'Clears this result on start.gg, then reports the new one.',
-        advancesToPhases.length > 0 ? `This set also feeds ${advancesToPhases.join(' and ')}.` : null,
-      ]
-        .filter((part): part is string => part !== null)
-        .join(' ');
 
   const effectiveRequiredWins = scoreSource === 'quick' && games ? submitRequiredWins : requiredWins;
   const maxRows = Math.max(requiredWins * 2 - 1, displayGames.length);
@@ -449,7 +425,7 @@ export function ReportPanel({
     }));
   }
 
-  async function submit() {
+  async function submit(confirmReset = false) {
     if (submittingRef.current) return;
     if (!games || games.length === 0) return;
     submittingRef.current = true;
@@ -490,13 +466,22 @@ export function ReportPanel({
         // So every other TO watching this pool sees the result immediately,
         // rather than each of them polling start.gg to find out.
         phaseGroupId: phaseGroupId == null ? undefined : String(phaseGroupId),
-        // The server refuses a winner change outright without this, so the
-        // destructive path cannot be reached except through the warning above.
-        confirmReset: isTeardown,
+        // Only ever true on a second submit, made from the confirmation the
+        // refusal below opens — so the destructive path cannot be reached
+        // without the TO having seen what it costs.
+        confirmReset,
       });
       onDone();
     } catch (err) {
       if (onAuthError(err)) return;
+      // Not a failure: start.gg cannot change a decided set's winner in place,
+      // so the server is asking whether tearing the result down is really what
+      // was meant, and naming what that would clear.
+      if (err instanceof ApiError && err.details?.requiresReset === true) {
+        const clears = err.details.wouldClear;
+        setMode({ kind: 'confirmReset', wouldClear: Array.isArray(clears) ? (clears as string[]) : null });
+        return;
+      }
       onNotify(err instanceof Error ? err.message : 'Failed to report set', 'error');
     } finally {
       submittingRef.current = false;
@@ -528,7 +513,7 @@ export function ReportPanel({
         if (mode.kind === 'game') {
           if (focusedRow != null) setFocusedRow(null);
           else setMode({ kind: 'confirmLeave' });
-        } else if (mode.kind === 'confirmSubmit') {
+        } else if (mode.kind === 'confirmSubmit' || mode.kind === 'confirmReset') {
           setMode({ kind: 'game' });
         } else if (mode.kind === 'characters') {
           if (mode.side != null) setMode({ kind: 'characters', side: null, target: null });
@@ -545,6 +530,16 @@ export function ReportPanel({
         e.preventDefault();
         if (e.key === 'Enter') {
           submit();
+        } else {
+          setMode({ kind: 'game' });
+        }
+        return;
+      }
+
+      if (mode.kind === 'confirmReset') {
+        e.preventDefault();
+        if (e.key === 'Enter') {
+          submit(true);
         } else {
           setMode({ kind: 'game' });
         }
@@ -1050,12 +1045,36 @@ export function ReportPanel({
         </div>
       )}
 
-      {mode.kind === 'confirmSubmit' ? (
+      {mode.kind === 'confirmReset' ? (
         <div className="confirm-row submit-confirm" ref={confirmSubmitRef}>
-          {resetWarning && <p className="reset-warning">{resetWarning}</p>}
+          <p className="reset-warning">
+            {winner.name} didn't win this on start.gg, so the result has to be cleared and reported again.{' '}
+            {mode.wouldClear === null
+              ? "Couldn't check what else that clears."
+              : mode.wouldClear.length > 0
+                ? `That also clears ${mode.wouldClear.join(', ')}.`
+                : 'Nothing else has been played off it yet.'}
+          </p>
           <button
             className="confirm-yes"
-            onClick={submit}
+            onClick={() => submit(true)}
+            disabled={submitting}
+            aria-label={submitting ? 'Reporting…' : 'Clear the old result and report this one'}
+          >
+            {submitting ? '…' : '✓'}
+          </button>
+          <button className="confirm-no" onClick={() => setMode({ kind: 'game' })} disabled={submitting} aria-label="Cancel">
+            ✕
+          </button>
+        </div>
+      ) : mode.kind === 'confirmSubmit' ? (
+        <div className="confirm-row submit-confirm" ref={confirmSubmitRef}>
+          <button
+            className="confirm-yes"
+            // Wrapped, not passed directly: submit's first parameter is
+            // confirmReset, and a click handler would hand it a MouseEvent —
+            // truthy — silently authorising a teardown nobody was shown.
+            onClick={() => submit()}
             disabled={submitting}
             aria-label={submitting ? 'Reporting…' : 'Confirm report'}
           >
