@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { fetchAccount, fetchBracket, fetchCharacters, fetchOpenSets, fetchPhaseGroups, fetchSetDetail, fetchStages, updateTopXBo5 } from './api';
 import { apiFailure, flushTimers, resetApiDefaults, seedEvent, seedPool } from './test-helpers';
 import type { BracketSet } from './types';
+import { openedEventSource, resetEventSources } from './test-eventsource';
 
 const fetchMeMock = vi.fn();
 const logoutMock = vi.fn();
@@ -1089,5 +1090,90 @@ describe('App — searching completed sets', () => {
     // Plain Tab switches pile; Shift+Tab has to stay native focus navigation,
     // or the header buttons become unreachable by keyboard.
     expect(screen.getByPlaceholderText(/winner's name/i)).toBeInTheDocument();
+  });
+});
+
+
+describe('App — live pool updates', () => {
+  const fetchOpenSetsMock = vi.mocked(fetchOpenSets);
+
+  beforeEach(() => {
+    localStorage.clear();
+    seedEvent();
+    seedPool();
+    fetchMeMock.mockResolvedValue({ user: { id: 1, displayName: 'FireSlam23' } });
+    resetApiDefaults();
+    resetEventSources();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    fetchMeMock.mockReset();
+  });
+
+  it('does not subscribe until the pool has actually loaded', async () => {
+    // The bracket never arrives, so this TO has not demonstrably read the
+    // pool. The server refuses a subscription in that state, and a refusal is
+    // not an event stream — EventSource fails permanently instead of retrying,
+    // so the app must not ask until it knows the read succeeded.
+    vi.mocked(fetchBracket).mockReturnValue(new Promise(() => {}));
+    render(<App />);
+
+    // Everything else finishes: signed in, pool chosen, open sets loaded.
+    await screen.findByPlaceholderText(/winner's name/i);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(openedEventSource()).toBeUndefined();
+  });
+
+  it('subscribes once the pool has loaded', async () => {
+    render(<App />);
+    await screen.findByPlaceholderText(/winner's name/i);
+
+    await waitFor(() => expect(openedEventSource()?.url).toContain('/phase-group/1/events'));
+  });
+
+  it('refetches at once when another TO reports into this pool', async () => {
+    render(<App />);
+    await screen.findByPlaceholderText(/winner's name/i);
+    await waitFor(() => expect(openedEventSource()).toBeDefined());
+    const before = fetchOpenSetsMock.mock.calls.length;
+
+    act(() => openedEventSource()!.emitChanged());
+
+    // The whole point: the change is already known to the server, so it lands
+    // now rather than on whatever was left of the poll interval.
+    await waitFor(() => expect(fetchOpenSetsMock.mock.calls.length).toBeGreaterThan(before));
+  });
+
+  it('polls less often while the stream is up, and speeds back up if it drops', async () => {
+    vi.useFakeTimers();
+    render(<App />);
+    await flushTimers(40);
+
+    const source = openedEventSource()!;
+    act(() => source.emitOpen());
+    await flushTimers(5);
+    const afterOpen = fetchOpenSetsMock.mock.calls.length;
+
+    // Five seconds would have been more than one poll at the fallback rate.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000);
+    });
+    expect(fetchOpenSetsMock.mock.calls.length).toBe(afterOpen);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(8000);
+    });
+    expect(fetchOpenSetsMock.mock.calls.length).toBeGreaterThan(afterOpen);
+
+    // Losing the stream must not leave the app on the slow clock, since
+    // polling is then the only way it hears anything at all.
+    act(() => source.emitError());
+    await flushTimers(5);
+    const afterDrop = fetchOpenSetsMock.mock.calls.length;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000);
+    });
+    expect(fetchOpenSetsMock.mock.calls.length).toBeGreaterThan(afterDrop);
   });
 });

@@ -10,6 +10,7 @@ import { Bracket } from './Bracket';
 import { SetPanel } from './SetPanel';
 import {
   startSet,
+  poolEventsUrl,
   fetchBracket,
   fetchCharacters,
   fetchOpenSets,
@@ -44,6 +45,14 @@ const STORAGE_KEY = 'smashset.event';
 // silently carries over a pool id that doesn't belong to the new one.
 const POOL_STORAGE_KEY = 'smashset.phaseGroup';
 const POLL_MS = 4000;
+/**
+ * Used instead while the pool's change stream is connected. Reports made
+ * through smashset arrive on that stream instantly and at no cost against
+ * start.gg's rate limit, so polling is left doing only what it alone can do —
+ * noticing edits made on start.gg directly. Drops back to POLL_MS the moment
+ * the stream goes down, so losing it degrades to exactly today's behaviour.
+ */
+const POLL_MS_LIVE = 12000;
 
 /**
  * A row in the set panel. The two piles a TO searches — sets waiting to be
@@ -73,6 +82,11 @@ export default function App() {
   const [pickingPool, setPickingPool] = useState(false);
   const [sets, setSets] = useState<OpenSet[]>([]);
   const [bracketGroup, setBracketGroup] = useState<BracketGroup | null>(null);
+  // Whether the pool's change stream is up, and a counter the stream bumps.
+  // The counter is a polling dependency, so an event refetches immediately and
+  // restarts the clock instead of landing mid-interval.
+  const [liveConnected, setLiveConnected] = useState(false);
+  const [changeSignal, setChangeSignal] = useState(0);
   // Drives whether the floating set panel is expanded; see SetPanel.
   const [searchFocused, setSearchFocused] = useState(false);
   // Which pile the search is over: sets waiting to be reported, or sets already
@@ -310,13 +324,32 @@ export default function App() {
       }
     };
     run();
-    const interval = setInterval(run, POLL_MS);
+    const interval = setInterval(run, liveConnected ? POLL_MS_LIVE : POLL_MS);
     return () => {
       cancelled = true;
       clearInterval(interval);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, phaseGroupId, selectedSet, pickingPool]);
+  }, [user, phaseGroupId, selectedSet, pickingPool, liveConnected, changeSignal]);
+
+  // Subscribed only once the bracket has actually loaded, which is also the
+  // server's admission rule: it refuses a pool this TO has not read, and a
+  // refusal is not an event stream, so EventSource would fail permanently
+  // instead of retrying.
+  const poolLoaded = phaseGroupId !== null && bracketGroup?.phaseGroupId === phaseGroupId;
+  useEffect(() => {
+    if (!user || phaseGroupId === null || !poolLoaded) return;
+    const source = new EventSource(poolEventsUrl(phaseGroupId));
+    source.onopen = () => setLiveConnected(true);
+    source.addEventListener('changed', () => setChangeSignal((n) => n + 1));
+    // EventSource reconnects on its own; this only drops polling back to the
+    // faster fallback while the stream is down.
+    source.onerror = () => setLiveConnected(false);
+    return () => {
+      source.close();
+      setLiveConnected(false);
+    };
+  }, [user, phaseGroupId, poolLoaded]);
 
   // Polled separately from the open-sets list (different endpoint, different
   // shape) but on the same cadence — powers the read-only Completed/Not ready
@@ -339,13 +372,13 @@ export default function App() {
       }
     };
     run();
-    const interval = setInterval(run, POLL_MS);
+    const interval = setInterval(run, liveConnected ? POLL_MS_LIVE : POLL_MS);
     return () => {
       cancelled = true;
       clearInterval(interval);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, phaseGroupId, selectedSet, pickingPool]);
+  }, [user, phaseGroupId, selectedSet, pickingPool, liveConnected, changeSignal]);
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
@@ -616,7 +649,7 @@ export default function App() {
   async function handleStart(s: OpenSet) {
     setStartingIds((prev) => new Set(prev).add(s.id));
     try {
-      await startSet(s.id);
+      await startSet(s.id, phaseGroupId ?? undefined);
       setStartedIds((prev) => new Set(prev).add(s.id));
     } catch (err) {
       if (handledAuthError(err)) return;
@@ -658,6 +691,7 @@ export default function App() {
           // games — one confirm away from reporting the wrong result.
           key={selectedSet.id}
           set={selectedSet}
+          phaseGroupId={phaseGroupId}
           // Search-query match wins when there is one (the usual reporting
           // flow); otherwise, correcting an already-decided set should
           // start on the winner it actually has, not an arbitrary side.

@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { gql, gqlWithCost, StartggComplexityError } from '../startgg.js';
 import { getPlayerMains } from '../db/mains.js';
+import { hasSeenPool, publishPoolChanged, recordPoolAccess, subscribe } from '../poolEvents.js';
 import { ensureMainComputed } from '../mainLookup.js';
 import { parseDisplayScore } from '../displayScore.js';
 import { pickSetCharacter, type SetGame } from '../setCharacter.js';
@@ -1057,6 +1058,58 @@ async function fetchBracketData(accessToken: string, userId: number, phaseGroupI
   return group;
 }
 
+/**
+ * Tells a TO when this pool changes, so a report by someone else at the same
+ * venue lands immediately instead of up to a poll-interval later — and without
+ * either of them asking start.gg about it.
+ *
+ * Carries no set data on purpose: the client refetches with its own token, so
+ * visibility stays start.gg's decision rather than this server's.
+ */
+const HEARTBEAT_MS = 25_000;
+
+setsRouter.get('/phase-group/:phaseGroupId/events', (req, res) => {
+  const { phaseGroupId } = req.params;
+  const userId = req.user!.id;
+  // Even a data-free ping reveals that a pool exists and just moved, so it
+  // takes the same access this server has already seen start.gg grant.
+  if (!hasSeenPool(userId, phaseGroupId)) {
+    res.status(403).json({ error: 'Load this pool before subscribing to its changes' });
+    return;
+  }
+
+  res.status(200).set({
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache, no-transform',
+    Connection: 'keep-alive',
+    // Without this a buffering proxy holds every frame until the stream ends,
+    // which for a stream that never ends means forever.
+    'X-Accel-Buffering': 'no',
+  });
+  res.flushHeaders();
+  res.write(': connected\n\n');
+
+  const unsubscribe = subscribe(phaseGroupId, {
+    userId,
+    send: (event) => {
+      if (res.writableEnded || res.destroyed) return false;
+      res.write(`event: ${event}\ndata: {}\n\n`);
+      return true;
+    },
+  });
+
+  // A comment frame, not an event: it keeps proxies from closing an idle
+  // connection without waking the client up.
+  const heartbeat = setInterval(() => {
+    if (!res.writableEnded && !res.destroyed) res.write(': ping\n\n');
+  }, HEARTBEAT_MS);
+
+  req.on('close', () => {
+    clearInterval(heartbeat);
+    unsubscribe();
+  });
+});
+
 setsRouter.get('/phase-group/:phaseGroupId/bracket', async (req, res) => {
   const { phaseGroupId } = req.params;
   try {
@@ -1065,6 +1118,9 @@ setsRouter.get('/phase-group/:phaseGroupId/bracket', async (req, res) => {
       res.status(404).json({ error: 'Phase group not found' });
       return;
     }
+    // start.gg served this pool to their token, so they may be told when it
+    // changes. See poolEvents.
+    recordPoolAccess(req.user!.id, phaseGroupId);
     res.json(group);
   } catch (err) {
     res.status(502).json({ error: err instanceof Error ? err.message : 'Failed to load bracket' });
@@ -1138,6 +1194,9 @@ setsRouter.post('/:setId/start', async (req, res) => {
   try {
     await gql<{ markSetInProgress: { id: number } | null }>(req.user!.accessToken, START_SET_MUTATION, { setId });
     invalidateSetCaches(); // force the next fetch to pick up the new state
+    // The client sends the pool it is viewing, because a set id alone does not
+    // say which bracket moved and looking it up would cost a request.
+    if (typeof req.body?.phaseGroupId === 'string') publishPoolChanged(req.body.phaseGroupId);
     res.json({ ok: true });
   } catch (err) {
     res.status(502).json({ error: err instanceof Error ? err.message : 'Failed to start set' });

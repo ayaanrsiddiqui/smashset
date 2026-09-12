@@ -1,3 +1,4 @@
+import { installEventSourceStub } from './test-eventsource';
 import '@testing-library/jest-dom/vitest';
 
 // jsdom doesn't implement IntersectionObserver — a no-op stub is enough for
@@ -42,3 +43,8 @@ if (typeof window !== 'undefined' && typeof window.matchMedia === 'undefined') {
 if (typeof Element !== 'undefined' && typeof Element.prototype.scrollBy !== 'function') {
   Element.prototype.scrollBy = function scrollBy() {};
 }
+
+// jsdom has no EventSource, which the pool change stream needs. Installed as a
+// controllable stub so tests can open, deliver on, and drop the stream rather
+// than merely avoid the ReferenceError; see test-eventsource.ts.
+installEventSourceStub();

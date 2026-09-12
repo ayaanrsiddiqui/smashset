@@ -118,8 +118,22 @@ export function fetchOpenSets(phaseGroupId: number): Promise<{ sets: OpenSet[] }
   return req(`/api/sets/phase-group/${phaseGroupId}/open-sets`);
 }
 
-export function startSet(setId: number | string): Promise<{ ok: true }> {
-  return req(`/api/sets/${setId}/start`, { method: 'POST' });
+/**
+ * `phaseGroupId` is a notification hint, not authorisation: it tells the server
+ * which pool's watchers to wake. A wrong value only makes other clients refetch
+ * for nothing — they still fetch with their own token.
+ */
+export function startSet(setId: number | string, phaseGroupId?: number): Promise<{ ok: true }> {
+  return req(`/api/sets/${setId}/start`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ phaseGroupId: phaseGroupId == null ? undefined : String(phaseGroupId) }),
+  });
+}
+
+/** Where a client listens for "this pool changed"; see poolEvents on the server. */
+export function poolEventsUrl(phaseGroupId: number): string {
+  return `/api/sets/phase-group/${phaseGroupId}/events`;
 }
 
 export function fetchBracket(phaseGroupId: number): Promise<BracketGroup> {
@@ -157,6 +171,8 @@ export interface ReportPayload {
   shorthand: string;
   characters?: CharacterSelection[];
   stages?: StageSelection[];
+  /** See startSet: a hint so other watchers hear about this immediately. */
+  phaseGroupId?: string;
 }
 
 export function reportSet(payload: ReportPayload): Promise<{ result: unknown }> {

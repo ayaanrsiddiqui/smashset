@@ -29,6 +29,8 @@ interface Props {
   stages: Stage[];
   topXBo5: number | null;
   videogameId: number;
+  /** The pool being viewed, passed through so a report can wake its watchers. */
+  phaseGroupId: number | null;
   onNotify: (message: string, kind?: ToastKind) => void;
   // Returns true when the error was a dead session and has been handled by
   // ending it — the panel then stays quiet rather than toasting "Not signed
@@ -73,6 +75,7 @@ export function ReportPanel({
   stages,
   topXBo5,
   videogameId,
+  phaseGroupId,
   onNotify,
   onAuthError,
   onDone,
@@ -435,6 +438,9 @@ export function ReportPanel({
         shorthand: submitShorthand,
         characters: charactersPayload.length > 0 ? charactersPayload : undefined,
         stages: stagesPayload.length > 0 ? stagesPayload : undefined,
+        // So every other TO watching this pool sees the result immediately,
+        // rather than each of them polling start.gg to find out.
+        phaseGroupId: phaseGroupId == null ? undefined : String(phaseGroupId),
       });
       onDone();
     } catch (err) {

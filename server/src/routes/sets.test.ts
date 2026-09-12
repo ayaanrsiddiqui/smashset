@@ -27,6 +27,7 @@ vi.mock('../startgg.js', async (importOriginal) => ({
 const { createApp } = await import('../app.js');
 const { StartggComplexityError } = await import('../startgg.js');
 const { COST_MODEL, invalidateSetCaches } = await import('./sets.js');
+const { hasSeenPool, resetPoolEvents } = await import('../poolEvents.js');
 const app = createApp();
 
 const PREFIX = `test-sets-route-${Date.now()}-`;
@@ -450,6 +451,47 @@ interface ResponseBracketGroup {
   bracketType: string;
   sets: ResponseBracketSet[];
 }
+
+describe('GET /phase-group/:phaseGroupId/events', () => {
+  afterEach(() => {
+    gqlMock.mockReset();
+    resetPoolEvents();
+  });
+
+  it('refuses a pool the TO has not read, so a ping cannot reveal one', async () => {
+    // Even a data-free "this pool changed" says a tournament exists and just
+    // moved, which start.gg may not have shown them.
+    const cookie = await makeSignedInCookie('events-unseen');
+
+    const res = await request(app).get('/api/sets/phase-group/999/events').set('Cookie', cookie);
+
+    expect(res.status).toBe(403);
+  });
+
+  it('rejects an unauthenticated subscriber', async () => {
+    const res = await request(app).get('/api/sets/phase-group/1/events');
+    expect(res.status).toBe(401);
+  });
+
+  it('admits a TO once start.gg has served them that pool', async () => {
+    gqlMock.mockImplementation((_t: unknown, query: string) => {
+      if (query.includes('PhaseGroupBracket')) return Promise.resolve(bracketFixture());
+      if (query.includes('PhaseGroupProgression')) return Promise.resolve(structureFixture());
+      if (query.includes('PhaseGroupSetCharacters')) return Promise.resolve(charactersFixture());
+      throw new Error(`unexpected query in test: ${query}`);
+    });
+    const cookie = await makeSignedInCookie('events-seen');
+    const { rows } = await pool.query('SELECT id FROM users WHERE startgg_user_id = $1', [idFor('events-seen')]);
+    const userId: number = rows[0].id;
+
+    expect(hasSeenPool(userId, '1')).toBe(false);
+    await request(app).get('/api/sets/phase-group/1/bracket').set('Cookie', cookie);
+
+    // Reading it with their own token is the admission: the stream itself is
+    // long-lived, so the gate is asserted rather than the socket.
+    expect(hasSeenPool(userId, '1')).toBe(true);
+  });
+});
 
 describe('GET /phase-group/:phaseGroupId/bracket', () => {
   /**

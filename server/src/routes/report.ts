@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { gql } from '../startgg.js';
+import { publishPoolChanged } from '../poolEvents.js';
 import { parseScoreShorthand } from '../scoreParser.js';
 import { invalidateSetCaches } from './sets.js';
 
@@ -24,6 +25,13 @@ interface ReportBody {
   shorthand: string;
   characters?: CharacterSelection[];
   stages?: StageSelection[];
+  /**
+   * The pool the TO is looking at, so everyone else watching it can be told
+   * immediately. Only a notification hint — a wrong value makes other clients
+   * refetch needlessly, it cannot show anyone data their own token would not
+   * return. Absent when an older client reports; they simply poll as before.
+   */
+  phaseGroupId?: string;
 }
 
 interface GameDataInput {
@@ -111,6 +119,9 @@ reportRouter.post('/', async (req, res) => {
     // Without this the set the TO just reported keeps coming back as open
     // until the cache expires, so it stays in the list they are working from.
     invalidateSetCaches();
+    // Everyone watching this pool hears about it now, rather than each of them
+    // discovering it separately by asking start.gg on their next poll.
+    if (typeof body.phaseGroupId === 'string') publishPoolChanged(body.phaseGroupId);
     res.json({ result: data, games });
   } catch (err) {
     res.status(502).json({ error: err instanceof Error ? err.message : 'Failed to report set' });
