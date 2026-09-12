@@ -174,6 +174,19 @@ export function PoolPicker({ eventId, eventName, phaseGroups, onPicked, onBack }
     });
   }
 
+  /**
+   * Which pools a candidate is in, so two players sharing a tag are telling
+   * apart. Without it the dropdown renders identical rows and offering a
+   * choice is theatre — and a tag being shared is exactly when it appears.
+   */
+  function poolsOf(match: EntrantMatch): string {
+    const identifiers = phaseGroups
+      .filter((pg) => match.phaseGroupIds.includes(pg.id))
+      .sort((a, b) => b.phaseNumSeeds - a.phaseNumSeeds)
+      .map((pg) => pg.displayIdentifier);
+    return identifiers.join(' → ');
+  }
+
   function poolsIn(phase: Phase): PhaseGroupSummary[] {
     if (!player) return phase.pools;
     return phase.pools.filter((pool) => player.phaseGroupIds.includes(pool.id));
@@ -207,6 +220,7 @@ export function PoolPicker({ eventId, eventName, phaseGroups, onPicked, onBack }
             {matches.map((match) => (
               <li key={match.id} onClick={() => setPlayer(match)}>
                 <span className="entrant-names">{match.name}</span>
+                <span className="round-text">{poolsOf(match) || 'not in a pool yet'}</span>
               </li>
             ))}
           </ul>

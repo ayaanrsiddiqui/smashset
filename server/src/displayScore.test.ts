@@ -50,3 +50,36 @@ describe('parseDisplayScore', () => {
     expect(parseDisplayScore('axb 2 - c(d) 1', 'a.b', 'c(d)')).toEqual([null, null]);
   });
 });
+
+describe('two entrants sharing a name', () => {
+  // 33 pairs of these exist in the HUGE bracket test event, unseeded, so two
+  // of them being drawn against each other is a matter of time.
+  it('orients the score by the winner, which is the only thing that can', () => {
+    // The string is identical either way round, so before this the forward
+    // pattern always matched first and slot order was a coin flip.
+    expect(parseDisplayScore('AlphaChief 2 - AlphaChief 1', 'AlphaChief', 'AlphaChief', 0)).toEqual([2, 1]);
+    expect(parseDisplayScore('AlphaChief 2 - AlphaChief 1', 'AlphaChief', 'AlphaChief', 1)).toEqual([1, 2]);
+  });
+
+  it('still reports nothing when there is no winner to orient by', () => {
+    expect(parseDisplayScore('AlphaChief 2 - AlphaChief 1', 'AlphaChief', 'AlphaChief', null)).toEqual([2, 1]);
+  });
+});
+
+describe('the winner as a cross-check', () => {
+  it('reports nothing when a distinct-name string contradicts the winner', () => {
+    // Here the names *did* resolve the order reliably, so a disagreement means
+    // the two sources are inconsistent — not that the order is backwards.
+    // Swapping would turn a correct reading into a confident wrong one.
+    expect(parseDisplayScore('hwon 1 - Curve_Ball917 3', 'hwon', 'Curve_Ball917', 0)).toEqual([null, null]);
+  });
+
+  it('leaves a consistent set alone', () => {
+    expect(parseDisplayScore('hwon 3 - Curve_Ball917 1', 'hwon', 'Curve_Ball917', 0)).toEqual([3, 1]);
+    expect(parseDisplayScore('hwon 1 - Curve_Ball917 3', 'hwon', 'Curve_Ball917', 1)).toEqual([1, 3]);
+  });
+
+  it('reports nothing for a level score that claims a winner', () => {
+    expect(parseDisplayScore('hwon 2 - Curve_Ball917 2', 'hwon', 'Curve_Ball917', 0)).toEqual([null, null]);
+  });
+});

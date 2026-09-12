@@ -231,6 +231,24 @@ describe('PoolPicker — player lookup', () => {
     expect(screen.getByRole('button', { name: /Top 8/ })).toHaveTextContent('did not reach');
   });
 
+  it('tells two players sharing a tag apart by their pools', async () => {
+    // Without this the dropdown renders two identical rows, so offering a
+    // choice is theatre — and a shared tag is exactly when it comes up.
+    searchEntrantsMock.mockResolvedValue({
+      entrants: [
+        { id: 10, name: 'AlphaChief', phaseGroupIds: [poolId('D101')] },
+        { id: 11, name: 'AlphaChief', phaseGroupIds: [poolId('D102'), poolId('E109')] },
+      ],
+    });
+    renderPicker();
+
+    fireEvent.change(lookup(), { target: { value: 'alphachief' } });
+    await settleLookup();
+
+    const rows = [...document.querySelectorAll('.lookup-matches li')].map((li) => li.textContent);
+    expect(rows).toEqual(['AlphaChiefD101', 'AlphaChiefD102 → E109']);
+  });
+
   it('says so when nobody matches', async () => {
     searchEntrantsMock.mockResolvedValue({ entrants: [] });
     renderPicker();

@@ -708,23 +708,38 @@ describe('App — unreachable server', () => {
 describe('App — searching completed sets', () => {
   const fetchBracketMock = vi.mocked(fetchBracket);
 
+  // One entrant id per player, the way start.gg assigns them: the same player
+  // in two sets is the same entrant. The fixture used to mint a fresh id per
+  // set, which made one player look like several and hid a real bug.
+  const entrantIds = new Map<string, number>();
+  function entrantId(name: string): number {
+    if (!entrantIds.has(name)) entrantIds.set(name, entrantIds.size + 100);
+    return entrantIds.get(name)!;
+  }
+
+  /** A name, or an explicit entrant when two players share a tag. */
+  type Player = string | { name: string; id: number };
+  const who = (p: Player) => (typeof p === 'string' ? { name: p, id: entrantId(p) } : p);
+
   // Names shaped like the real ones: two players share the "JL" prefix, which
   // is what makes the single-player rule non-trivial.
-  function completed(id: number, winner: string, loser: string, completedAt: number): BracketSet {
+  function completed(id: number, winner: Player, loser: Player, completedAt: number): BracketSet {
+    const w = who(winner);
+    const l = who(loser);
     return {
       id,
       identifier: String.fromCharCode(64 + id),
       round: 1,
       fullRoundText: 'Winners Round 1',
       state: 3,
-      winnerId: id * 10,
+      winnerId: w.id,
       lPlacement: null,
       completedAt,
       winnerAdvancesToPhase: null,
       loserAdvancesToPhase: null,
       slots: [
-        { entrant: { id: id * 10, name: winner }, score: 2, prereqSetId: null, prereqPlacement: null, progressionOrigin: null },
-        { entrant: { id: id * 10 + 1, name: loser }, score: 0, prereqSetId: null, prereqPlacement: null, progressionOrigin: null },
+        { entrant: w, score: 2, prereqSetId: null, prereqPlacement: null, progressionOrigin: null },
+        { entrant: l, score: 0, prereqSetId: null, prereqPlacement: null, progressionOrigin: null },
       ],
     };
   }
@@ -818,6 +833,32 @@ describe('App — searching completed sets', () => {
     // never a dead end.
     const back = await screen.findByPlaceholderText(/winner's name/i);
     expect((back as HTMLInputElement).value).toBe('Zoruya');
+  });
+
+  it('stays ambiguous when two different players share a tag', async () => {
+    // Two entrants, same name, different ids — which the HUGE test bracket has
+    // 33 pairs of. Counting names instead of players collapses them into one,
+    // and Enter would then open the newest set across both, handing the TO
+    // somebody else's set to correct.
+    fetchBracketMock.mockResolvedValue({
+      phaseGroupId: 1,
+      phaseName: 'Bracket',
+      displayIdentifier: '1',
+      bracketType: 'DOUBLE_ELIMINATION',
+      sets: [
+        completed(1, { name: 'AlphaChief', id: 900 }, 'goodfellow', 300),
+        completed(2, { name: 'AlphaChief', id: 901 }, 'Mr. Pi', 200),
+      ],
+    });
+    render(<App />);
+    await screen.findByPlaceholderText(/winner's name/i);
+
+    fireEvent.keyDown(window, { key: 'Tab' });
+    const search = await screen.findByPlaceholderText(/player to correct/i);
+    fireEvent.change(search, { target: { value: 'AlphaChief' } });
+
+    await waitFor(() => expect(rowNames()).toHaveLength(2));
+    expect(document.querySelector('.set-panel-list li.active')).toBeNull();
   });
 
   it('opens a completed set for correction when picked', async () => {

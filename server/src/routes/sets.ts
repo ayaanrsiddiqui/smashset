@@ -893,7 +893,11 @@ async function fetchBracketData(accessToken: string, userId: number, phaseGroupI
     if (s.slots.length !== 2) continue;
 
     const wiring = structure.get(String(s.id));
-    const scores = parseDisplayScore(s.displayScore, s.slots[0].entrant?.name, s.slots[1].entrant?.name);
+    // Which slot won, so the parse can orient itself rather than trusting the
+    // string's order — the only thing that can separate two same-named slots.
+    const winnerAt = s.winnerId == null ? -1 : s.slots.findIndex((slot) => slot.entrant?.id === s.winnerId);
+    const winnerSlot = winnerAt === 0 || winnerAt === 1 ? winnerAt : null;
+    const scores = parseDisplayScore(s.displayScore, s.slots[0].entrant?.name, s.slots[1].entrant?.name, winnerSlot);
 
     const slots = s.slots.map((slot, i): BracketSlot => {
       const origin = wiring?.slots?.[i]?.seed?.progressionSource;

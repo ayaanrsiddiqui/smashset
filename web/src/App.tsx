@@ -470,16 +470,19 @@ export default function App() {
   // A query that names exactly one player pulls up that player's history, and
   // the top row is their latest set — so highlight it without waiting for an
   // arrow key. Two players matched (say "JL" against two tags) stays ambiguous.
-  const namesMatchingQuery = new Set(
+  // Counted by entrant id, not by name: two different players can share a tag,
+  // and collapsing them would auto-open the newest set across both of them —
+  // handing the TO someone else's set to correct.
+  const playersMatchingQuery = new Set(
     query.trim()
       ? completedMatches.flatMap((s) =>
-          s.slots
-            .map((slot) => slot.entrant?.name)
-            .filter((n): n is string => !!n && n.toLowerCase().includes(query.trim().toLowerCase()))
+          s.slots.flatMap((slot) =>
+            slot.entrant && slot.entrant.name.toLowerCase().includes(query.trim().toLowerCase()) ? [slot.entrant.id] : []
+          )
         )
       : []
   );
-  const soleMatchedPlayer = mode === 'completed' && namesMatchingQuery.size === 1;
+  const soleMatchedPlayer = mode === 'completed' && playersMatchingQuery.size === 1;
 
   // A single match is unambiguous, so it stays highlighted the same way it
   // always has — only an actual choice among several needs `revealed` first.
