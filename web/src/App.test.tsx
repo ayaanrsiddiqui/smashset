@@ -1307,7 +1307,13 @@ describe('App — reporting a set and walking away', () => {
     await screen.findByText(
       (_content, element) => element?.className === 'entrant-names' && /Ada vs mudd/.test(element.textContent ?? '')
     );
-    fireEvent.keyDown(window, { key: '1' });
+    // Clicked rather than picked with a digit: the digit handler is rebound by
+    // an effect after paint, and the row can appear (from a poll resolving
+    // outside act) a beat before that effect runs, leaving the keypress to hit
+    // a handler that closed over an empty list. The row's own onClick is bound
+    // at render, and tapping is what a TO does anyway. Digit selection has its
+    // own tests.
+    fireEvent.click(document.querySelector('.set-panel-list li')!);
     await screen.findByText(/Winners Round 1 · A/);
     for (const key of ['w', 'w', 'Enter', 'Enter']) fireEvent.keyDown(window, { key });
   }
