@@ -40,12 +40,14 @@ describe('exchangeCodeForTokens / refreshAccessToken', () => {
   it('exchangeCodeForTokens posts to api.start.gg/oauth/access_token with an authorization_code grant', async () => {
     fetchMock.mockResolvedValue({
       ok: true,
-      json: async () => ({
-        token_type: 'Bearer',
-        expires_in: 604800,
-        access_token: 'new-access-token',
-        refresh_token: 'new-refresh-token',
-      }),
+      status: 200,
+      text: async () =>
+        JSON.stringify({
+          token_type: 'Bearer',
+          expires_in: 604800,
+          access_token: 'new-access-token',
+          refresh_token: 'new-refresh-token',
+        }),
     });
 
     const before = Date.now();
@@ -74,12 +76,14 @@ describe('exchangeCodeForTokens / refreshAccessToken', () => {
   it('refreshAccessToken posts to api.start.gg/oauth/refresh with a refresh_token grant', async () => {
     fetchMock.mockResolvedValue({
       ok: true,
-      json: async () => ({
-        token_type: 'Bearer',
-        expires_in: 604800,
-        access_token: 'refreshed-access-token',
-        refresh_token: 'refreshed-refresh-token',
-      }),
+      status: 200,
+      text: async () =>
+        JSON.stringify({
+          token_type: 'Bearer',
+          expires_in: 604800,
+          access_token: 'refreshed-access-token',
+          refresh_token: 'refreshed-refresh-token',
+        }),
     });
 
     const result = await refreshAccessToken('the-old-refresh-token');
@@ -113,5 +117,56 @@ describe('exchangeCodeForTokens / refreshAccessToken', () => {
     });
 
     await expect(refreshAccessToken('dead-refresh-token')).rejects.toThrow(/401/);
+  });
+
+  // The shape start.gg really returns for a refresh it will not honour,
+  // copied from a live call to api.start.gg/oauth/refresh: HTTP 200, and the
+  // reason as a bare JSON string. The test above this one mocks 401, which is
+  // a response start.gg has never been observed to send.
+  const LIVE_REJECTION = '"The refresh token is invalid. Cannot decrypt the refresh token"';
+
+  it('treats start.gg\'s 200-with-an-error-string as the failure it is, not a token', async () => {
+    fetchMock.mockResolvedValue({ ok: true, status: 200, text: async () => LIVE_REJECTION });
+
+    // Before: res.ok was true, so this resolved to { accessToken: undefined,
+    // refreshToken: undefined, expiresAt: Invalid Date } and the caller stored it.
+    await expect(refreshAccessToken('dead-refresh-token')).rejects.toThrow(/refresh token is invalid/i);
+  });
+
+  it('reports a dead refresh token as 401, so the session check that looks for one can fire', async () => {
+    fetchMock.mockResolvedValue({ ok: true, status: 200, text: async () => LIVE_REJECTION });
+
+    // resolveSessionUser only ends a session on 400/401. Since start.gg says
+    // 200, that branch could never run — the session limped on its old access
+    // token until it expired, and the user had to approve the app again.
+    await expect(refreshAccessToken('dead-refresh-token')).rejects.toMatchObject({ status: 401 });
+  });
+
+  it('leaves a 200 that says nothing about the token being dead as retryable', async () => {
+    fetchMock.mockResolvedValue({ ok: true, status: 200, text: async () => '"Service temporarily unavailable"' });
+
+    // Not 401: resolveSessionUser rides this out on the access token it already
+    // has rather than signing a TO out because start.gg hiccupped.
+    await expect(refreshAccessToken('good-refresh-token')).rejects.toMatchObject({ status: 200 });
+  });
+
+  it('still accepts a real token response', async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () =>
+        JSON.stringify({ token_type: 'Bearer', expires_in: 604800, access_token: 'new-access', refresh_token: 'new-refresh' }),
+    });
+
+    const tokens = await refreshAccessToken('good-refresh-token');
+    expect(tokens.accessToken).toBe('new-access');
+    expect(tokens.refreshToken).toBe('new-refresh');
+    expect(tokens.expiresAt.getTime()).toBeGreaterThan(Date.now());
+  });
+
+  it('refuses to sign somebody in on an exchange that returned no tokens', async () => {
+    fetchMock.mockResolvedValue({ ok: true, status: 200, text: async () => '"Invalid authorization code"' });
+
+    await expect(exchangeCodeForTokens('stale-code')).rejects.toThrow(/returned no tokens/);
   });
 });

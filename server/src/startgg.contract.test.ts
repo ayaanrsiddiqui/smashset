@@ -443,3 +443,50 @@ describe.skipIf(!ENABLED)('start.gg short URLs', () => {
     expect(await resolveShortUrl('smashset-canary-not-a-real-slug-38fa1c')).toBeNull();
   }, NETWORK_TIMEOUT_MS);
 });
+
+describe.skipIf(!ENABLED)('start.gg OAuth refusals', () => {
+  /**
+   * The assumption the refresh path is built on, and the one that made a
+   * failed refresh look like a successful one for as long as it did: start.gg
+   * does not report an OAuth refusal the way HTTP does. A rejected refresh
+   * token comes back **200** with the reason as a bare JSON string, and bad
+   * client credentials come back 500 the same way — so `res.ok` cannot be used
+   * to tell success from failure here, and startggOAuth.ts checks the body's
+   * shape instead.
+   *
+   * What must stay true is only this: a refusal never arrives token-shaped.
+   * Deliberately uses a throwaway refresh token, so it spends nothing and
+   * needs no OAuth credentials of its own — which is also why it tolerates
+   * either status.
+   */
+  it('never answers a refusal with something shaped like a token', async () => {
+    const res = await fetch('https://api.start.gg/oauth/refresh', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        client_id: process.env.STARTGG_OAUTH_CLIENT_ID ?? 'contract-test-no-such-client',
+        client_secret: process.env.STARTGG_OAUTH_CLIENT_SECRET ?? 'contract-test-no-such-secret',
+        grant_type: 'refresh_token',
+        refresh_token: 'contract-test-not-a-real-refresh-token',
+      }),
+    });
+    const raw = await res.text();
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      parsed = raw;
+    }
+    const tokenShaped =
+      typeof parsed === 'object' &&
+      parsed !== null &&
+      typeof (parsed as { access_token?: unknown }).access_token === 'string';
+
+    expect(
+      tokenShaped,
+      `start.gg answered a refusal with a token-shaped body (${res.status}): ${raw.slice(0, 200)}. ` +
+        'refreshAccessToken in server/src/startggOAuth.ts tells success from failure by that shape.'
+    ).toBe(false);
+  }, NETWORK_TIMEOUT_MS);
+});
