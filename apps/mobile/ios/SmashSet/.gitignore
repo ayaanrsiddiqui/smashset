@@ -1,0 +1,11 @@
+# Xcode per-user state: window positions, breakpoints, scheme ordering.
+# Churns on every open and means nothing to anyone else.
+xcuserdata/
+*.xcuserstate
+
+# Build output.
+DerivedData/
+build/
+
+.swiftpm/
+.DS_Store
