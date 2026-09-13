@@ -3,7 +3,23 @@
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- viewport-fit=cover is what makes env(safe-area-inset-*) report real
+         numbers. Without it they are 0, and the bottom-anchored controls sit
+         under the home indicator once the app is installed to the home
+         screen — where there is no browser chrome left to protect them. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta name="theme-color" content="#14161c" />
+    <!-- iOS ignores the manifest's icons for the home screen and reads this
+         one, which is why it is a separate file with the background baked in. -->
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <!-- Opaque, not black-translucent: translucent puts the web view under the
+         status bar, which the sticky headers would then need top insets to
+         clear. Nothing here needs to draw up there. -->
+    <meta name="apple-mobile-web-app-status-bar-style" content="black" />
+    <meta name="apple-mobile-web-app-title" content="SmashSet" />
     <title>SmashSet</title>
   </head>
   <body>

@@ -231,6 +231,13 @@
   z-index: 25;
   left: 12px;
   bottom: 16px;
+  /* Installed to the home screen there is no browser chrome holding these off
+     the screen edges. The left inset matters most: in landscape the notch
+     eats that side, and `left` survives the narrow override below. `bottom`
+     only survives above 900px — a tablet, where the home indicator is still
+     there. Plain values first, as the fallback for anything without env(). */
+  left: calc(12px + env(safe-area-inset-left));
+  bottom: calc(16px + env(safe-area-inset-bottom));
   display: flex;
   align-items: center;
   gap: 4px;
@@ -585,6 +592,9 @@
 .toast {
   position: fixed;
   bottom: 24px;
+  /* The outbox reports delivery and failure through this, so it is the last
+     thing that should end up under the home indicator. */
+  bottom: calc(24px + env(safe-area-inset-bottom));
   left: 50%;
   transform: translateX(-50%);
   font-weight: 600;
