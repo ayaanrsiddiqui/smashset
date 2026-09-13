@@ -39,9 +39,31 @@ async function ensureFreshAccessToken(userId: number, accessToken: string, refre
   return refreshing;
 }
 
+/**
+ * The session id and how it arrived. A native client has no cookie jar, so it
+ * sends the id as a bearer token instead — the id is already 256 bits of
+ * opaque randomness from createSession, which is what makes it safe to carry
+ * bare. The cookie's signature guards against a browser tampering with a value
+ * it can read; it adds nothing to a token a client only ever echoes back.
+ *
+ * Which one it was still matters, because setting and clearing cookies means
+ * nothing to anyone but a browser.
+ */
+export function readCredential(req: Request): { sessionId: string; fromCookie: boolean } | null {
+  const cookie = req.signedCookies?.[SESSION_COOKIE];
+  if (typeof cookie === 'string' && cookie.length > 0) return { sessionId: cookie, fromCookie: true };
+
+  // Read off `headers` rather than req.get() so this works against a plain
+  // object in tests as well as a real Express request.
+  const header = req.headers?.authorization;
+  const match = typeof header === 'string' ? /^Bearer[ ]+(\S+)$/i.exec(header) : null;
+  return match ? { sessionId: match[1], fromCookie: false } : null;
+}
+
 export async function resolveSessionUser(req: Request, res: Response): Promise<AuthUser | null> {
-  const sessionId = req.signedCookies?.[SESSION_COOKIE];
-  if (!sessionId) return null;
+  const credential = readCredential(req);
+  if (!credential) return null;
+  const { sessionId, fromCookie } = credential;
 
   const session = await getSessionWithUser(sessionId);
   if (!session) return null;
@@ -66,7 +88,7 @@ export async function resolveSessionUser(req: Request, res: Response): Promise<A
 
     if (rejected || !currentTokenStillValid) {
       await deleteSession(sessionId);
-      res.clearCookie(SESSION_COOKIE);
+      if (fromCookie) res.clearCookie(SESSION_COOKIE);
       return null;
     }
 
@@ -75,8 +97,10 @@ export async function resolveSessionUser(req: Request, res: Response): Promise<A
   }
 
   if (isPastHalfLife(session.sessionExpiresAt)) {
+    // The row is what actually extends the session, so a bearer client gets
+    // the same sliding expiry — it just has nothing to restamp on its end.
     const newExpiry = await touchSessionExpiry(sessionId);
-    res.cookie(SESSION_COOKIE, sessionId, cookieOptions(newExpiry));
+    if (fromCookie) res.cookie(SESSION_COOKIE, sessionId, cookieOptions(newExpiry));
   }
 
   return {

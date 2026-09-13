@@ -221,6 +221,87 @@ describe('requireAuth', () => {
   });
 });
 
+/** A native client's request: no cookie jar, the session id in a header. */
+function bearerReq(header: string | undefined): Request {
+  return { signedCookies: {}, headers: header === undefined ? {} : { authorization: header } } as unknown as Request;
+}
+
+describe('resolveSessionUser with a bearer token', () => {
+  afterEach(() => {
+    refreshAccessTokenMock.mockReset();
+  });
+
+  it('accepts the session id as a bearer token', async () => {
+    const user = await makeTestUser('bearer-ok', 168);
+    const session = await createSession(user.id);
+
+    const result = await resolveSessionUser(bearerReq(`Bearer ${session.id}`), fakeRes());
+
+    expect(result).toMatchObject({ id: user.id, accessToken: 'access-bearer-ok' });
+  });
+
+  it('matches the scheme case-insensitively, as HTTP requires', async () => {
+    const user = await makeTestUser('bearer-case', 168);
+    const session = await createSession(user.id);
+
+    expect(await resolveSessionUser(bearerReq(`bearer ${session.id}`), fakeRes())).toMatchObject({ id: user.id });
+  });
+
+  it('returns null for a bearer token that is not a real session', async () => {
+    expect(await resolveSessionUser(bearerReq('Bearer not-a-real-session'), fakeRes())).toBeNull();
+  });
+
+  it.each([
+    ['no scheme', 'just-the-session-id'],
+    ['the wrong scheme', 'Basic abc123'],
+    ['an empty token', 'Bearer '],
+  ])('returns null for a header with %s', async (_label, header) => {
+    expect(await resolveSessionUser(bearerReq(header), fakeRes())).toBeNull();
+  });
+
+  it('still prefers the cookie when a request somehow carries both', async () => {
+    const cookieUser = await makeTestUser('bearer-both-cookie', 168);
+    const bearerUser = await makeTestUser('bearer-both-header', 168);
+    const cookieSession = await createSession(cookieUser.id);
+    const bearerSession = await createSession(bearerUser.id);
+    const req = {
+      signedCookies: { [SESSION_COOKIE_NAME]: cookieSession.id },
+      headers: { authorization: `Bearer ${bearerSession.id}` },
+    } as unknown as Request;
+
+    expect(await resolveSessionUser(req, fakeRes())).toMatchObject({ id: cookieUser.id });
+  });
+
+  it('slides the session expiry in the database without setting a cookie', async () => {
+    const user = await makeTestUser('bearer-slide', 168);
+    const session = await createSession(user.id);
+    // Push it past the halfway point so the renewal branch actually runs.
+    const stale = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    await pool.query('UPDATE sessions SET expires_at = $2 WHERE id = $1', [session.id, stale]);
+    const res = fakeRes();
+
+    expect(await resolveSessionUser(bearerReq(`Bearer ${session.id}`), res)).not.toBeNull();
+
+    // The row is what extends the session, so a native client gets the same
+    // sliding window — it just has no cookie to restamp.
+    const reloaded = await getSessionWithUser(session.id);
+    expect(reloaded!.sessionExpiresAt.getTime()).toBeGreaterThan(stale.getTime());
+    expect(res.cookie).not.toHaveBeenCalled();
+  });
+
+  it('destroys a session with a dead refresh token without clearing a cookie', async () => {
+    const user = await makeTestUser('bearer-dead', -1); // already expired, so no usable current token
+    const session = await createSession(user.id);
+    refreshAccessTokenMock.mockRejectedValue(new StartggOAuthError('refresh rejected', 401));
+    const res = fakeRes();
+
+    expect(await resolveSessionUser(bearerReq(`Bearer ${session.id}`), res)).toBeNull();
+
+    expect(await getSessionWithUser(session.id)).toBeNull();
+    expect(res.clearCookie).not.toHaveBeenCalled();
+  });
+});
+
 afterAll(async () => {
   await pool.query('DELETE FROM users WHERE startgg_user_id LIKE $1', [`${PREFIX}%`]);
   await closeTestPool();
