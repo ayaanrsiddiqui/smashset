@@ -89,6 +89,11 @@ These cost real time to discover; don't re-derive them.
   parse a score string by splitting on a separator.
 - Rate limit is roughly 80 requests/minute **per token**, so server-side polling on one user's token
   doesn't scale to many TOs.
+- `tournament.admins` is **null** for a non-admin and a list for an admin — that visibility *is* the
+  permission, so read the null-vs-list distinction rather than searching the list for the user.
+- `admins(roles: [...])` filters by **literal role name and has no wildcard**. `roles: ["*"]` matches
+  nothing and returns `[]` even to the tournament's owner, which is how every non-owner admin ended
+  up on a read-only screen. Ask for `admins` bare.
 
 ## Git
 
