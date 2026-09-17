@@ -41,8 +41,22 @@ vi.mock('./api', async (importOriginal) => ({
   poolEventsUrl: (id: number) => `/api/sets/phase-group/${id}/events`,
 }));
 
+// The beacon's own batching and transport are covered in clientEvents.test.ts.
+// Mocked here so these tests assert the wiring instead — which outbox
+// transitions produce which event, since that is the whole reason a remote
+// field test tells us anything at all.
+const recordClientEventMock = vi.fn();
+vi.mock('./clientEvents', () => ({
+  recordClientEvent: (...args: unknown[]) => recordClientEventMock(...args),
+  installCrashReporting: vi.fn(),
+  flushClientEvents: vi.fn(),
+  resetClientEvents: vi.fn(),
+}));
+
 // Imported after the mock is registered so App picks up the mocked ./api.
 const { default: App } = await import('./App');
+
+beforeEach(() => recordClientEventMock.mockClear());
 
 /**
  * Waits for a set to appear on the bracket canvas and returns its box.
@@ -1352,6 +1366,35 @@ describe('App — reporting a set and walking away', () => {
 
     expect(await screen.findByText('NOT REPORTED')).toBeInTheDocument();
     expect(screen.getByText(/between different players/)).toBeInTheDocument();
+  });
+
+  it('beacons a dead-lettered report so a remote field test can see it', async () => {
+    // Nothing else leaves the TO's phone. Without this, a report that start.gg
+    // refused at a venue an hour away is indistinguishable from one that landed.
+    vi.mocked(reportSet).mockRejectedValue(apiFailure(409, 'start.gg would not take this.'));
+    render(<App />);
+    await reportIt();
+    await screen.findByText('NOT REPORTED');
+
+    expect(recordClientEventMock).toHaveBeenCalledWith(
+      'report-failed',
+      expect.objectContaining({ setId: 5001, attempt: 1, retryable: false, status: 409 })
+    );
+  });
+
+  it('beacons a delivery, so a quiet log means nothing was reported at all', async () => {
+    // The asymmetry matters: without a success event, "no events" is ambiguous
+    // between "worked perfectly" and "never opened the app".
+    vi.mocked(reportSet).mockResolvedValue({ result: {} });
+    render(<App />);
+    await reportIt();
+
+    await waitFor(() =>
+      expect(recordClientEventMock).toHaveBeenCalledWith(
+        'report-delivered',
+        expect.objectContaining({ setId: 5001, attempt: 1 })
+      )
+    );
   });
 
   it('keeps a failure visible long after any toast would have gone', async () => {

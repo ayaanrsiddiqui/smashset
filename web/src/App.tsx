@@ -12,6 +12,7 @@ import { MainsPanel } from './MainsPanel';
 import { AppHeader } from './AppHeader';
 import { OutboxStrip } from './OutboxStrip';
 import { allEntries, clearOutbox, drainOnce, enqueue, remove as dropFromOutbox, retryNow, subscribe as subscribeToOutbox } from './outbox';
+import { recordClientEvent } from './clientEvents';
 import {
   startSet,
   poolEventsUrl,
@@ -431,6 +432,9 @@ export default function App() {
         send: async (payload: ReportPayload, attempt: number) => {
           try {
             await reportSet({ ...payload, attempt });
+            // Every outbox transition is beaconed: the whole point of a remote
+            // field test is that nobody is here to watch this queue drain.
+            recordClientEvent('report-delivered', { setId: payload.setId, attempt });
             return { ok: true };
           } catch (err) {
             // A dead session is not this report's fault. End the session so
@@ -438,11 +442,20 @@ export default function App() {
             // still the only record that the set was ever reported.
             if (err instanceof ApiError && err.status === 401) {
               handledAuthError(err);
+              recordClientEvent('report-blocked', { setId: payload.setId, attempt, reason: 'signed-out' });
               return { ok: false, retryable: true, message: 'Signed out — sign back in to send this.' };
             }
+            const retryable = worthRetrying(err);
+            recordClientEvent('report-failed', {
+              setId: payload.setId,
+              attempt,
+              retryable,
+              status: err instanceof ApiError ? err.status : null,
+              message: err instanceof Error ? err.message : 'Failed to report set',
+            });
             return {
               ok: false,
-              retryable: worthRetrying(err),
+              retryable,
               message: err instanceof Error ? err.message : 'Failed to report set',
             };
           }

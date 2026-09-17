@@ -12,6 +12,7 @@ import { charactersRouter } from './routes/characters.js';
 import { stagesRouter } from './routes/stages.js';
 import { reportRouter } from './routes/report.js';
 import { mainsRouter } from './routes/mains.js';
+import { clientEventsRouter } from './routes/clientEvents.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -32,6 +33,9 @@ export function createApp() {
   // be paired with the credentialed (cookie) requests introduced here.
   app.use('/api/auth', authRouter);
   app.use('/api/me', meRouter);
+  // No requireAuth, deliberately — see the note in the router. A signed-out
+  // browser is one of the things this exists to tell us about.
+  app.use('/api/client-events', clientEventsRouter);
   app.use('/api/account', requireAuth, accountRouter);
   app.use('/api/event', requireAuth, eventRouter);
   app.use('/api/sets', requireAuth, setsRouter);
