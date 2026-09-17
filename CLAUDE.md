@@ -93,7 +93,13 @@ These cost real time to discover; don't re-derive them.
   permission, so read the null-vs-list distinction rather than searching the list for the user.
 - `admins(roles: [...])` filters by **literal role name and has no wildcard**. `roles: ["*"]` matches
   nothing and returns `[]` even to the tournament's owner, which is how every non-owner admin ended
-  up on a read-only screen. Ask for `admins` bare.
+  up on a read-only screen. Ask for `admins` bare. The only role that matches anything is `admin`; an
+  unrecognised one returns `[]`, which is still non-null and so still reads as "you are an admin".
+- `tournaments(filter: {tournamentView: "admin"})` is **stale** — it keeps listing tournaments the
+  user was an admin of at creation time and has since been removed from. `tournament.admins` is the
+  live answer. When the two disagree, believe `admins`; they are not interchangeable.
+- `filter: {isCurrentUserAdmin: true}` reads like the field for exactly this and **returns zero rows
+  for every tournament, including ones the caller owns**, and errors when combined with `id`.
 
 ## Git
 

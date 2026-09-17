@@ -159,8 +159,15 @@ setsRouter.get('/:eventId/phase-groups', async (req, res) => {
 
     // A denial is the one answer here nobody can debug after the fact: the TO
     // sees a read-only screen, reports nothing, and so leaves no trace of why.
-    // Logged with the raw signals it was decided from, because start.gg has
-    // been caught disagreeing with itself about who is an admin.
+    // Logged with the raw signals it was decided from, because the first real
+    // report of this took an afternoon of replaying the query by hand.
+    //
+    // Do not "fix" a null admins list by falling back to the tournaments
+    // filter tournamentView: "admin". That listing is stale — it keeps naming
+    // tournaments the user was an admin of when they were created and has
+    // since been removed from (confirmed against two, 2026-09-17). admins is
+    // the live answer; the listing agreeing would be the wrong kind of
+    // agreement.
     if (!canReport) {
       const admins = tournament?.admins;
       console.log(
