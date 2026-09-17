@@ -476,6 +476,81 @@ describe.skipIf(!ENABLED)('start.gg reporting permission', () => {
   }, NETWORK_TIMEOUT_MS);
 });
 
+describe.skipIf(!ENABLED)('start.gg bracket previews', () => {
+  /**
+   * An unstarted phase group whose previews already know their entrants — i.e.
+   * a first phase, seeded from the entrant list rather than fed by another.
+   *
+   * Keep one unstarted event on the test tournament and this stays a real
+   * check; without one it can only warn, because starting a bracket to test
+   * starting a bracket consumes the thing being tested.
+   */
+  async function unstartedFirstPhaseGroup(): Promise<string | null> {
+    const { raw } = await post(
+      `query Unstarted($slug: String!) {
+        tournament(slug: $slug) {
+          events { phases { phaseGroups(query: { perPage: 8 }) { nodes { id state } } } }
+        }
+      }`,
+      { slug: TOURNAMENT_SLUG }
+    );
+    const body = JSON.parse(raw) as {
+      data?: { tournament?: { events?: { phases?: { phaseGroups?: { nodes?: { id: number; state: number }[] } }[] }[] } | null };
+    };
+    for (const event of body.data?.tournament?.events ?? []) {
+      for (const phase of event.phases ?? []) {
+        for (const group of phase.phaseGroups?.nodes ?? []) {
+          if (group.state !== 1) continue;
+          const probe = await post(
+            `query Probe($id: ID!) { phaseGroup(id: $id) { sets(perPage: 1, page: 1) { nodes { id slots { entrant { id } } } } } }`,
+            { id: String(group.id) }
+          );
+          const parsed = JSON.parse(probe.raw) as {
+            data?: { phaseGroup?: { sets?: { nodes?: { id: string | number; slots: { entrant: { id: number } | null }[] }[] } } | null };
+          };
+          const set = parsed.data?.phaseGroup?.sets?.nodes?.[0];
+          if (set && typeof set.id === 'string' && set.slots.every((slot) => slot.entrant != null)) {
+            return String(set.id);
+          }
+        }
+      }
+    }
+    return null;
+  }
+
+  it('still ids an unmaterialised set the way the report route parses it', async () => {
+    const previewSetId = await unstartedFirstPhaseGroup();
+    if (!previewSetId) {
+      console.warn(
+        `[contract] no unstarted first-phase group on "${TOURNAMENT_SLUG}" to check preview sets against. ` +
+          'Create an event there and leave its bracket unstarted to make this a real check.'
+      );
+      return;
+    }
+
+    // report.ts reads the phase group out of this id to find the real set a
+    // spent preview became. A format change silently breaks that recovery.
+    expect(
+      previewSetId,
+      `start.gg changed how it ids an unmaterialised set (${previewSetId}). previewPhaseGroupId in ` +
+        'server/src/routes/report.ts parses the phase group out of it, and a retry of a preview ' +
+        'report cannot find the real set without it.'
+    ).toMatch(/^preview_\d+_-?\d+_\d+$/);
+
+    // And it has to be readable by id, because the route reads every set
+    // before writing to it.
+    const { raw } = await post(`query Preview($setId: ID!) { set(id: $setId) { id state slots { entrant { id } } } }`, {
+      setId: previewSetId,
+    });
+    const body = JSON.parse(raw) as { data?: { set?: { id: string; slots: { entrant: { id: number } | null }[] } | null } };
+    expect(
+      body.data?.set,
+      `start.gg no longer resolves a preview set by id (${previewSetId}), so the report route cannot ` +
+        'check one before reporting it and reporting into an unstarted bracket is broken.'
+    ).not.toBeNull();
+  }, NETWORK_TIMEOUT_MS);
+});
+
 describe.skipIf(!ENABLED)('start.gg short URLs', () => {
   it('redirects a short URL to its canonical tournament slug', async () => {
     expect(await resolveShortUrl(TOURNAMENT_SLUG)).toBe('definitely-real-tournament');

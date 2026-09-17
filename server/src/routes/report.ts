@@ -231,6 +231,82 @@ function buildGameData(
   });
 }
 
+/**
+ * The phase group named by a preview set id, or null if this is a real set.
+ *
+ * start.gg ids an unmaterialised set `preview_<phaseGroupId>_<round>_<n>` —
+ * verified live 2026-09-17. Reporting one is how a bracket gets started
+ * without leaving the app: start.gg accepts the preview id, generates the
+ * bracket, and applies the result in the same call.
+ */
+function previewPhaseGroupId(setId: number | string): string | null {
+  if (typeof setId !== 'string') return null;
+  const match = /^preview_(\d+)_/.exec(setId);
+  return match ? match[1] : null;
+}
+
+/** The subset of COST_MODEL.live's nodes this needs; the query returns more. */
+interface LiveSetNode {
+  id: number | string;
+  state: number;
+  winnerId: number | null;
+  displayScore: string | null;
+  slots: { entrant: { id: number; name: string } | null }[];
+}
+
+/**
+ * The real set a vanished preview turned into.
+ *
+ * A preview id is consumed by the very report that materialises the bracket,
+ * so an outbox retry arrives carrying an id start.gg has already forgotten —
+ * it answers "Set not found", which is a gqlError, which isRetryable calls
+ * final. Without this a report that actually landed dead-letters as NOT
+ * REPORTED, and a TO who trusts that reports it a second time.
+ *
+ * Matched on the entrant pair because it is the only identity that survives:
+ * the preview id is gone and the real id was never told to this client.
+ *
+ * Ambiguity refuses rather than guesses. Two sets between one pair is possible
+ * in a bracket (grand finals and its reset), and retiring a report against the
+ * wrong set would be the one unrecoverable outcome. In practice the sets a TO
+ * reports off an unstarted bracket are its opening round, where a pair meets
+ * once.
+ */
+async function resolveVanishedPreview(
+  accessToken: string,
+  setId: string,
+  winnerEntrantId: number,
+  loserEntrantId: number
+): Promise<PreconditionResult['set']> {
+  const phaseGroupId = previewPhaseGroupId(setId);
+  if (phaseGroupId === null) return null;
+
+  const paged = await fetchSetsPaged<LiveSetNode, { id: number | string }>(
+    accessToken,
+    phaseGroupId,
+    COST_MODEL.live.query,
+    { name: 'live', base: COST_MODEL.live.base, maxPerRow: COST_MODEL.live.maxPerSet }
+  );
+  if (!paged) return null;
+
+  const wanted = [String(winnerEntrantId), String(loserEntrantId)];
+  const matches = paged.nodes.filter((node) => {
+    const ids = node.slots.map((slot) => slot.entrant?.id).filter((id) => id != null).map(String);
+    return ids.length === 2 && wanted.every((id) => ids.includes(id));
+  });
+  if (matches.length !== 1) return null;
+
+  const found = matches[0];
+  return {
+    id: found.id,
+    state: found.state,
+    winnerId: found.winnerId,
+    displayScore: found.displayScore,
+    phaseGroup: { id: phaseGroupId },
+    slots: found.slots,
+  };
+}
+
 reportRouter.post('/', async (req, res) => {
   const body = req.body as Partial<ReportBody>;
 
@@ -245,14 +321,6 @@ reportRouter.post('/', async (req, res) => {
     return;
   }
 
-  if (typeof body.setId === 'string' && body.setId.startsWith('preview_')) {
-    res.status(400).json({
-      error: 'This set is still a bracket preview (the bracket hasn\'t been started on start.gg yet), so it has no real set to report against.',
-      retryable: false,
-    });
-    return;
-  }
-
   let games;
   try {
     games = parseScoreShorthand(body.shorthand, body.requiredWins);
@@ -264,6 +332,9 @@ reportRouter.post('/', async (req, res) => {
   const gameData = buildGameData(body as ReportBody, games);
 
   let current: PreconditionResult['set'];
+  // Every write below goes to this, not to what the client sent: a preview id
+  // that has already been spent resolves to the real set it became.
+  let effectiveSetId: number | string = body.setId;
   try {
     ({ set: current } = await gql<PreconditionResult>(req.user!.accessToken, SET_PRECONDITION_QUERY, {
       setId: body.setId,
@@ -275,8 +346,36 @@ reportRouter.post('/', async (req, res) => {
     });
     return;
   }
+  // A live preview resolves like any other set, so the first report of one
+  // needs nothing special. A retry is the hard case: the id it carries was
+  // spent materialising the bracket, so start.gg returns nothing for it and
+  // the real set has to be found another way.
+  if (!current && previewPhaseGroupId(body.setId) !== null) {
+    try {
+      current = await resolveVanishedPreview(
+        req.user!.accessToken,
+        body.setId as string,
+        body.winnerEntrantId,
+        body.loserEntrantId
+      );
+    } catch (err) {
+      res.status(502).json({
+        error: err instanceof Error ? err.message : 'Could not check this set before reporting it',
+        retryable: isRetryable(err),
+      });
+      return;
+    }
+    if (current) effectiveSetId = current.id;
+  }
+
   if (!current) {
-    res.status(404).json({ error: 'start.gg no longer has this set.', retryable: false });
+    res.status(404).json({
+      error:
+        previewPhaseGroupId(body.setId) !== null
+          ? 'This bracket has been started and start.gg no longer has the preview this was typed against. Reopen the pool and report it there.'
+          : 'start.gg no longer has this set.',
+      retryable: false,
+    });
     return;
   }
 
@@ -319,7 +418,7 @@ reportRouter.post('/', async (req, res) => {
 
   const winnerChanged = alreadyDecided && String(current.winnerId) !== String(body.winnerEntrantId);
   if (winnerChanged && body.confirmReset !== true) {
-    const clears = current.phaseGroup ? await wouldClear(req.user!.accessToken, String(current.phaseGroup.id), body.setId) : null;
+    const clears = current.phaseGroup ? await wouldClear(req.user!.accessToken, String(current.phaseGroup.id), effectiveSetId) : null;
     res.status(409).json({
       error: 'Changing who won means clearing this result and everything it fed into.',
       requiresReset: true,
@@ -334,10 +433,10 @@ reportRouter.post('/', async (req, res) => {
   try {
     let data;
     if (winnerChanged) {
-      await gql(req.user!.accessToken, RESET_MUTATION, { setId: body.setId });
+      await gql(req.user!.accessToken, RESET_MUTATION, { setId: effectiveSetId });
       try {
         data = await gql(req.user!.accessToken, REPORT_MUTATION, {
-          setId: body.setId,
+          setId: effectiveSetId,
           winnerId: body.winnerEntrantId,
           gameData,
         });
@@ -355,13 +454,13 @@ reportRouter.post('/', async (req, res) => {
       }
     } else if (alreadyDecided) {
       data = await gql(req.user!.accessToken, UPDATE_MUTATION, {
-        setId: body.setId,
+        setId: effectiveSetId,
         winnerId: body.winnerEntrantId,
         gameData,
       });
     } else {
       data = await gql(req.user!.accessToken, REPORT_MUTATION, {
-        setId: body.setId,
+        setId: effectiveSetId,
         winnerId: body.winnerEntrantId,
         gameData,
       });

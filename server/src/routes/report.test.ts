@@ -53,10 +53,14 @@ const CASCADE_SETS = [
  * it, so a single mockResolvedValue would feed the mutation's response to the
  * read as well.
  */
-function startgg(over: { set?: unknown; report?: unknown; update?: unknown; reset?: unknown; cascade?: unknown } = {}) {
+function startgg(over: { set?: unknown; report?: unknown; update?: unknown; reset?: unknown; cascade?: unknown; live?: unknown } = {}) {
   gqlMock.mockImplementation((_token: string, query: string) => {
     if (query.includes('ReportPrecondition')) {
       return over.set instanceof Error ? Promise.reject(over.set) : Promise.resolve({ set: 'set' in over ? over.set : OPEN_SET });
+    }
+    if (query.includes('PhaseGroupBracket')) {
+      if (over.live instanceof Error) return Promise.reject(over.live);
+      return Promise.resolve(over.live ?? { phaseGroup: { id: 1, sets: { pageInfo: { totalPages: 1 }, nodes: [] } } });
     }
     if (query.includes('PhaseGroupCascade')) {
       if (over.cascade instanceof Error) return Promise.reject(over.cascade);
@@ -450,5 +454,133 @@ describe('POST /api/report — telling a retry apart from a dead end', () => {
     const res = await request(server).post('/api/report').set('Cookie', cookie).send(VALID);
 
     expect(res.body.retryable).toBe(false);
+  });
+});
+
+describe('POST /api/report against a bracket nobody has started', () => {
+  const PREVIEW = { ...VALID, setId: 'preview_1_1_1' };
+  /** A preview start.gg still holds: reportable, and reporting it starts the bracket. */
+  const PREVIEW_SET = {
+    id: 'preview_1_1_1',
+    state: 1,
+    winnerId: null,
+    displayScore: null,
+    phaseGroup: { id: 1 },
+    slots: [{ entrant: { id: 8001, name: 'Ada' } }, { entrant: { id: 8002, name: 'mudd' } }],
+  };
+  /** The real set that preview became, holding exactly the reported result. */
+  const MATERIALISED = {
+    id: 7001,
+    state: 3,
+    winnerId: 8001,
+    displayScore: 'Ada 2 - mudd 0',
+    slots: [{ entrant: { id: 8001, name: 'Ada' } }, { entrant: { id: 8002, name: 'mudd' } }],
+  };
+  const livePage = (nodes: unknown[]) => ({ phaseGroup: { id: 1, sets: { pageInfo: { totalPages: 1 }, nodes } } });
+  const lookedUpTheRealBracket = () => gqlMock.mock.calls.some(([, q]) => (q as string).includes('PhaseGroupBracket'));
+  const sentTo = (name: string) =>
+    (gqlMock.mock.calls.find(([, q]) => (q as string).includes(name))?.[2] as { setId: unknown }).setId;
+
+  afterEach(() => {
+    gqlMock.mockReset();
+    resetPoolEvents();
+  });
+
+  it('reports the preview set itself, which is what starts the bracket', async () => {
+    // start.gg accepts a preview id, generates the bracket and applies the
+    // result in one call (verified live 2026-09-17), so a TO never has to go
+    // to start.gg to get the first set in.
+    startgg({ set: PREVIEW_SET });
+    const cookie = await makeSignedInCookie('preview-first');
+
+    const res = await request(server).post('/api/report').set('Cookie', cookie).send(PREVIEW);
+
+    expect(res.status).toBe(200);
+    expect(mutations()).toEqual(['ReportSet']);
+    expect(sentTo('reportBracketSet')).toBe('preview_1_1_1');
+  });
+
+  it('retires a retry whose preview was consumed by the report that landed', async () => {
+    // The whole reason this reconciliation exists. The first attempt started
+    // the bracket and its response died on venue wifi; the preview id is now
+    // spent, so start.gg answers "Set not found" — a decision, not a blip, so
+    // the outbox would dead-letter a report that was in fact correct and the
+    // TO would report it a second time.
+    startgg({ set: null, live: livePage([MATERIALISED]) });
+    const cookie = await makeSignedInCookie('preview-retry');
+
+    const res = await request(server).post('/api/report').set('Cookie', cookie).send({ ...PREVIEW, attempt: 2 });
+
+    expect(res.status).toBe(200);
+    expect(res.body.alreadyOnFile).toBe(true);
+    expect(mutations()).toEqual([]);
+  });
+
+  it('reports against the real set when someone else started the bracket first', async () => {
+    // The set is real and still unreported, so this report belongs on it —
+    // and must be addressed by the real id, not the spent preview one.
+    startgg({ set: null, live: livePage([{ ...MATERIALISED, state: 2, winnerId: null, displayScore: null }]) });
+    const cookie = await makeSignedInCookie('preview-started-elsewhere');
+
+    const res = await request(server).post('/api/report').set('Cookie', cookie).send(PREVIEW);
+
+    expect(res.status).toBe(200);
+    expect(sentTo('reportBracketSet')).toBe(7001);
+  });
+
+  it('refuses a retry when the real set now holds a different result', async () => {
+    startgg({ set: null, live: livePage([{ ...MATERIALISED, winnerId: 8002, displayScore: 'Ada 0 - mudd 2' }]) });
+    const cookie = await makeSignedInCookie('preview-retry-moved');
+
+    const res = await request(server).post('/api/report').set('Cookie', cookie).send({ ...PREVIEW, attempt: 2 });
+
+    expect(res.status).toBe(409);
+    expect(res.body.retryable).toBe(false);
+    expect(mutations()).toEqual([]);
+  });
+
+  it('refuses rather than guessing when one pair of players has two sets', async () => {
+    // Grand finals and its reset. Retiring a report against the wrong set is
+    // the one outcome here that cannot be walked back.
+    startgg({ set: null, live: livePage([MATERIALISED, { ...MATERIALISED, id: 7009 }]) });
+    const cookie = await makeSignedInCookie('preview-ambiguous');
+
+    const res = await request(server).post('/api/report').set('Cookie', cookie).send({ ...PREVIEW, attempt: 2 });
+
+    expect(res.status).toBe(404);
+    expect(res.body.retryable).toBe(false);
+    expect(lookedUpTheRealBracket(), 'refused without ever looking for the real set').toBe(true);
+    expect(mutations()).toEqual([]);
+  });
+
+  it('refuses a preview from a phase that is still waiting on another one', async () => {
+    // Top 8's previews exist but carry no entrants until the pools feeding it
+    // finish (verified live 2026-09-17). Sending that to start.gg is the one
+    // rejection that writes game rows before it validates, so it stops here.
+    startgg({
+      set: { ...PREVIEW_SET, id: 'preview_2_-3_0', slots: [{ entrant: null }, { entrant: null }] },
+    });
+    const cookie = await makeSignedInCookie('preview-unfed');
+
+    const res = await request(server)
+      .post('/api/report')
+      .set('Cookie', cookie)
+      .send({ ...PREVIEW, setId: 'preview_2_-3_0' });
+
+    expect(res.status).toBe(409);
+    expect(res.body.error).toMatch(/both players/i);
+    expect(mutations()).toEqual([]);
+  });
+
+  it('says the bracket moved on when nothing in the pool matches', async () => {
+    startgg({ set: null, live: livePage([]) });
+    const cookie = await makeSignedInCookie('preview-gone');
+
+    const res = await request(server).post('/api/report').set('Cookie', cookie).send({ ...PREVIEW, attempt: 2 });
+
+    expect(res.status).toBe(404);
+    expect(res.body.error).toMatch(/bracket has been started/i);
+    expect(lookedUpTheRealBracket(), 'gave up without ever looking for the real set').toBe(true);
+    expect(mutations()).toEqual([]);
   });
 });
