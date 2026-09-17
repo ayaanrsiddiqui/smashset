@@ -1405,8 +1405,9 @@ describe('GET /:eventId/phase-groups', () => {
 
   /**
    * start.gg shows tournament.admins only to an admin — anyone else gets null
-   * rather than an empty list (verified live 2026-09-12). With the owner that
-   * settles whether a report from this user would be accepted at all.
+   * rather than an empty list (verified live 2026-09-16). Visibility of the
+   * field is the permission; what is in the list is not, which is what the
+   * unlisted-admin case below is about.
    */
   function accessFixture(over: { me?: number | null; owner?: number | null; admins?: { id: number }[] | null }) {
     return (_token: unknown, query: string) => {
@@ -1433,6 +1434,22 @@ describe('GET /:eventId/phase-groups', () => {
   it('lets an admin who is not the owner report', async () => {
     gqlMock.mockImplementation(accessFixture({ me: 501, owner: 500, admins: [{ id: 501 }] }));
     const cookie = await makeSignedInCookie('access-admin');
+
+    const res = await request(server).get('/api/sets/12345/phase-groups').set('Cookie', cookie);
+
+    expect(res.body.canReport).toBe(true);
+  });
+
+  it('lets an admin report even when the list start.gg returns does not name them', async () => {
+    // The regression, and the reason the test above never caught it: that
+    // fixture hands back a list containing the user, which is not what
+    // start.gg sent. The query asked for admins(roles: ["*"]), "*" is not a
+    // wildcard, and a role filter matching nothing returns [] — to the owner
+    // too. Searching that list for the current user therefore locked out
+    // every non-owner admin, while the separate owner check hid it from the
+    // one person who ever tested it.
+    gqlMock.mockImplementation(accessFixture({ me: 501, owner: 500, admins: [] }));
+    const cookie = await makeSignedInCookie('access-admin-unlisted');
 
     const res = await request(server).get('/api/sets/12345/phase-groups').set('Cookie', cookie);
 

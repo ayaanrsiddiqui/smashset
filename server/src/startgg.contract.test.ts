@@ -430,6 +430,52 @@ describe.skipIf(!ENABLED)('start.gg pool previews', () => {
   }, NETWORK_TIMEOUT_MS);
 });
 
+describe.skipIf(!ENABLED)('start.gg reporting permission', () => {
+  it('still shows tournament.admins to an admin, which is the whole permission signal', async () => {
+    const { raw } = await post(
+      `query Admins($slug: String!) {
+        unfiltered: tournament(slug: $slug) {
+          owner {
+            id
+          }
+          admins {
+            id
+          }
+        }
+        filtered: tournament(slug: $slug) {
+          admins(roles: ["*"]) {
+            id
+          }
+        }
+      }`,
+      { slug: TOURNAMENT_SLUG }
+    );
+    const body = JSON.parse(raw) as {
+      data?: {
+        unfiltered?: { owner: { id: number } | null; admins: { id: number }[] | null } | null;
+        filtered?: { admins: { id: number }[] | null } | null;
+      };
+    };
+
+    expect(
+      body.data?.unfiltered?.admins,
+      'start.gg no longer shows tournament.admins to an admin of the tournament. canReport in ' +
+        'server/src/routes/sets.ts reads that visibility as the permission itself, so every TO ' +
+        'is now stuck on a read-only screen and cannot report at a venue.'
+    ).not.toBeNull();
+
+    // The trap, kept executable rather than only warned about in a comment:
+    // `roles` filters by literal role name and has no wildcard, so asking for
+    // "*" matches nothing and returns [] even to the owner. That is what put
+    // every non-owner admin on a read-only screen.
+    expect(
+      body.data?.filtered?.admins,
+      'admins(roles: ["*"]) now returns actual admins. The warning against adding a roles filter ' +
+        'back to PHASE_GROUPS_QUERY in server/src/routes/sets.ts is out of date.'
+    ).toEqual([]);
+  }, NETWORK_TIMEOUT_MS);
+});
+
 describe.skipIf(!ENABLED)('start.gg short URLs', () => {
   it('redirects a short URL to its canonical tournament slug', async () => {
     expect(await resolveShortUrl(TOURNAMENT_SLUG)).toBe('definitely-real-tournament');

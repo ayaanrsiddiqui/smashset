@@ -83,8 +83,8 @@ export interface PhaseGroupSummary {
 interface PhaseGroupsQueryResult {
   currentUser: { id: number } | null;
   event: {
-    // admins is null rather than empty for anyone who is not one — that is
-    // the distinction canReport turns on.
+    // Null rather than empty for anyone who is not an admin. That visibility
+    // is itself the permission, and is what canReport turns on.
     tournament: { owner: { id: number } | null; admins: { id: number }[] | null } | null;
     phaseGroups:
       | { id: number; displayIdentifier: string; bracketType: string; phase: { id: number; name: string; numSeeds: number | null } }[]
@@ -96,9 +96,17 @@ interface PhaseGroupsQueryResult {
  * Also asks whether this user may report into the event at all.
  *
  * start.gg only shows `tournament.admins` to an admin — for anyone else it
- * comes back null rather than empty (verified live: my own tournament returns
- * [], somebody else's returns null). Together with the owner that settles it,
- * for three more objects on a query that runs once per event.
+ * comes back null rather than empty. That visibility is the entire signal, so
+ * this deliberately does not search the list for the current user: an admin
+ * whose role start.gg happens not to list would otherwise be locked out of
+ * the thing they opened the app to do.
+ *
+ * Note the absent `roles:` argument, and do not add one back. `roles` filters
+ * by literal role name and has no wildcard, so `roles: ["*"]` matches nothing
+ * and returns [] even to the tournament's owner. That left every non-owner
+ * admin on a read-only screen, hidden the whole time by the owner check
+ * passing for the one person who ever tested it. Verified live 2026-09-16 and
+ * pinned by a contract test.
  */
 const PHASE_GROUPS_QUERY = /* GraphQL */ `
   query EventPhaseGroups($eventId: ID!) {
@@ -110,7 +118,7 @@ const PHASE_GROUPS_QUERY = /* GraphQL */ `
         owner {
           id
         }
-        admins(roles: ["*"]) {
+        admins {
           id
         }
       }
@@ -147,11 +155,7 @@ setsRouter.get('/:eventId/phase-groups', async (req, res) => {
     // spectator being allowed to type a score start.gg then refuses.
     const me = data.currentUser?.id ?? null;
     const tournament = data.event?.tournament;
-    const canReport =
-      me === null ||
-      tournament == null ||
-      tournament.owner?.id === me ||
-      (tournament.admins ?? []).some((admin) => admin.id === me);
+    const canReport = me === null || tournament == null || tournament.owner?.id === me || tournament.admins != null;
 
     res.json({ phaseGroups, canReport });
   } catch (err) {
