@@ -1465,6 +1465,41 @@ describe('GET /:eventId/phase-groups', () => {
     expect(res.body.canReport).toBe(false);
   });
 
+  it('leaves a trace naming why it refused, since a refusal reports nothing', async () => {
+    // Without this a TO stuck on a read-only screen is undiagnosable — the one
+    // outcome that produces no report, and therefore no telemetry either.
+    const logged: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
+      const line = String(args[0]);
+      if (line.startsWith('[access]')) logged.push(line);
+    });
+    gqlMock.mockImplementation(accessFixture({ me: 999, owner: 500, admins: null }));
+    const cookie = await makeSignedInCookie('access-logged');
+
+    await request(server).get('/api/sets/12345/phase-groups').set('Cookie', cookie);
+
+    expect(logged).toHaveLength(1);
+    expect(logged[0]).toContain('event 12345');
+    expect(logged[0]).toContain('owner=500');
+    expect(logged[0]).toContain('admins=null');
+    vi.restoreAllMocks();
+  });
+
+  it('says nothing when reporting is allowed', async () => {
+    const logged: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
+      const line = String(args[0]);
+      if (line.startsWith('[access]')) logged.push(line);
+    });
+    gqlMock.mockImplementation(accessFixture({ me: 501, owner: 500, admins: [] }));
+    const cookie = await makeSignedInCookie('access-quiet');
+
+    await request(server).get('/api/sets/12345/phase-groups').set('Cookie', cookie);
+
+    expect(logged).toEqual([]);
+    vi.restoreAllMocks();
+  });
+
   it('assumes reporting is allowed when start.gg will not say', async () => {
     // Being wrongly locked out mid-tournament is far worse than typing a score
     // start.gg then refuses, so an unclear answer resolves toward letting the

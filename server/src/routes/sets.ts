@@ -157,6 +157,18 @@ setsRouter.get('/:eventId/phase-groups', async (req, res) => {
     const tournament = data.event?.tournament;
     const canReport = me === null || tournament == null || tournament.owner?.id === me || tournament.admins != null;
 
+    // A denial is the one answer here nobody can debug after the fact: the TO
+    // sees a read-only screen, reports nothing, and so leaves no trace of why.
+    // Logged with the raw signals it was decided from, because start.gg has
+    // been caught disagreeing with itself about who is an admin.
+    if (!canReport) {
+      const admins = tournament?.admins;
+      console.log(
+        `[access] user ${req.user!.id} (start.gg ${me}) read-only on event ${eventId}: ` +
+          `owner=${tournament?.owner?.id ?? 'null'} admins=${admins === null || admins === undefined ? 'null' : admins.length}`
+      );
+    }
+
     res.json({ phaseGroups, canReport });
   } catch (err) {
     res.status(502).json({ error: err instanceof Error ? err.message : 'Failed to load phase groups' });
