@@ -234,10 +234,18 @@ function buildGameData(
 /**
  * The phase group named by a preview set id, or null if this is a real set.
  *
- * start.gg ids an unmaterialised set `preview_<phaseGroupId>_<round>_<n>` —
- * verified live 2026-09-17. Reporting one is how a bracket gets started
- * without leaving the app: start.gg accepts the preview id, generates the
- * bracket, and applies the result in the same call.
+ * start.gg ids an unmaterialised set `preview_<phaseGroupId>_<round>_<n>`.
+ * Reporting one is how a bracket gets started without leaving the app:
+ * start.gg accepts the preview id, generates the bracket, and applies the
+ * result in the same call — verified live 2026-09-17 with the full payload
+ * this route sends, games, per-game stages and character selections included,
+ * all of which read back correctly off the materialised set.
+ *
+ * One consequence worth knowing rather than coding around: the group's sets
+ * stay invisible for a moment after they are created (~40s when measured,
+ * 2026-09-17), so the pool a TO just started reads as empty until the poll
+ * catches up. Deliberately not a constant anywhere — nothing here waits on
+ * that number, the one-second poll simply arrives at the answer on its own.
  */
 function previewPhaseGroupId(setId: number | string): string | null {
   if (typeof setId !== 'string') return null;
