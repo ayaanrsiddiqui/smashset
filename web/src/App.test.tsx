@@ -1331,6 +1331,27 @@ describe('App — reporting a set and walking away', () => {
     for (const key of ['w', 'w', 'Enter', 'Enter']) fireEvent.keyDown(window, { key });
   }
 
+  it('takes focus off the search box when a set opens, so the keybinds land', async () => {
+    // A TO types a name, presses Enter, and starts typing the score. Focus
+    // stayed in the search box, so every keybind was swallowed as text into a
+    // field behind the panel — the score simply never moved, with nothing on
+    // screen to say why.
+    render(<App />);
+    await screen.findByText(
+      (_content, element) => element?.className === 'entrant-names' && /Ada vs mudd/.test(element.textContent ?? '')
+    );
+    const search = document.querySelector('input.search-box') as HTMLInputElement;
+    search.focus();
+    expect(document.activeElement).toBe(search);
+
+    fireEvent.click(document.querySelector('.set-panel-list li')!);
+    await screen.findByText(/Winners Round 1 · A/);
+
+    expect(document.activeElement).not.toBe(search);
+    for (const key of ['w', 'w']) fireEvent.keyDown(window, { key });
+    expect(document.querySelector('.score-line')?.textContent?.replace(/\s+/g, ' ').trim()).toBe('2–0');
+  });
+
   it('gives the TO the screen back at once, without claiming anything was reported', async () => {
     vi.mocked(reportSet).mockReturnValue(new Promise(() => {})); // in flight forever
     render(<App />);

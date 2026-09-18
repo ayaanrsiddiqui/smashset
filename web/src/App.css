@@ -970,6 +970,14 @@
   padding: 10px 16px;
 }
 
+/* Focused on open so the keybinds reach the panel rather than the search box
+   behind it (see ReportPanel). tabindex="-1" keeps it out of the tab order, so
+   this ring could only ever appear from that programmatic focus — a box drawn
+   round the whole modal, every time one opens. */
+.report-panel:focus {
+  outline: none;
+}
+
 .report-actions {
   flex: none;
   padding: 8px 16px 10px;

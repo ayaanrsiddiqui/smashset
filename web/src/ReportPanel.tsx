@@ -145,12 +145,25 @@ export function ReportPanel({
   // very next line of JS — even from an event fired a microtask later —
   // sees the flip. `submitting` itself stays purely for rendering.
   const submittingRef = useRef(false);
+  const panelRef = useRef<HTMLDivElement>(null);
   const quickRef = useRef<HTMLInputElement>(null);
   const confirmSubmitRef = useRef<HTMLDivElement>(null);
   const boToggleRef = useRef<HTMLDivElement>(null);
 
   const loser = winnerId === entrantA.id ? entrantB : entrantA;
   const winner = winnerId === entrantA.id ? entrantA : entrantB;
+
+  // The panel opens over whatever the TO was doing, and that is nearly always
+  // the set search — where every key below is swallowed as text into a field
+  // behind the panel. Nothing said so on screen: the score just never moved.
+  //
+  // Taken here rather than blurred at each call site because there are four
+  // ways in (Enter on a highlighted row, a digit hotkey, a tap, a set picked
+  // off the bracket) and only the panel knows it opened. preventScroll because
+  // this is the whole modal; focusing it must not also move the view.
+  useEffect(() => {
+    panelRef.current?.focus({ preventScroll: true });
+  }, []);
 
   useEffect(() => {
     if (mode.kind === 'quick') quickRef.current?.focus();
@@ -807,7 +820,7 @@ export function ReportPanel({
   const charPending = mode.kind === 'characters' && mode.side === null;
 
   return (
-    <div className="report-panel">
+    <div className="report-panel" ref={panelRef} tabIndex={-1}>
       {/* Fixed: the whole page used to scroll, so this scrolled away for a
           moment before sticking, which read as a glitch. */}
       <div className="report-header">
