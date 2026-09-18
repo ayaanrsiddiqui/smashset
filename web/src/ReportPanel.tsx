@@ -30,12 +30,6 @@ interface Props {
   // destructive confirmation below — the server checks for real, and refuses
   // if this was stale.
   priorWinnerEntrantId?: number | null;
-  /**
-   * start.gg will not accept a report from this user for this event, so the
-   * set opens as something to read rather than something to fill in. Everyone
-   * can see a bracket; only its TOs can change it.
-   */
-  readOnly?: boolean;
   characters: Character[];
   stages: Stage[];
   topXBo5: number | null;
@@ -92,7 +86,6 @@ export function ReportPanel({
   priorResult,
   priorDetail,
   priorWinnerEntrantId = null,
-  readOnly = false,
   characters,
   stages,
   topXBo5,
@@ -500,7 +493,6 @@ export function ReportPanel({
   }
 
   async function submit(confirmReset = false) {
-    if (readOnly) return;
     if (submittingRef.current) return;
     const payload = buildPayload(confirmReset);
     if (!payload) return;
@@ -548,16 +540,6 @@ export function ReportPanel({
 
       const active = document.activeElement;
       const inField = active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement;
-
-      // Read-only keeps exactly one binding: the way out. Leaving the rest
-      // live would let a score be typed into a form that cannot send it.
-      if (readOnly) {
-        if (e.key === 'Escape') {
-          e.preventDefault();
-          onCancel();
-        }
-        return;
-      }
 
       if (e.key === 'Escape') {
         if (helpOpen) {
@@ -825,7 +807,7 @@ export function ReportPanel({
   const charPending = mode.kind === 'characters' && mode.side === null;
 
   return (
-    <div className={`report-panel${readOnly ? ' read-only' : ''}`}>
+    <div className="report-panel">
       {/* Fixed: the whole page used to scroll, so this scrolled away for a
           moment before sticking, which read as a glitch. */}
       <div className="report-header">
@@ -1168,11 +1150,7 @@ export function ReportPanel({
       )}
 
       <div className="report-actions">
-      {readOnly ? (
-        <p className="read-only-note">
-          You're not a TO for this tournament on start.gg, so this set is here to read rather than report.
-        </p>
-      ) : mode.kind === 'confirmReset' ? (
+      {mode.kind === 'confirmReset' ? (
         <div className="confirm-row submit-confirm" ref={confirmSubmitRef}>
           <p className="reset-warning">
             {winner.name} didn't win this on start.gg, so the result has to be cleared and reported again.{' '}

@@ -81,11 +81,7 @@ export interface PhaseGroupSummary {
 }
 
 interface PhaseGroupsQueryResult {
-  currentUser: { id: number } | null;
   event: {
-    // Null rather than empty for anyone who is not an admin. That visibility
-    // is itself the permission, and is what canReport turns on.
-    tournament: { owner: { id: number } | null; admins: { id: number }[] | null } | null;
     phaseGroups:
       | { id: number; displayIdentifier: string; bracketType: string; phase: { id: number; name: string; numSeeds: number | null } }[]
       | null;
@@ -93,35 +89,24 @@ interface PhaseGroupsQueryResult {
 }
 
 /**
- * Also asks whether this user may report into the event at all.
+ * Deliberately asks nothing about permission.
  *
- * start.gg only shows `tournament.admins` to an admin — for anyone else it
- * comes back null rather than empty. That visibility is the entire signal, so
- * this deliberately does not search the list for the current user: an admin
- * whose role start.gg happens not to list would otherwise be locked out of
- * the thing they opened the app to do.
+ * This used to also decide whether the TO could report, from whether start.gg
+ * would show them `tournament.admins` — it only shows that to an `admin`. But
+ * start.gg's roles go down through manager and bracket manager to reporter,
+ * and a reporter can report while seeing `admins: null`. That is the role a TO
+ * hands a helper at a venue, so the check locked out the people the app is
+ * for, silently, on a read-only screen.
  *
- * Note the absent `roles:` argument, and do not add one back. `roles` filters
- * by literal role name and has no wildcard, so `roles: ["*"]` matches nothing
- * and returns [] even to the tournament's owner. That left every non-owner
- * admin on a read-only screen, hidden the whole time by the owner check
- * passing for the one person who ever tested it. Verified live 2026-09-16 and
- * pinned by a contract test.
+ * Nothing in the schema answers "may I report here?" — swept 2026-09-18, there
+ * is no permission field on any type, `isCurrentUserAdmin` returns zero rows
+ * even for tournaments you own, and the `roles:` argument changes which admins
+ * come back, never whether the field is visible. start.gg's own refusal of the
+ * mutation is the only real answer, and the report route already surfaces it.
  */
 const PHASE_GROUPS_QUERY = /* GraphQL */ `
   query EventPhaseGroups($eventId: ID!) {
-    currentUser {
-      id
-    }
     event(id: $eventId) {
-      tournament {
-        owner {
-          id
-        }
-        admins {
-          id
-        }
-      }
       phaseGroups {
         id
         displayIdentifier
@@ -150,33 +135,7 @@ setsRouter.get('/:eventId/phase-groups', async (req, res) => {
       phaseNumSeeds: pg.phase.numSeeds ?? 0,
       bracketType: pg.bracketType,
     }));
-    // Deliberately optimistic when the answer is not clear: a TO wrongly shown
-    // a read-only screen cannot report at a venue, which is far worse than a
-    // spectator being allowed to type a score start.gg then refuses.
-    const me = data.currentUser?.id ?? null;
-    const tournament = data.event?.tournament;
-    const canReport = me === null || tournament == null || tournament.owner?.id === me || tournament.admins != null;
-
-    // A denial is the one answer here nobody can debug after the fact: the TO
-    // sees a read-only screen, reports nothing, and so leaves no trace of why.
-    // Logged with the raw signals it was decided from, because the first real
-    // report of this took an afternoon of replaying the query by hand.
-    //
-    // Do not "fix" a null admins list by falling back to the tournaments
-    // filter tournamentView: "admin". That listing is stale — it keeps naming
-    // tournaments the user was an admin of when they were created and has
-    // since been removed from (confirmed against two, 2026-09-17). admins is
-    // the live answer; the listing agreeing would be the wrong kind of
-    // agreement.
-    if (!canReport) {
-      const admins = tournament?.admins;
-      console.log(
-        `[access] user ${req.user!.id} (start.gg ${me}) read-only on event ${eventId}: ` +
-          `owner=${tournament?.owner?.id ?? 'null'} admins=${admins === null || admins === undefined ? 'null' : admins.length}`
-      );
-    }
-
-    res.json({ phaseGroups, canReport });
+    res.json({ phaseGroups });
   } catch (err) {
     res.status(502).json({ error: err instanceof Error ? err.message : 'Failed to load phase groups' });
   }

@@ -100,10 +100,6 @@ export default function App() {
   // fall back to event selection on Back rather than cancel back to a
   // current pool that doesn't exist yet.
   const [pickingPool, setPickingPool] = useState(false);
-  // Whether start.gg will accept a report from this user for this event.
-  // Optimistic by default: being wrongly locked out at a venue is worse than
-  // being allowed to type something start.gg then refuses.
-  const [canReport, setCanReport] = useState(true);
   const [sets, setSets] = useState<OpenSet[]>([]);
   const [bracketGroup, setBracketGroup] = useState<BracketGroup | null>(null);
   // Whether the pool's change stream is up, and a counter the stream bumps.
@@ -248,9 +244,8 @@ export default function App() {
     setPhaseGroups(null);
     setPhaseGroupIdState(null);
     fetchPhaseGroups(event.id)
-      .then(({ phaseGroups, canReport }) => {
+      .then(({ phaseGroups }) => {
         setPhaseGroups(phaseGroups);
-        setCanReport(canReport);
         setLoadError(null);
         if (phaseGroups.length === 1) {
           pickPool(phaseGroups[0].id);
@@ -1097,7 +1092,6 @@ export default function App() {
           priorResult={priorResult}
           priorDetail={priorDetail}
           priorWinnerEntrantId={selectedBracketSet?.state === 3 ? selectedBracketSet.winnerId : null}
-          readOnly={!canReport}
           characters={characters}
           stages={stages}
           topXBo5={topX}

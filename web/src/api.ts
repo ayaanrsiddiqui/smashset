@@ -104,11 +104,7 @@ export function resolveEvent(input: string): Promise<{ event?: EventInfo; events
   });
 }
 
-/**
- * `canReport` is whether start.gg will accept a report from this user for this
- * event. Optimistic when unclear — see the server's note.
- */
-export function fetchPhaseGroups(eventId: number): Promise<{ phaseGroups: PhaseGroupSummary[]; canReport: boolean }> {
+export function fetchPhaseGroups(eventId: number): Promise<{ phaseGroups: PhaseGroupSummary[] }> {
   return req(`/api/sets/${eventId}/phase-groups`);
 }
 

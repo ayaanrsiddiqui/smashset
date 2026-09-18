@@ -49,7 +49,7 @@ export function seedPool(eventId = TEST_EVENT.id, phaseGroupId = SOLE_PHASE_GROU
  * beforeEach keeps that in one place instead of re-listing defaults per block.
  */
 export function resetApiDefaults(): void {
-  vi.mocked(api.fetchPhaseGroups).mockResolvedValue({ phaseGroups: [SOLE_PHASE_GROUP], canReport: true });
+  vi.mocked(api.fetchPhaseGroups).mockResolvedValue({ phaseGroups: [SOLE_PHASE_GROUP] });
   vi.mocked(api.fetchOpenSets).mockResolvedValue({ sets: [] });
   vi.mocked(api.fetchBracket).mockResolvedValue(EMPTY_BRACKET);
   vi.mocked(api.fetchSetDetail).mockResolvedValue({ games: [] });

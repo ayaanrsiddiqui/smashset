@@ -26,7 +26,7 @@ vi.mock('./api', async (importOriginal) => ({
   // Inlined (not a top-level const) — vi.mock factories are hoisted above
   // other top-level code, so only vi.fn()/mock-prefixed bindings survive
   // being referenced in here; a plain object const doesn't.
-  fetchPhaseGroups: vi.fn().mockResolvedValue({ phaseGroups: [{ id: 1, displayIdentifier: '1', phaseName: 'Bracket', bracketType: 'DOUBLE_ELIMINATION' }], canReport: true }),
+  fetchPhaseGroups: vi.fn().mockResolvedValue({ phaseGroups: [{ id: 1, displayIdentifier: '1', phaseName: 'Bracket', bracketType: 'DOUBLE_ELIMINATION' }] }),
   fetchOpenSets: vi.fn().mockResolvedValue({ sets: [] }),
   fetchBracket: vi.fn().mockResolvedValue({ phaseGroupId: 1, phaseName: 'Bracket', displayIdentifier: '1', bracketType: 'DOUBLE_ELIMINATION', sets: [] }),
   fetchSetDetail: vi.fn().mockResolvedValue({ games: [] }),
@@ -598,7 +598,6 @@ describe('App — multiple pools', () => {
         { id: 10, displayIdentifier: 'A', phaseId: 1, phaseName: 'Pools', phaseNumSeeds: 16, bracketType: 'ROUND_ROBIN' },
         { id: 20, displayIdentifier: 'B', phaseId: 1, phaseName: 'Pools', phaseNumSeeds: 16, bracketType: 'ROUND_ROBIN' },
       ],
-      canReport: true,
     });
     fetchBracketMock.mockResolvedValue({ phaseGroupId: 10, phaseName: 'Pools', displayIdentifier: 'A', bracketType: 'ROUND_ROBIN', sets: [] });
   });

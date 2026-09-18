@@ -89,17 +89,21 @@ These cost real time to discover; don't re-derive them.
   parse a score string by splitting on a separator.
 - Rate limit is roughly 80 requests/minute **per token**, so server-side polling on one user's token
   doesn't scale to many TOs.
-- `tournament.admins` is **null** for a non-admin and a list for an admin — that visibility *is* the
-  permission, so read the null-vs-list distinction rather than searching the list for the user.
-- `admins(roles: [...])` filters by **literal role name and has no wildcard**. `roles: ["*"]` matches
-  nothing and returns `[]` even to the tournament's owner, which is how every non-owner admin ended
-  up on a read-only screen. Ask for `admins` bare. The only role that matches anything is `admin`; an
-  unrecognised one returns `[]`, which is still non-null and so still reads as "you are an admin".
-- `tournaments(filter: {tournamentView: "admin"})` is **stale** — it keeps listing tournaments the
-  user was an admin of at creation time and has since been removed from. `tournament.admins` is the
-  live answer. When the two disagree, believe `admins`; they are not interchangeable.
-- `filter: {isCurrentUserAdmin: true}` reads like the field for exactly this and **returns zero rows
-  for every tournament, including ones the caller owns**, and errors when combined with `id`.
+- **There is no way to ask start.gg whether you may report.** No permission field exists on any type
+  (whole-schema sweep, 2026-09-18). Don't try to predict it — send the mutation and surface the
+  refusal. Predicting it locked real TOs out of the app twice.
+- start.gg's roles are **admin > manager > bracket manager > reporter**, and a *reporter* can report
+  sets. That is the role a TO hands a helper at a venue, so it is the common case, not the edge one.
+- `tournament.admins` is visible **only to `admin`** — a reporter gets `null` while being perfectly
+  able to report. Its visibility is *not* a permission signal, however much it looks like one.
+- Visibility is argument-independent: `roles:` changes which admins come back, never whether the
+  field is `null`. Bare `admins` quietly means `roles: ["admin"]`, so it omits every lesser role, and
+  an unrecognised role name returns `[]` rather than erroring.
+- `roles: ["*"]` is **not** a wildcard — it matches nothing and returns `[]` even to the owner.
+- `filter: {isCurrentUserAdmin: true}` reads like the field for exactly this and returns **zero rows
+  for every tournament, including ones you own**; it errors when combined with `id`.
+- `tournaments(filter: {tournamentView: "admin"})` is **stale** — it keeps listing tournaments you
+  were an admin of at creation time and have since been removed from.
 
 ## Git
 
