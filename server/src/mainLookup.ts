@@ -1,5 +1,5 @@
 import { gql } from './startgg.js';
-import { insertComputedPlayerMain } from './db/mains.js';
+import { fillCharacterCounts, insertComputedPlayerMain } from './db/mains.js';
 
 // SetFilters has no videogameId filter (confirmed via schema introspection),
 // so Player.sets spans every game a player has ever played — over-fetch and
@@ -69,6 +69,13 @@ interface PlayerMainHistoryResult {
   player: { sets: { nodes: RawPlayerSet[] } } | null;
 }
 
+export interface CharacterTally {
+  /** Games played on each character id, over the sets considered. */
+  counts: Record<number, number>;
+  /** The most-played of them, which is what "main" has always meant here. */
+  best: { characterId: number; gamesTallied: number } | null;
+}
+
 // Pure — no I/O. `relevantSets` must already be most-recent-first (Player.sets'
 // own default order, preserved by the caller's filter/slice) and scoped to one
 // videogame. Resolves which of a set's (up to two) entrant ids is this player
@@ -78,10 +85,14 @@ interface PlayerMainHistoryResult {
 // while scanning most-recent-first, and `best` only updates on a strict `>`,
 // so a character that reaches a given count via more recent sets keeps
 // priority over one that only reaches the same count via older sets.
-export function tallyMainCharacter(
-  relevantSets: RawPlayerSet[],
-  playerId: number
-): { characterId: number; gamesTallied: number } | null {
+//
+// The whole tally is returned, not just the winner of it: it is what orders
+// the character dropdowns, so a TO sees the handful of characters this player
+// actually plays rather than an alphabetical list. `counts` is always an
+// object, empty when nothing could be tallied — a player with no character
+// data on start.gg is a tallied player with nothing in it, which is a
+// different thing from one who has never been looked at.
+export function tallyCharacters(relevantSets: RawPlayerSet[], playerId: number): CharacterTally {
   const counts = new Map<number, number>();
   let best: { characterId: number; count: number } | null = null;
 
@@ -103,7 +114,10 @@ export function tallyMainCharacter(
     }
   }
 
-  return best ? { characterId: best.characterId, gamesTallied: best.count } : null;
+  return {
+    counts: Object.fromEntries(counts),
+    best: best ? { characterId: best.characterId, gamesTallied: best.count } : null,
+  };
 }
 
 // Bounds worst-case burst (e.g. ~100 entrants all uncached on a large
@@ -159,23 +173,29 @@ export async function computePlayerMain(accessToken: string, playerId: number, v
     });
     const allSets = data.player?.sets.nodes ?? [];
     const relevantSets = allSets.filter((s) => s.event?.videogame?.id === videogameId).slice(0, SETS_TO_CONSIDER);
-    const result = tallyMainCharacter(relevantSets, playerId);
+    const { counts, best } = tallyCharacters(relevantSets, playerId);
 
     const wrote = await insertComputedPlayerMain(
       playerId,
       videogameId,
-      result?.characterId ?? null,
-      result?.gamesTallied ?? 0,
-      relevantSets.length
+      best?.characterId ?? null,
+      best?.gamesTallied ?? 0,
+      relevantSets.length,
+      counts
     );
 
     if (!wrote) {
-      // Somebody set one while this was in flight. Theirs stands.
-      console.log(`[mains] discarded computed main for player ${playerId} (videogame ${videogameId}): one was set while it ran`);
+      // Somebody set one while this was in flight. Theirs stands — but their
+      // correction says nothing about what the player has been playing, so the
+      // tally still goes on, which is also what stops this player being looked
+      // up again on every poll forever.
+      await fillCharacterCounts(playerId, videogameId, counts);
+      console.log(`[mains] kept the main set for player ${playerId} (videogame ${videogameId}) and recorded the tally alongside it`);
     } else {
       console.log(
         `[mains] computed main for player ${playerId} (videogame ${videogameId}): ` +
-          (result ? `character ${result.characterId} (${result.gamesTallied}/${relevantSets.length} sets)` : 'no computable main')
+          (best ? `character ${best.characterId} (${best.gamesTallied}/${relevantSets.length} sets)` : 'no computable main') +
+          `, ${Object.keys(counts).length} characters tallied`
       );
     }
   } finally {

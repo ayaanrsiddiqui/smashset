@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import { pool } from './pool.js';
-import { getPlayerMains, insertComputedPlayerMain, upsertPlayerMain } from './mains.js';
+import { fillCharacterCounts, getPlayerMains, insertComputedPlayerMain, upsertPlayerMain } from './mains.js';
 import { closeTestPool } from '../test-helpers.js';
 
 // Real start.gg player ids are always positive — negative ids are a
@@ -113,7 +113,7 @@ describe('db/mains', () => {
   it('insertComputedPlayerMain writes when there is nothing on file yet', async () => {
     const playerId = testPlayerId();
 
-    expect(await insertComputedPlayerMain(playerId, VIDEOGAME_ID, 1338, 4, 8)).toBe(true);
+    expect(await insertComputedPlayerMain(playerId, VIDEOGAME_ID, 1338, 4, 8, {})).toBe(true);
 
     const mains = await getPlayerMains([playerId], VIDEOGAME_ID);
     expect(mains.get(playerId)?.characterId).toBe(1338);
@@ -128,17 +128,77 @@ describe('db/mains', () => {
     const playerId = testPlayerId();
     await upsertPlayerMain(playerId, VIDEOGAME_ID, 1300, 0, 0);
 
-    expect(await insertComputedPlayerMain(playerId, VIDEOGAME_ID, 1338, 4, 8)).toBe(false);
+    expect(await insertComputedPlayerMain(playerId, VIDEOGAME_ID, 1338, 4, 8, {})).toBe(false);
 
     const mains = await getPlayerMains([playerId], VIDEOGAME_ID);
     expect(mains.get(playerId)?.characterId).toBe(1300);
+  });
+
+  it('records the whole tally, not just the character that won it', async () => {
+    const playerId = testPlayerId();
+
+    await insertComputedPlayerMain(playerId, VIDEOGAME_ID, 1338, 4, 8, { 1338: 4, 1300: 2 });
+
+    const mains = await getPlayerMains([playerId], VIDEOGAME_ID);
+    expect(mains.get(playerId)?.characterCounts).toEqual({ 1338: 4, 1300: 2 });
+  });
+
+  it('leaves a player nobody has tallied marked as such, rather than as empty', async () => {
+    // What the lazy backfill turns on. A row written before tallies existed,
+    // or by a TO correcting a main, has no tally — and has to be
+    // distinguishable from one that was looked at and had nothing.
+    const playerId = testPlayerId();
+    await upsertPlayerMain(playerId, VIDEOGAME_ID, 1300, 0, 0);
+
+    const mains = await getPlayerMains([playerId], VIDEOGAME_ID);
+    expect(mains.get(playerId)?.characterCounts).toBeNull();
+  });
+
+  it('fills the tally on a hand-set row without disturbing the main', async () => {
+    // The case that would otherwise loop forever: a TO corrects a main, the
+    // insert above declines to touch their row, and with no tally landing
+    // anywhere the player is looked up again on every poll for the rest of the
+    // tournament.
+    const playerId = testPlayerId();
+    await upsertPlayerMain(playerId, VIDEOGAME_ID, 1300, 0, 0);
+
+    expect(await fillCharacterCounts(playerId, VIDEOGAME_ID, { 1338: 4 })).toBe(true);
+
+    const mains = await getPlayerMains([playerId], VIDEOGAME_ID);
+    expect(mains.get(playerId)?.characterId).toBe(1300);
+    expect(mains.get(playerId)?.characterCounts).toEqual({ 1338: 4 });
+  });
+
+  it('will not overwrite a tally that is already on file', async () => {
+    // Fill-once, so two lookups racing cannot half-apply one over the other.
+    const playerId = testPlayerId();
+    await insertComputedPlayerMain(playerId, VIDEOGAME_ID, 1338, 4, 8, { 1338: 4 });
+
+    expect(await fillCharacterCounts(playerId, VIDEOGAME_ID, { 9999: 1 })).toBe(false);
+
+    const mains = await getPlayerMains([playerId], VIDEOGAME_ID);
+    expect(mains.get(playerId)?.characterCounts).toEqual({ 1338: 4 });
+  });
+
+  it('a TO correcting a main keeps the tally that was already computed', async () => {
+    // Their correction says who to suggest; it says nothing about what the
+    // player has been playing, and wiping the tally would send them back
+    // through the lookup for no reason.
+    const playerId = testPlayerId();
+    await insertComputedPlayerMain(playerId, VIDEOGAME_ID, 1338, 4, 8, { 1338: 4, 1300: 2 });
+
+    await upsertPlayerMain(playerId, VIDEOGAME_ID, 1300, 0, 0);
+
+    const mains = await getPlayerMains([playerId], VIDEOGAME_ID);
+    expect(mains.get(playerId)?.characterId).toBe(1300);
+    expect(mains.get(playerId)?.characterCounts).toEqual({ 1338: 4, 1300: 2 });
   });
 
   it('a TO setting a main still overwrites whatever a lookup computed', async () => {
     // The other direction has to keep working: a correction is explicit and
     // always wins, however recently the background lookup ran.
     const playerId = testPlayerId();
-    await insertComputedPlayerMain(playerId, VIDEOGAME_ID, 1338, 4, 8);
+    await insertComputedPlayerMain(playerId, VIDEOGAME_ID, 1338, 4, 8, {});
 
     await upsertPlayerMain(playerId, VIDEOGAME_ID, 1300, 0, 0);
 

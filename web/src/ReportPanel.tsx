@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Character, EntrantInfo, OpenSet, PriorResult, SetDetail, Stage, ToastKind } from './types';
 import {
   parseScoreShorthand,
@@ -11,8 +11,15 @@ import { BO_OPTIONS, boLabel, guessRequiredWins } from './roundFormat';
 import { FuzzyCell } from './FuzzyCell';
 import { fuzzyMatchCharacters } from './characterAliases';
 import { StageToggle } from './StageToggle';
-import { ApiError, reportSet, updatePlayerMain, type ReportPayload, type StageSelection } from './api';
-import { lookupMain } from './mains';
+import {
+  ApiError,
+  fetchCharacterTallies,
+  reportSet,
+  updatePlayerMain,
+  type ReportPayload,
+  type StageSelection,
+} from './api';
+import { lookupMain, orderCharactersByTally, type CharacterCounts } from './mains';
 import { derivePriorState } from './priorDetail';
 
 interface Props {
@@ -164,6 +171,53 @@ export function ReportPanel({
   useEffect(() => {
     panelRef.current?.focus({ preventScroll: true });
   }, []);
+
+  // What each side has actually been playing, which orders their character
+  // dropdowns. Fetched here rather than carried on the polled set payload:
+  // only these two players matter, and only once the TO opens a dropdown —
+  // which is after they have typed a score, so this lands well before it is
+  // looked at.
+  //
+  // Deliberately degrading: a failure leaves the dropdowns in the plain
+  // character order they have always been in, which still works. It is not
+  // surfaced because there is nothing for the TO to do about it, and a toast
+  // over a report screen costs more than the ordering is worth.
+  const [tallies, setTallies] = useState<Record<number, CharacterCounts>>({});
+  useEffect(() => {
+    const playerIds = [winner.playerId, loser.playerId].filter((id): id is number => id != null);
+    if (playerIds.length === 0) return;
+    let cancelled = false;
+    fetchCharacterTallies(videogameId, playerIds)
+      .then((res) => {
+        if (!cancelled) setTallies(res.tallies);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+    // Entrants cannot change while a panel is open — it is rebuilt per set.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [videogameId]);
+
+  const winnerCounts = winner.playerId != null ? tallies[winner.playerId] : undefined;
+  const loserCounts = loser.playerId != null ? tallies[loser.playerId] : undefined;
+
+  /**
+   * Alias-aware fuzzy matching once something is typed, this side's play
+   * history before that. An empty query used to leave the list in the order
+   * start.gg happened to return it, which is alphabetical and meaningless —
+   * so the top entry was never worth committing, and Enter backed out instead.
+   */
+  const matchWinnerCharacters = useMemo(
+    () => (query: string, items: Character[]) =>
+      query.trim() ? fuzzyMatchCharacters(query, items) : orderCharactersByTally(items, winnerCounts),
+    [winnerCounts]
+  );
+  const matchLoserCharacters = useMemo(
+    () => (query: string, items: Character[]) =>
+      query.trim() ? fuzzyMatchCharacters(query, items) : orderCharactersByTally(items, loserCounts),
+    [loserCounts]
+  );
 
   useEffect(() => {
     if (mode.kind === 'quick') quickRef.current?.focus();
@@ -936,7 +990,8 @@ export function ReportPanel({
               <span className="edit-main-label">Correct {mode.side === 'winner' ? winner.name : loser.name}'s main</span>
               <FuzzyCell
                 items={characters}
-                matchItems={fuzzyMatchCharacters}
+                commitTopWhenEmpty
+                matchItems={mode.side === 'winner' ? matchWinnerCharacters : matchLoserCharacters}
                 value={null}
                 placeholder="type a character, or clear…"
                 active
@@ -963,7 +1018,8 @@ export function ReportPanel({
               <div className="game-stat-char">
                 <FuzzyCell
                   items={characters}
-                  matchItems={fuzzyMatchCharacters}
+                  commitTopWhenEmpty
+                  matchItems={matchWinnerCharacters}
                   value={null}
                   emptyLabel="all games"
                   placeholder="type a character…"
@@ -1008,7 +1064,8 @@ export function ReportPanel({
               <div className="game-stat-char">
                 <FuzzyCell
                   items={characters}
-                  matchItems={fuzzyMatchCharacters}
+                  commitTopWhenEmpty
+                  matchItems={matchLoserCharacters}
                   value={null}
                   emptyLabel="all games"
                   placeholder="type a character…"
@@ -1056,7 +1113,8 @@ export function ReportPanel({
                       {usable ? (
                         <FuzzyCell
                           items={characters}
-                          matchItems={fuzzyMatchCharacters}
+                          commitTopWhenEmpty
+                          matchItems={matchWinnerCharacters}
                           value={charsByGame[n]?.winner ?? null}
                           placeholder="type a character…"
                           reverse
@@ -1108,7 +1166,8 @@ export function ReportPanel({
                       {usable ? (
                         <FuzzyCell
                           items={characters}
-                          matchItems={fuzzyMatchCharacters}
+                          commitTopWhenEmpty
+                          matchItems={matchLoserCharacters}
                           value={charsByGame[n]?.loser ?? null}
                           placeholder="type a character…"
                           active={loserCellActive}

@@ -1,3 +1,4 @@
+import type { CharacterCounts } from './mains';
 import type { AccountDetails, BracketGroup, Character, CurrentUser, EntrantMatch, EventInfo, OpenSet, PhaseGroupSummary, PoolPlayer, PoolPreview, SetDetail, Stage } from './types';
 
 export class ApiError extends Error {
@@ -157,6 +158,20 @@ export function fetchBracket(phaseGroupId: number): Promise<BracketGroup> {
 
 export function fetchSetDetail(setId: number | string): Promise<SetDetail> {
   return req(`/api/sets/${setId}/detail`);
+}
+
+/**
+ * What each of these players has been playing, for ordering character
+ * dropdowns. Asked per set rather than carried on the polled open-sets
+ * payload — see the route for why.
+ *
+ * A player with no tally on file is simply absent from the answer.
+ */
+export function fetchCharacterTallies(
+  videogameId: number,
+  playerIds: number[]
+): Promise<{ tallies: Record<number, CharacterCounts> }> {
+  return req(`/api/mains/tallies?videogameId=${videogameId}&playerIds=${playerIds.join(',')}`);
 }
 
 export function fetchCharacters(videogameId: number): Promise<{ characters: Character[] }> {

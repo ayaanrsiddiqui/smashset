@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { ensureMainComputed, tallyMainCharacter, type RawPlayerSet } from './mainLookup.js';
+import { ensureMainComputed, tallyCharacters, type RawPlayerSet } from './mainLookup.js';
 
 const gqlMock = vi.fn();
 vi.mock('./startgg.js', async (importOriginal) => ({
@@ -41,9 +41,12 @@ function makeSet(opts: {
   };
 }
 
-describe('tallyMainCharacter', () => {
-  it('returns null for no sets at all', () => {
-    expect(tallyMainCharacter([], PLAYER_ID)).toBeNull();
+describe('tallyCharacters', () => {
+  it('reports an empty tally for no sets at all, rather than no tally', () => {
+    // Empty and absent mean different things downstream: an empty tally is a
+    // player who was looked at, which is what stops them being looked at again
+    // on every poll for the rest of the tournament.
+    expect(tallyCharacters([], PLAYER_ID)).toEqual({ counts: {}, best: null });
   });
 
   it('picks the clear majority character across sets', () => {
@@ -51,7 +54,7 @@ describe('tallyMainCharacter', () => {
       makeSet({ myEntrantId: 1, opponentEntrantId: 2, myCharacterIds: [10, 10] }), // most recent
       makeSet({ myEntrantId: 3, opponentEntrantId: 4, myCharacterIds: [20] }),
     ];
-    expect(tallyMainCharacter(sets, PLAYER_ID)).toEqual({ characterId: 10, gamesTallied: 2 });
+    expect(tallyCharacters(sets, PLAYER_ID).best).toEqual({ characterId: 10, gamesTallied: 2 });
   });
 
   it('breaks a tie toward the more recently-tallied character', () => {
@@ -61,12 +64,12 @@ describe('tallyMainCharacter', () => {
       makeSet({ myEntrantId: 1, opponentEntrantId: 2, myCharacterIds: [20] }), // most recent
       makeSet({ myEntrantId: 3, opponentEntrantId: 4, myCharacterIds: [10] }), // older
     ];
-    expect(tallyMainCharacter(sets, PLAYER_ID)).toEqual({ characterId: 20, gamesTallied: 1 });
+    expect(tallyCharacters(sets, PLAYER_ID).best).toEqual({ characterId: 20, gamesTallied: 1 });
   });
 
   it('skips a game with no selection for this player instead of miscounting it', () => {
     const sets = [makeSet({ myEntrantId: 1, opponentEntrantId: 2, myCharacterIds: [10, null, 10] })];
-    expect(tallyMainCharacter(sets, PLAYER_ID)).toEqual({ characterId: 10, gamesTallied: 2 });
+    expect(tallyCharacters(sets, PLAYER_ID).best).toEqual({ characterId: 10, gamesTallied: 2 });
   });
 
   it('skips a set entirely when this player cannot be resolved among its slots', () => {
@@ -79,7 +82,22 @@ describe('tallyMainCharacter', () => {
       games: [{ selections: [{ entrant: { id: 1 }, character: { id: 10 } }] }],
     };
     const sets = [unresolvable, makeSet({ myEntrantId: 3, opponentEntrantId: 4, myCharacterIds: [20] })];
-    expect(tallyMainCharacter(sets, PLAYER_ID)).toEqual({ characterId: 20, gamesTallied: 1 });
+    expect(tallyCharacters(sets, PLAYER_ID).best).toEqual({ characterId: 20, gamesTallied: 1 });
+  });
+
+  it('keeps every character played, not only the most-played one', () => {
+    // The whole point of the change: an alphabetical dropdown made a TO type
+    // their way to a secondary, which is the character a set is most likely to
+    // actually need naming.
+    const sets = [
+      makeSet({ myEntrantId: 1, opponentEntrantId: 2, myCharacterIds: [10, 10, 20] }),
+      makeSet({ myEntrantId: 3, opponentEntrantId: 4, myCharacterIds: [20, 30] }),
+    ];
+
+    const { counts, best } = tallyCharacters(sets, PLAYER_ID);
+
+    expect(counts).toEqual({ 10: 2, 20: 2, 30: 1 });
+    expect(best).toEqual({ characterId: 10, gamesTallied: 2 });
   });
 
   it("never tallies the opponent's character selections as this player's own, even when the opponent's pick would otherwise dominate", () => {
@@ -92,9 +110,10 @@ describe('tallyMainCharacter', () => {
       makeSet({ myEntrantId: 3, opponentEntrantId: 4, opponentPlayerId: 502, myCharacterIds: [20], opponentCharacterId: 999 }),
       makeSet({ myEntrantId: 5, opponentEntrantId: 6, opponentPlayerId: 503, myCharacterIds: [10], opponentCharacterId: 999 }),
     ];
-    const result = tallyMainCharacter(sets, PLAYER_ID);
-    expect(result?.characterId).not.toBe(999);
-    expect(result).toEqual({ characterId: 10, gamesTallied: 3 });
+    const result = tallyCharacters(sets, PLAYER_ID);
+    expect(result.best?.characterId).not.toBe(999);
+    expect(result.best).toEqual({ characterId: 10, gamesTallied: 3 });
+    expect(result.counts[999]).toBeUndefined();
   });
 });
 

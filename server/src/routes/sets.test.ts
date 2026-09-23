@@ -3,7 +3,7 @@ import { sign } from 'cookie-signature';
 import request from 'supertest';
 import { pool } from '../db/pool.js';
 import { upsertUserFromOAuth } from '../db/users.js';
-import { upsertPlayerMain } from '../db/mains.js';
+import { getPlayerMains, insertComputedPlayerMain, upsertPlayerMain } from '../db/mains.js';
 import { createSession } from '../db/sessions.js';
 import { SESSION_COOKIE_NAME } from '../middleware/auth.js';
 import { closeTestPool } from '../test-helpers.js';
@@ -109,9 +109,12 @@ describe('GET /phase-group/:phaseGroupId/open-sets — auto-main integration', (
   it('attaches suggestedMain (with confidence) for a cached player, omits it for an uncached one, and includes playerId', async () => {
     await pool.query('DELETE FROM player_mains WHERE player_id = ANY($1)', [[CACHED_PLAYER_ID, UNCACHED_PLAYER_ID]]);
     await pool.query(
-      `INSERT INTO player_mains (player_id, videogame_id, character_id, games_tallied, sets_considered)
-       VALUES ($1, $2, $3, $4, $5)`,
-      [CACHED_PLAYER_ID, VIDEOGAME_ID, CACHED_CHARACTER_ID, 6, 10]
+      // character_counts included deliberately: a row without one reads as
+      // never tallied and gets looked up again, which is what backfills every
+      // player written before tallies existed.
+      `INSERT INTO player_mains (player_id, videogame_id, character_id, games_tallied, sets_considered, character_counts)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [CACHED_PLAYER_ID, VIDEOGAME_ID, CACHED_CHARACTER_ID, 6, 10, JSON.stringify({ [CACHED_CHARACTER_ID]: 6 })]
     );
     gqlMock.mockImplementation((_token: unknown, query: string) => {
       if (query.includes('PhaseGroupOpenSets')) return Promise.resolve(openSetsFixture());
@@ -613,11 +616,44 @@ describe('GET /phase-group/:phaseGroupId/players', () => {
     expect(res.body.players.map((p: { name: string }) => p.name)).toEqual(['Real']);
   });
 
-  it('starts a lookup only for players nobody has checked yet', async () => {
+  it('looks up a player who has a main but no tally, which is how old rows heal', async () => {
+    // Every row written before tallies existed — and every one a TO set by
+    // hand — has a main and no tally. The lookup fires for players it has
+    // nothing for, so without keying that on the tally rather than on the row,
+    // those players would keep an empty one for good and their dropdowns would
+    // never be ordered.
     await upsertPlayerMain(SEEDED_WITH_MAIN, VIDEOGAME_ID, 1286, 7, 3);
+
+    const lookedUp: number[] = [];
+    gqlMock.mockImplementation((_t: unknown, query: string, vars: { playerId?: number }) => {
+      if (query.includes('PhaseGroupPlayers')) return Promise.resolve(playersFixture());
+      if (query.includes('PlayerMainHistory')) {
+        lookedUp.push(Number(vars.playerId));
+        return Promise.resolve({ player: { sets: { nodes: [] } } });
+      }
+      throw new Error(`unexpected query in test: ${query}`);
+    });
+    const cookie = await makeSignedInCookie('pool-players-backfill');
+
+    const res = await request(server).get('/api/sets/phase-group/61/players').set('Cookie', cookie);
+    expect(res.status).toBe(200);
+
+    await vi.waitFor(() => expect(lookedUp).toContain(SEEDED_WITH_MAIN));
+    // And the hand-set main survives it, with a tally now recorded beside it —
+    // which is also what stops this player being asked about on every poll.
+    await vi.waitFor(async () => {
+      const mains = await getPlayerMains([SEEDED_WITH_MAIN], VIDEOGAME_ID);
+      expect(mains.get(SEEDED_WITH_MAIN)?.characterId).toBe(1286);
+      expect(mains.get(SEEDED_WITH_MAIN)?.characterCounts).toEqual({});
+    });
+  });
+
+  it('starts a lookup only for players nobody has checked yet', async () => {
+    await insertComputedPlayerMain(SEEDED_WITH_MAIN, VIDEOGAME_ID, 1286, 7, 3, { 1286: 7 });
     // Looked up before and genuinely found nothing. Asking again every time
-    // the panel opens would spend a request to re-learn the same answer.
-    await upsertPlayerMain(SEEDED_NO_MAIN_FOUND, VIDEOGAME_ID, null, 0, 5);
+    // the panel opens would spend a request to re-learn the same answer — and
+    // an empty tally is what records that, as distinct from no tally at all.
+    await insertComputedPlayerMain(SEEDED_NO_MAIN_FOUND, VIDEOGAME_ID, null, 0, 5, {});
 
     const lookedUp: number[] = [];
     gqlMock.mockImplementation((_t: unknown, query: string, vars: { playerId?: number }) => {

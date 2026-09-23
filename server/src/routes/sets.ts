@@ -1379,7 +1379,10 @@ setsRouter.get('/phase-group/:phaseGroupId/players', async (req, res) => {
     // they stay unlooked however long the tournament runs.
     if (roster.videogameId !== null) {
       for (const player of players) {
-        if (!player.main) ensureMainComputed(req.user!.accessToken, player.playerId, roster.videogameId);
+        // Same rule as open-sets: a row without a tally is not done yet.
+        if (!mains.get(player.playerId)?.characterCounts) {
+          ensureMainComputed(req.user!.accessToken, player.playerId, roster.videogameId);
+        }
       }
     }
     res.json({ players, videogameId: roster.videogameId });
@@ -1467,7 +1470,11 @@ setsRouter.get('/phase-group/:phaseGroupId/open-sets', async (req, res) => {
 
     if (videogameId !== null) {
       for (const playerId of playerIds) {
-        if (!mains.has(playerId)) {
+        // Keyed on the tally rather than on the row existing: every row written
+        // before tallies existed, and every one a TO set by hand, has a main
+        // but no tally. `{}` is truthy, so a player genuinely found to have no
+        // character data counts as done and is not asked about again.
+        if (!mains.get(playerId)?.characterCounts) {
           ensureMainComputed(req.user!.accessToken, playerId, videogameId);
         }
       }

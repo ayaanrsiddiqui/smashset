@@ -5,7 +5,7 @@ import { pool } from '../db/pool.js';
 import { upsertUserFromOAuth } from '../db/users.js';
 import { createSession } from '../db/sessions.js';
 import { SESSION_COOKIE_NAME } from '../middleware/auth.js';
-import { getPlayerMains } from '../db/mains.js';
+import { getPlayerMains, insertComputedPlayerMain } from '../db/mains.js';
 import { closeTestPool } from '../test-helpers.js';
 import { testServer } from '../test-server.js';
 import { createApp } from '../app.js';
@@ -31,11 +31,17 @@ async function makeSignedInCookie(): Promise<string> {
   return `${SESSION_COOKIE_NAME}=${encodeURIComponent(signed)}`;
 }
 
+// File-level, so it runs after every describe below. Closing the pool inside
+// one of them ends it for the whole file, and the next describe's first query
+// dies on a pool that has already been shut.
+afterAll(async () => {
+  await pool.query('DELETE FROM users WHERE startgg_user_id LIKE $1', [`${PREFIX}%`]);
+  await closeTestPool();
+});
+
 describe('POST /api/mains', () => {
   afterAll(async () => {
     await pool.query('DELETE FROM player_mains WHERE player_id = $1', [PLAYER_ID]);
-    await pool.query('DELETE FROM users WHERE startgg_user_id LIKE $1', [`${PREFIX}%`]);
-    await closeTestPool();
   });
 
   it('rejects an unauthenticated request', async () => {
@@ -90,5 +96,69 @@ describe('POST /api/mains', () => {
     const cookie = await makeSignedInCookie();
     const res = await request(server).post('/api/mains').set('Cookie', cookie).send({ videogameId: VIDEOGAME_ID, characterId: 1 });
     expect(res.status).toBe(400);
+  });
+});
+
+describe('GET /api/mains/tallies', () => {
+  const TALLY_PLAYER = -202;
+  const OTHER_PLAYER = -203;
+  // Its own row, so this file's tests do not depend on each other's order —
+  // insertComputedPlayerMain declines to touch a row that already exists, so a
+  // shared player would quietly serve the first test's tally to the second.
+  const PAIRED_PLAYER = -204;
+
+  afterAll(async () => {
+    await pool.query('DELETE FROM player_mains WHERE player_id = ANY($1)', [[TALLY_PLAYER, OTHER_PLAYER, PAIRED_PLAYER]]);
+  });
+
+  it('returns what each player has been playing, keyed by player', async () => {
+    await insertComputedPlayerMain(TALLY_PLAYER, VIDEOGAME_ID, 1338, 4, 8, { 1338: 4, 1300: 2 });
+    const cookie = await makeSignedInCookie();
+
+    const res = await request(server)
+      .get(`/api/mains/tallies?videogameId=${VIDEOGAME_ID}&playerIds=${TALLY_PLAYER}`)
+      .set('Cookie', cookie);
+
+    expect(res.status).toBe(200);
+    expect(res.body.tallies[String(TALLY_PLAYER)]).toEqual({ 1338: 4, 1300: 2 });
+  });
+
+  it('simply omits a player with no tally yet, rather than failing the request', async () => {
+    // One unlooked player must not cost the other their ordering — the panel
+    // asks for both entrants at once and a hard failure would flatten both
+    // dropdowns back to alphabetical.
+    await insertComputedPlayerMain(PAIRED_PLAYER, VIDEOGAME_ID, 1338, 4, 8, { 1338: 4 });
+    const cookie = await makeSignedInCookie();
+
+    const res = await request(server)
+      .get(`/api/mains/tallies?videogameId=${VIDEOGAME_ID}&playerIds=${PAIRED_PLAYER},${OTHER_PLAYER}`)
+      .set('Cookie', cookie);
+
+    expect(res.status).toBe(200);
+    expect(res.body.tallies[String(PAIRED_PLAYER)]).toEqual({ 1338: 4 });
+    expect(res.body.tallies[String(OTHER_PLAYER)]).toBeUndefined();
+  });
+
+  it('answers an empty list without touching the database', async () => {
+    const cookie = await makeSignedInCookie();
+
+    const res = await request(server).get(`/api/mains/tallies?videogameId=${VIDEOGAME_ID}&playerIds=`).set('Cookie', cookie);
+
+    expect(res.status).toBe(200);
+    expect(res.body.tallies).toEqual({});
+  });
+
+  it('refuses a request with no videogame, since a tally is per game', async () => {
+    const cookie = await makeSignedInCookie();
+
+    const res = await request(server).get('/api/mains/tallies?playerIds=1').set('Cookie', cookie);
+
+    expect(res.status).toBe(400);
+  });
+
+  it('is not readable without a session', async () => {
+    const res = await request(server).get(`/api/mains/tallies?videogameId=${VIDEOGAME_ID}&playerIds=1`);
+
+    expect(res.status).toBe(401);
   });
 });

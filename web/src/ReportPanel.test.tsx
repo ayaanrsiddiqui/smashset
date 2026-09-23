@@ -1,13 +1,14 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { ReportPanel } from './ReportPanel';
-import { ApiError, reportSet } from './api';
+import { ApiError, fetchCharacterTallies, reportSet } from './api';
 import type { OpenSet } from './types';
 
 vi.mock('./api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./api')>()),
   reportSet: vi.fn().mockResolvedValue({ result: {} }),
   updatePlayerMain: vi.fn().mockResolvedValue({ characterId: null }),
+  fetchCharacterTallies: vi.fn().mockResolvedValue({ tallies: {} }),
 }));
 
 function setFor(fullRoundText: string): OpenSet {
@@ -398,5 +399,99 @@ describe('ReportPanel layout', () => {
     expect(document.querySelector('.report-header .bo-toggle')).toBeNull();
     // Numbers only, since "BO" is now a standing label beside them.
     expect([...document.querySelectorAll('.bo-toggle button')].map((b) => b.textContent)).toEqual(['1', '3', '5']);
+  });
+});
+describe('ReportPanel — character dropdowns ordered by what each player plays', () => {
+  const CHARACTERS = [
+    { id: 1, name: 'Bayonetta' },
+    { id: 2, name: 'Bowser' },
+    { id: 3, name: 'Captain Falcon' },
+    { id: 4, name: 'Donkey Kong' },
+  ];
+
+  afterEach(() => {
+    vi.mocked(fetchCharacterTallies).mockReset();
+    vi.mocked(fetchCharacterTallies).mockResolvedValue({ tallies: {} });
+  });
+
+  function renderWithCharacters() {
+    render(
+      <ReportPanel
+        set={setFor('Winners Round 1')}
+        presumedWinnerId={10}
+        onQueue={onQueue}
+        characters={CHARACTERS}
+        stages={[]}
+        topXBo5={null}
+        videogameId={1386}
+        phaseGroupId={1}
+        onNotify={vi.fn()}
+        onAuthError={() => false}
+        onDone={vi.fn()}
+        onCancel={vi.fn()}
+      />
+    );
+  }
+
+  /**
+   * The inactive "all games" cell for one side. Scoped per side rather than
+   * indexed across the row: an activated cell stops being a .fuzzy-cell
+   * button, so the other side's index shifts under you.
+   */
+  function allGamesCell(side: 'winner' | 'loser') {
+    const sides = document.querySelectorAll('.all-games-row .game-stat-side');
+    return sides[side === 'winner' ? 0 : 1].querySelector('.fuzzy-cell') as HTMLElement;
+  }
+
+  function dropdownNames() {
+    return [...document.querySelectorAll('.fuzzy-dropdown li')].map((li) => li.textContent);
+  }
+
+  it('asks only about the two players in this set', async () => {
+    // Not carried on the polled set payload, which would cost a tally for
+    // every entrant in the pool every four seconds.
+    renderWithCharacters();
+
+    await vi.waitFor(() => expect(fetchCharacterTallies).toHaveBeenCalledWith(1386, [11, 12]));
+  });
+
+  it('opens each side on that side\'s own most-played character', async () => {
+    vi.mocked(fetchCharacterTallies).mockResolvedValue({
+      tallies: { 11: { 4: 9 }, 12: { 2: 7 } },
+    });
+    renderWithCharacters();
+    await vi.waitFor(() => expect(fetchCharacterTallies).toHaveBeenCalled());
+
+    fireEvent.click(allGamesCell('winner'));
+    await vi.waitFor(() => expect(dropdownNames()[0]).toBe('Donkey Kong'));
+
+    fireEvent.click(allGamesCell('loser'));
+    await vi.waitFor(() => expect(dropdownNames()[0]).toBe('Bowser'));
+  });
+
+  it('falls back to typing once a query is entered', async () => {
+    vi.mocked(fetchCharacterTallies).mockResolvedValue({ tallies: { 11: { 4: 9 } } });
+    renderWithCharacters();
+    await vi.waitFor(() => expect(fetchCharacterTallies).toHaveBeenCalled());
+
+    fireEvent.click(allGamesCell('winner'));
+    await vi.waitFor(() => expect(dropdownNames()[0]).toBe('Donkey Kong'));
+
+    fireEvent.change(screen.getByPlaceholderText('type a character…'), { target: { value: 'bows' } });
+
+    expect(dropdownNames()[0]).toBe('Bowser');
+  });
+
+  it('leaves the dropdown exactly as it was when the tally cannot be fetched', async () => {
+    // Deliberately degrading: the ordering is a convenience, and a TO who
+    // cannot see it can still type. Nothing is surfaced because there is
+    // nothing they could do about it.
+    vi.mocked(fetchCharacterTallies).mockRejectedValue(new Error('offline'));
+    renderWithCharacters();
+    await vi.waitFor(() => expect(fetchCharacterTallies).toHaveBeenCalled());
+
+    fireEvent.click(allGamesCell('winner'));
+
+    await vi.waitFor(() => expect(dropdownNames()).toEqual(CHARACTERS.map((c) => c.name)));
   });
 });

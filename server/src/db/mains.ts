@@ -6,6 +6,15 @@ export interface PlayerMain {
   characterId: number | null;
   gamesTallied: number;
   setsConsidered: number;
+  /**
+   * Games on each character id, or null for a player never tallied.
+   *
+   * The null is what makes a lazy backfill possible: the lookup only fires for
+   * players it has nothing for, so without it every row written before tallies
+   * existed would keep an empty one forever. An empty object is a real answer
+   * ("looked, found no character data"); null is the absence of one.
+   */
+  characterCounts: Record<number, number> | null;
   computedAt: Date;
 }
 
@@ -15,6 +24,7 @@ interface PlayerMainRow {
   character_id: number | null;
   games_tallied: number;
   sets_considered: number;
+  character_counts: Record<number, number> | null;
   computed_at: Date;
 }
 
@@ -25,6 +35,7 @@ function fromRow(row: PlayerMainRow): PlayerMain {
     characterId: row.character_id,
     gamesTallied: row.games_tallied,
     setsConsidered: row.sets_considered,
+    characterCounts: row.character_counts,
     computedAt: row.computed_at,
   };
 }
@@ -78,13 +89,41 @@ export async function insertComputedPlayerMain(
   videogameId: number,
   characterId: number | null,
   gamesTallied: number,
-  setsConsidered: number
+  setsConsidered: number,
+  characterCounts: Record<number, number>
 ): Promise<boolean> {
   const { rowCount } = await pool.query(
-    `INSERT INTO player_mains (player_id, videogame_id, character_id, games_tallied, sets_considered)
-     VALUES ($1, $2, $3, $4, $5)
+    `INSERT INTO player_mains (player_id, videogame_id, character_id, games_tallied, sets_considered, character_counts)
+     VALUES ($1, $2, $3, $4, $5, $6)
      ON CONFLICT (player_id, videogame_id) DO NOTHING`,
-    [playerId, videogameId, characterId, gamesTallied, setsConsidered]
+    [playerId, videogameId, characterId, gamesTallied, setsConsidered, JSON.stringify(characterCounts)]
+  );
+  return (rowCount ?? 0) > 0;
+}
+
+/**
+ * Records the tally on a row that already exists, without touching the main.
+ *
+ * Kept separate from the insert above rather than folded into an ON CONFLICT
+ * clause, because the two writes answer to different rules: the main must
+ * never overwrite what a TO set by hand, while the tally is derived history
+ * that no one typed and that the main says nothing about.
+ *
+ * `IS NULL` makes it fill-once rather than last-write-wins, so two lookups
+ * racing cannot half-apply one tally over the other. It is also what stops a
+ * player whose main was set by hand being looked up again on every single
+ * poll: without a tally landing on that row, nothing would ever mark them
+ * done.
+ */
+export async function fillCharacterCounts(
+  playerId: number,
+  videogameId: number,
+  characterCounts: Record<number, number>
+): Promise<boolean> {
+  const { rowCount } = await pool.query(
+    `UPDATE player_mains SET character_counts = $3
+     WHERE player_id = $1 AND videogame_id = $2 AND character_counts IS NULL`,
+    [playerId, videogameId, JSON.stringify(characterCounts)]
   );
   return (rowCount ?? 0) > 0;
 }

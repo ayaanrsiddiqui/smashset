@@ -18,6 +18,16 @@ interface Props {
   onFocusRequest?: () => void;
   /** Overrides the default name-only fuzzy match — e.g. alias-aware matching for characters. */
   matchItems?: (query: string, items: Item[]) => Item[];
+  /**
+   * Whether the top of the list means something before anything is typed, and
+   * so is worth committing on Enter.
+   *
+   * True for characters, which are ordered by what the player actually plays —
+   * open the cell, press Enter, their main goes in. False for stages, whose
+   * order carries no such claim, where committing the first one would just be
+   * picking a stage at random on the TO's behalf.
+   */
+  commitTopWhenEmpty?: boolean;
   /** Mirrors icon/name so the icon sits on the inner edge (near the opposing column) instead of the outer edge. */
   reverse?: boolean;
   /** Part of a multi-game selection (whether or not this is the one currently showing the input) — dashed outline; the active one also gets a lighter background. */
@@ -47,6 +57,7 @@ export function FuzzyCell({
   onCancel,
   onFocusRequest,
   matchItems,
+  commitTopWhenEmpty = false,
   reverse,
   multiSelect,
   onGameDigit,
@@ -112,7 +123,7 @@ export function FuzzyCell({
           } else if (e.key === 'Enter') {
             e.preventDefault();
             e.stopPropagation();
-            const pick = query.trim() ? matches[highlight] : undefined;
+            const pick = query.trim() || commitTopWhenEmpty ? matches[highlight] : undefined;
             if (pick) onCommit(pick);
             else onCancel();
           } else if (e.key === 'Escape') {
