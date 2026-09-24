@@ -1123,6 +1123,9 @@ export function ReportPanel({
                           onCommit={(c) => commitChar('winner', charTargetArr ?? [n], c)}
                           onCancel={cancelCharTarget}
                           onFocusRequest={() => setMode({ kind: 'characters', side: 'winner', target: [n] })}
+                          onBodyClick={() => setGameResult(n, true)}
+                          pickLabel={`Game ${n}: choose ${winner.name}'s character`}
+                          bodyLabel={`Game ${n}: ${winner.name} won`}
                           onGameDigit={(digit) => toggleCharTarget('winner', digit)}
                         />
                       ) : (
@@ -1175,6 +1178,9 @@ export function ReportPanel({
                           onCommit={(c) => commitChar('loser', charTargetArr ?? [n], c)}
                           onCancel={cancelCharTarget}
                           onFocusRequest={() => setMode({ kind: 'characters', side: 'loser', target: [n] })}
+                          onBodyClick={() => setGameResult(n, false)}
+                          pickLabel={`Game ${n}: choose ${loser.name}'s character`}
+                          bodyLabel={`Game ${n}: ${loser.name} won`}
                           onGameDigit={(digit) => toggleCharTarget('loser', digit)}
                         />
                       ) : (

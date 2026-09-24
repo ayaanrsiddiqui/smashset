@@ -89,6 +89,84 @@ describe('FuzzyCell', () => {
     expect(onCancel).toHaveBeenCalled();
   });
 
+  describe('when the cell has a body action', () => {
+    function renderSplit(over: Record<string, unknown> = {}) {
+      const onFocusRequest = vi.fn();
+      const onBodyClick = vi.fn();
+      render(
+        <FuzzyCell
+          items={ITEMS}
+          value={{ id: 1, name: 'Bayonetta', imageUrl: 'bayo.png' }}
+          active={false}
+          onCommit={vi.fn()}
+          onCancel={vi.fn()}
+          onFocusRequest={onFocusRequest}
+          onBodyClick={onBodyClick}
+          pickLabel="choose character"
+          bodyLabel="won the game"
+          {...over}
+        />
+      );
+      return { onFocusRequest, onBodyClick };
+    }
+
+    it('opens the picker from the icon box only', () => {
+      const { onFocusRequest, onBodyClick } = renderSplit();
+
+      fireEvent.click(screen.getByLabelText('choose character'));
+
+      expect(onFocusRequest).toHaveBeenCalled();
+      expect(onBodyClick).not.toHaveBeenCalled();
+    });
+
+    it('does the body action from the rest of the cell', () => {
+      // The whole point: the big target is the common action, not the picker.
+      const { onFocusRequest, onBodyClick } = renderSplit();
+
+      fireEvent.click(screen.getByLabelText('won the game'));
+
+      expect(onBodyClick).toHaveBeenCalled();
+      expect(onFocusRequest).not.toHaveBeenCalled();
+    });
+
+    it('still offers a way into the picker with no character set', () => {
+      // The trap. There is no icon to aim at before a character is chosen, so
+      // an icon box rendered only when filled would leave the empty cell —
+      // the one most in need of picking — unreachable by mouse.
+      const { onFocusRequest } = renderSplit({ value: null });
+
+      fireEvent.click(screen.getByLabelText('choose character'));
+
+      expect(onFocusRequest).toHaveBeenCalled();
+    });
+
+    it('keeps the same box, so the row tints and sizing still apply', () => {
+      // Every rule for the won/queued tint and the fixed row height is written
+      // against .fuzzy-cell. Splitting the insides must not move that class.
+      renderSplit({ multiSelect: true });
+
+      const cell = document.querySelector('.fuzzy-cell');
+      expect(cell).not.toBeNull();
+      expect(cell!.classList.contains('queued')).toBe(true);
+      expect(cell!.querySelector('.fuzzy-cell-pick')).not.toBeNull();
+      expect(cell!.querySelector('.fuzzy-cell-body')).not.toBeNull();
+    });
+  });
+
+  it('stays one button, opening the picker from anywhere, without a body action', () => {
+    // Stage cells and the all-games cells have nothing else to do, so they are
+    // deliberately left exactly as they were.
+    const onFocusRequest = vi.fn();
+    render(
+      <FuzzyCell items={ITEMS} value={null} active={false} onCommit={vi.fn()} onCancel={vi.fn()} onFocusRequest={onFocusRequest} />
+    );
+
+    expect(document.querySelectorAll('.fuzzy-cell-pick')).toHaveLength(0);
+    fireEvent.click(document.querySelector('.fuzzy-cell')!);
+
+    expect(onFocusRequest).toHaveBeenCalled();
+  });
+
   it('Escape always backs out, typed or not', () => {
     const { onCommit, onCancel, input } = renderCell();
 

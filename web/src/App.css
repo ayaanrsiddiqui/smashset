@@ -1562,6 +1562,12 @@ kbd {
 }
 
 .fuzzy-cell {
+  /* Explicit because this is a <button> when the cell is one target and a
+     <div> when it splits into two, and browsers default buttons to border-box
+     and divs to content-box. Without it the split form silently grew every
+     character cell by its padding and border — the row-height shuffle the
+     min-height above exists to prevent. */
+  box-sizing: border-box;
   width: 100%;
   display: flex;
   align-items: center;
@@ -1592,6 +1598,57 @@ kbd {
   border-color: #384059;
   background: #1c2030;
   font-weight: 600;
+}
+
+/* The split cell. The bordered box is the .fuzzy-cell div above; these two
+   are transparent regions inside it, so it looks exactly as it did when it was
+   one button. The icon keeps its own size, and the body takes the rest — which
+   is deliberate, because the body is the common action and the picker is not. */
+.fuzzy-cell-pick,
+.fuzzy-cell-body {
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  color: inherit;
+  font: inherit;
+  display: flex;
+  align-items: center;
+}
+
+.fuzzy-cell-pick {
+  flex: 0 0 auto;
+  justify-content: center;
+}
+
+.fuzzy-cell-body {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+}
+
+/* Stands in for the icon before a character is picked, so the way into the
+   picker is in the same place whether or not the cell is filled. */
+.fuzzy-cell-pick-empty {
+  /* Its dashed border has to sit inside the icon's footprint, or the cell is
+     taller before a character is picked than after — the same row shuffle,
+     two pixels at a time. */
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px dashed #3a4050;
+  border-radius: 8px;
+  color: #6b7280;
+  width: 28px;
+  height: 28px;
+  font-size: 12px;
+}
+
+.game-stat-char .fuzzy-cell-pick-empty {
+  width: 56px;
+  height: 56px;
+  font-size: 16px;
 }
 
 .fuzzy-cell-label {

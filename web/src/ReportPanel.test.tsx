@@ -401,6 +401,68 @@ describe('ReportPanel layout', () => {
     expect([...document.querySelectorAll('.bo-toggle button')].map((b) => b.textContent)).toEqual(['1', '3', '5']);
   });
 });
+describe('ReportPanel — where a tap on a character cell lands', () => {
+  /** The two halves of one side's cell in game row n (1-indexed). */
+  function cellParts(n: number, side: 'winner' | 'loser') {
+    const rows = [...document.querySelectorAll('.game-stat-row')].filter((r) => !r.classList.contains('all-games-row'));
+    const sides = rows[n - 1].querySelectorAll('.game-stat-side');
+    const cell = sides[side === 'winner' ? 0 : 1];
+    return {
+      pick: cell.querySelector('.fuzzy-cell-pick') as HTMLElement,
+      body: cell.querySelector('.fuzzy-cell-body') as HTMLElement,
+    };
+  }
+
+  const score = () => document.querySelector('.score-line')?.textContent?.replace(/\s+/g, ' ').trim();
+
+  function renderPanel() {
+    render(
+      <ReportPanel
+        set={setFor('Winners Round 1')}
+        presumedWinnerId={10}
+        onQueue={onQueue}
+        characters={[{ id: 1, name: 'Bayonetta' }]}
+        stages={[]}
+        topXBo5={null}
+        videogameId={1386}
+        phaseGroupId={1}
+        onNotify={vi.fn()}
+        onAuthError={() => false}
+        onDone={vi.fn()}
+        onCancel={vi.fn()}
+      />
+    );
+  }
+
+  it('scores the game from the body of the cell, the way the arrow does', () => {
+    // The change: the big target is what a TO is actually doing at a bracket
+    // table, and changing a character is the rare case.
+    renderPanel();
+    expect(score()).toBe('0–0');
+
+    fireEvent.click(cellParts(1, 'winner').body);
+
+    expect(score()).toBe('1–0');
+  });
+
+  it('scores it for the other player from their side of the row', () => {
+    renderPanel();
+
+    fireEvent.click(cellParts(1, 'loser').body);
+
+    expect(score()).toBe('0–1');
+  });
+
+  it('opens the character picker from the icon box, without scoring anything', () => {
+    renderPanel();
+
+    fireEvent.click(cellParts(1, 'winner').pick);
+
+    expect(score()).toBe('0–0');
+    expect(document.querySelector('.fuzzy-cell-active')).not.toBeNull();
+  });
+});
+
 describe('ReportPanel — character dropdowns ordered by what each player plays', () => {
   const CHARACTERS = [
     { id: 1, name: 'Bayonetta' },

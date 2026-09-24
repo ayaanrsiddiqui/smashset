@@ -19,6 +19,23 @@ interface Props {
   /** Overrides the default name-only fuzzy match — e.g. alias-aware matching for characters. */
   matchItems?: (query: string, items: Item[]) => Item[];
   /**
+   * What clicking the cell outside the icon does.
+   *
+   * Given one, the cell splits: a small box around the icon opens the picker,
+   * and everything else — most of the cell — does this instead. In a game row
+   * that is "this player won this game", which is the thing a TO is actually
+   * doing, while changing a character is the rare case that no longer needs
+   * the whole target.
+   *
+   * Without one the cell stays a single button that opens the picker, which is
+   * all a stage or an all-games cell has to offer.
+   */
+  onBodyClick?: () => void;
+  /** Screen-reader name for the icon box; only read when onBodyClick splits the cell. */
+  pickLabel?: string;
+  /** Screen-reader name for the body button, e.g. "Game 2: Ada won". */
+  bodyLabel?: string;
+  /**
    * Whether the top of the list means something before anything is typed, and
    * so is worth committing on Enter.
    *
@@ -58,6 +75,9 @@ export function FuzzyCell({
   onFocusRequest,
   matchItems,
   commitTopWhenEmpty = false,
+  onBodyClick,
+  pickLabel,
+  bodyLabel,
   reverse,
   multiSelect,
   onGameDigit,
@@ -80,18 +100,61 @@ export function FuzzyCell({
   }, [active]);
 
   if (!active) {
+    const classes = `fuzzy-cell ${value ? 'filled' : 'empty'} ${reverse && (value?.imageUrl || onBodyClick) ? 'reverse' : ''} ${multiSelect ? 'queued' : ''}`;
+    const label = <span className="fuzzy-cell-label">{value ? value.name : (emptyLabel ?? '—')}</span>;
+
+    if (!onBodyClick) {
+      return (
+        <button
+          type="button"
+          className={classes}
+          onClick={(e) => {
+            e.stopPropagation();
+            onFocusRequest?.();
+          }}
+        >
+          {value?.imageUrl && <img className="char-icon" src={value.imageUrl} alt="" />}
+          {label}
+        </button>
+      );
+    }
+
+    // A div, not a button, because it now holds two of them. It keeps the
+    // fuzzy-cell class so every existing rule — the won/queued tints, the
+    // row height, reverse — still applies to exactly the same box.
     return (
-      <button
-        type="button"
-        className={`fuzzy-cell ${value ? 'filled' : 'empty'} ${reverse && value?.imageUrl ? 'reverse' : ''} ${multiSelect ? 'queued' : ''}`}
-        onClick={(e) => {
-          e.stopPropagation();
-          onFocusRequest?.();
-        }}
-      >
-        {value?.imageUrl && <img className="char-icon" src={value.imageUrl} alt="" />}
-        <span className="fuzzy-cell-label">{value ? value.name : (emptyLabel ?? '—')}</span>
-      </button>
+      <div className={classes}>
+        {/* Always rendered, with or without a character. An icon box that
+            appeared only once a character was set would leave the empty
+            cell — the one that most needs picking — with no way in. */}
+        <button
+          type="button"
+          className="fuzzy-cell-pick"
+          aria-label={pickLabel}
+          onClick={(e) => {
+            e.stopPropagation();
+            onFocusRequest?.();
+          }}
+        >
+          {value?.imageUrl ? <img className="char-icon" src={value.imageUrl} alt="" /> : <span className="fuzzy-cell-pick-empty">▾</span>}
+        </button>
+        {/* Deliberately out of the tab order: it does exactly what the arrow
+            beside it does, and a keyboard already has that. This is a touch
+            target, so doubling every game row in the tab order would buy a
+            keyboard user nothing but more tabbing. */}
+        <button
+          type="button"
+          className="fuzzy-cell-body"
+          tabIndex={-1}
+          aria-label={bodyLabel}
+          onClick={(e) => {
+            e.stopPropagation();
+            onBodyClick();
+          }}
+        >
+          {label}
+        </button>
+      </div>
     );
   }
 
