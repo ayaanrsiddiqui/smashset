@@ -104,6 +104,17 @@ These cost real time to discover; don't re-derive them.
   for every tournament, including ones you own**; it errors when combined with `id`.
 - `tournaments(filter: {tournamentView: "admin"})` is **stale** — it keeps listing tournaments you
   were an admin of at creation time and have since been removed from.
+- **Assigning a station is not workable through this API** (checked 2026-09-23). `assignStation`
+  itself is fine — it takes a station *id*, and is independent of `markSetInProgress`, which leaves
+  the set's state alone. Turning a station *number* into an id is what cannot be done:
+  - `Tournament.stations` ignores `perPage` (15, 100 and 300 all return 15) and `page: 2` returns
+    **zero nodes with `total: 0`** while page 1 claims `totalPages: 6`. Only the first page exists.
+    Seen as 15-of-76 and 15-of-90 on real locals, so most stations are simply unreachable.
+  - `upsertStation` does **not** resolve an existing number — upserting number 3 on a tournament
+    that already had one created a second station 3. It is a create, and using it as a lookup would
+    litter a TO's tournament with duplicates. (`deleteStation` returns a bare Boolean, no selection
+    set, if one ever has to be cleaned up.)
+  - There is no root station query, so there is no other route to an id.
 
 ## Git
 
