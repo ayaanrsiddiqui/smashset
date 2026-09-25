@@ -282,8 +282,8 @@ describe('App — completed and not-ready sets on the bracket', () => {
           winnerAdvancesToPhase: null,
           loserAdvancesToPhase: null,
           slots: [
-            { entrant: { id: 101, name: 'Winner Player' }, score: 2, characterId: null, prereqSetId: null, prereqPlacement: null, progressionOrigin: null, seedNum: null },
-            { entrant: { id: 102, name: 'Loser Player' }, score: 0, characterId: null, prereqSetId: null, prereqPlacement: null, progressionOrigin: null, seedNum: null },
+            { entrant: { id: 101, name: 'Winner Player' }, score: 2, characterIds: [], prereqSetId: null, prereqPlacement: null, progressionOrigin: null, seedNum: null },
+            { entrant: { id: 102, name: 'Loser Player' }, score: 0, characterIds: [], prereqSetId: null, prereqPlacement: null, progressionOrigin: null, seedNum: null },
           ],
         },
         {
@@ -298,10 +298,10 @@ describe('App — completed and not-ready sets on the bracket', () => {
           winnerAdvancesToPhase: null,
           loserAdvancesToPhase: null,
           slots: [
-            { entrant: { id: 101, name: 'Winner Player' }, score: null, characterId: null, prereqSetId: '1', prereqPlacement: 1, progressionOrigin: null, seedNum: null },
+            { entrant: { id: 101, name: 'Winner Player' }, score: null, characterIds: [], prereqSetId: '1', prereqPlacement: 1, progressionOrigin: null, seedNum: null },
             // prereqSetId "999" doesn't match any set in this fixture —
             // exercises the "source not found" -> "TBD" fallback.
-            { entrant: null, score: null, characterId: null, prereqSetId: '999', prereqPlacement: 1, progressionOrigin: null, seedNum: null },
+            { entrant: null, score: null, characterIds: [], prereqSetId: '999', prereqPlacement: 1, progressionOrigin: null, seedNum: null },
           ],
         },
       ],
@@ -361,8 +361,8 @@ describe('App — completed and not-ready sets on the bracket', () => {
           winnerAdvancesToPhase: null,
           loserAdvancesToPhase: null,
           slots: [
-            { entrant: { id: 101, name: 'Winner Player' }, score: null, characterId: null, prereqSetId: null, prereqPlacement: null, progressionOrigin: null, seedNum: null },
-            { entrant: { id: 102, name: 'Loser Player' }, score: null, characterId: null, prereqSetId: null, prereqPlacement: null, progressionOrigin: null, seedNum: null },
+            { entrant: { id: 101, name: 'Winner Player' }, score: null, characterIds: [], prereqSetId: null, prereqPlacement: null, progressionOrigin: null, seedNum: null },
+            { entrant: { id: 102, name: 'Loser Player' }, score: null, characterIds: [], prereqSetId: null, prereqPlacement: null, progressionOrigin: null, seedNum: null },
           ],
         },
         {
@@ -377,8 +377,8 @@ describe('App — completed and not-ready sets on the bracket', () => {
           winnerAdvancesToPhase: null,
           loserAdvancesToPhase: null,
           slots: [
-            { entrant: { id: 103, name: 'Other One' }, score: null, characterId: null, prereqSetId: null, prereqPlacement: null, progressionOrigin: null, seedNum: null },
-            { entrant: { id: 104, name: 'Other Two' }, score: null, characterId: null, prereqSetId: null, prereqPlacement: null, progressionOrigin: null, seedNum: null },
+            { entrant: { id: 103, name: 'Other One' }, score: null, characterIds: [], prereqSetId: null, prereqPlacement: null, progressionOrigin: null, seedNum: null },
+            { entrant: { id: 104, name: 'Other Two' }, score: null, characterIds: [], prereqSetId: null, prereqPlacement: null, progressionOrigin: null, seedNum: null },
           ],
         },
       ],
@@ -418,10 +418,10 @@ describe('App — completed and not-ready sets on the bracket', () => {
           winnerAdvancesToPhase: null,
           loserAdvancesToPhase: null,
           slots: [
-            { entrant: { id: 101, name: 'Winner Player' }, score: 2, characterId: 1500, prereqSetId: null, prereqPlacement: null, progressionOrigin: null, seedNum: null },
+            { entrant: { id: 101, name: 'Winner Player' }, score: 2, characterIds: [1500], prereqSetId: null, prereqPlacement: null, progressionOrigin: null, seedNum: null },
             // Falco has no image, and this player has no character at all —
             // both are ordinary, since many TOs never report picks.
-            { entrant: { id: 102, name: 'Loser Player' }, score: 0, characterId: null, prereqSetId: null, prereqPlacement: null, progressionOrigin: null, seedNum: null },
+            { entrant: { id: 102, name: 'Loser Player' }, score: 0, characterIds: [], prereqSetId: null, prereqPlacement: null, progressionOrigin: null, seedNum: null },
           ],
         },
       ],
@@ -457,8 +457,8 @@ describe('App — completed and not-ready sets on the bracket', () => {
           winnerAdvancesToPhase: null,
           loserAdvancesToPhase: null,
           slots: [
-            { entrant: { id: 101, name: 'Winner Player' }, score: 2, characterId: 1501, prereqSetId: null, prereqPlacement: null, progressionOrigin: null, seedNum: null },
-            { entrant: { id: 102, name: 'Loser Player' }, score: 0, characterId: 1501, prereqSetId: null, prereqPlacement: null, progressionOrigin: null, seedNum: null },
+            { entrant: { id: 101, name: 'Winner Player' }, score: 2, characterIds: [1501], prereqSetId: null, prereqPlacement: null, progressionOrigin: null, seedNum: null },
+            { entrant: { id: 102, name: 'Loser Player' }, score: 0, characterIds: [1501], prereqSetId: null, prereqPlacement: null, progressionOrigin: null, seedNum: null },
           ],
         },
       ],
@@ -499,8 +499,8 @@ describe('App — completed and not-ready sets on the bracket', () => {
           winnerAdvancesToPhase: null,
           loserAdvancesToPhase: null,
           slots: [
-            { entrant: { id: 101, name: 'Winner Player' }, score: 2, characterId: null, prereqSetId: null, prereqPlacement: null, progressionOrigin: null, seedNum: null },
-            { entrant: { id: 102, name: 'Loser Player' }, score: 0, characterId: null, prereqSetId: null, prereqPlacement: null, progressionOrigin: null, seedNum: null },
+            { entrant: { id: 101, name: 'Winner Player' }, score: 2, characterIds: [], prereqSetId: null, prereqPlacement: null, progressionOrigin: null, seedNum: null },
+            { entrant: { id: 102, name: 'Loser Player' }, score: 0, characterIds: [], prereqSetId: null, prereqPlacement: null, progressionOrigin: null, seedNum: null },
           ],
         },
       ],
@@ -542,8 +542,8 @@ describe('App — completed and not-ready sets on the bracket', () => {
           winnerAdvancesToPhase: null,
           loserAdvancesToPhase: null,
           slots: [
-            { entrant: { id: 101, name: 'Winner Player' }, score: 2, characterId: null, prereqSetId: null, prereqPlacement: null, progressionOrigin: null, seedNum: null },
-            { entrant: { id: 102, name: 'Loser Player' }, score: 0, characterId: null, prereqSetId: null, prereqPlacement: null, progressionOrigin: null, seedNum: null },
+            { entrant: { id: 101, name: 'Winner Player' }, score: 2, characterIds: [], prereqSetId: null, prereqPlacement: null, progressionOrigin: null, seedNum: null },
+            { entrant: { id: 102, name: 'Loser Player' }, score: 0, characterIds: [], prereqSetId: null, prereqPlacement: null, progressionOrigin: null, seedNum: null },
           ],
         },
       ],
@@ -850,8 +850,8 @@ describe('App — searching completed sets', () => {
       winnerAdvancesToPhase: null,
       loserAdvancesToPhase: null,
       slots: [
-        { entrant: w, score: 2, characterId: null, prereqSetId: null, prereqPlacement: null, progressionOrigin: null, seedNum: null },
-        { entrant: l, score: 0, characterId: null, prereqSetId: null, prereqPlacement: null, progressionOrigin: null, seedNum: null },
+        { entrant: w, score: 2, characterIds: [], prereqSetId: null, prereqPlacement: null, progressionOrigin: null, seedNum: null },
+        { entrant: l, score: 0, characterIds: [], prereqSetId: null, prereqPlacement: null, progressionOrigin: null, seedNum: null },
       ],
     };
   }

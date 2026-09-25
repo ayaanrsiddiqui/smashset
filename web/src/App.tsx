@@ -13,6 +13,7 @@ import { AppHeader } from './AppHeader';
 import { OutboxStrip } from './OutboxStrip';
 import { allEntries, clearOutbox, drainOnce, enqueue, remove as dropFromOutbox, retryNow, subscribe as subscribeToOutbox } from './outbox';
 import { recordClientEvent } from './clientEvents';
+import { MAX_SET_CHARACTERS } from './setCharacters';
 import {
   startSet,
   poolEventsUrl,
@@ -1023,12 +1024,23 @@ export default function App() {
                             Number(b.entrant!.id === row.set.winnerId) - Number(a.entrant!.id === row.set.winnerId)
                         )
                         .map((slot, i) => {
-                          const icon = iconFor(slot.characterId);
+                          // Filtered before slicing so a character with no icon
+                          // does not cost one of the three slots.
+                          const icons = slot.characterIds
+                            .map((id) => ({ id, url: iconFor(id) }))
+                            .filter((c) => c.url)
+                            .slice(0, MAX_SET_CHARACTERS);
                           return (
                             <Fragment key={slot.entrant!.id}>
                               {i > 0 && ' def. '}
                               <span className="entrant-with-icon">
-                                {icon && <img className="row-character" src={icon} alt="" />}
+                                {icons.length > 0 && (
+                                  <span className="row-characters">
+                                    {icons.map((c) => (
+                                      <img key={c.id} className="row-character" src={c.url} alt="" />
+                                    ))}
+                                  </span>
+                                )}
                                 {i === 0 ? <strong>{slot.entrant!.name}</strong> : slot.entrant!.name}
                               </span>
                             </Fragment>

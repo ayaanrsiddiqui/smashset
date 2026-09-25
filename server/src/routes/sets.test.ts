@@ -466,7 +466,7 @@ function emptyStructure(id: number, displayIdentifier: string, bracketType: stri
 interface ResponseSlot {
   entrant: { id: number; name: string } | null;
   score: number | null;
-  characterId: number | null;
+  characterIds: number[];
   prereqSetId: string | null;
   prereqPlacement: 1 | 2 | null;
   progressionOrigin: { phaseName: string; poolName: string | null } | null;
@@ -884,7 +884,7 @@ describe('GET /phase-group/:phaseGroupId/bracket', () => {
    * cannot change unless someone corrects it — so these count the calls rather
    * than only checking the output.
    */
-  function countingMock(score?: string) {
+  function countingMock(score?: string, games?: unknown) {
     const calls = { characters: 0 };
     gqlMock.mockImplementation((_t: unknown, query: string) => {
       if (query.includes('PhaseGroupBracket')) return Promise.resolve(bracketFixture(score));
@@ -892,7 +892,7 @@ describe('GET /phase-group/:phaseGroupId/bracket', () => {
       if (query.includes('PhaseGroupSeedOrigins')) return Promise.resolve(seedOriginsFixture());
       if (query.includes('PhaseGroupSetCharacters')) {
         calls.characters += 1;
-        return Promise.resolve(charactersFixture());
+        return Promise.resolve(charactersFixture(games));
       }
       throw new Error(`unexpected query in test: ${query}`);
     });
@@ -907,10 +907,29 @@ describe('GET /phase-group/:phaseGroupId/bracket', () => {
 
     const group: ResponseBracketGroup = res.body;
     const completed = group.sets.find((s) => s.id === 7001)!;
-    expect(completed.slots[0].characterId).toBe(FOX);
-    expect(completed.slots[1].characterId).toBe(FALCO);
+    expect(completed.slots[0].characterIds).toEqual([FOX]);
+    expect(completed.slots[1].characterIds).toEqual([FALCO]);
     // Unfinished, so there are no games to read a character from.
-    expect(group.sets.find((s) => s.id === 7002)!.slots[0].characterId).toBeNull();
+    expect(group.sets.find((s) => s.id === 7002)!.slots[0].characterIds).toEqual([]);
+  });
+
+  it('reports each character a player used, most of the set first', async () => {
+    const WOLF = 1600;
+    // Fox, Fox, Wolf for 8001 — a counterpick that did not take over the set.
+    // 8002 stayed on Falco throughout, so their row is still one icon.
+    countingMock(undefined, [
+      { orderNum: 1, selections: [{ entrant: { id: 8001 }, selectionValue: FOX }, { entrant: { id: 8002 }, selectionValue: FALCO }] },
+      { orderNum: 2, selections: [{ entrant: { id: 8001 }, selectionValue: WOLF }, { entrant: { id: 8002 }, selectionValue: FALCO }] },
+      { orderNum: 3, selections: [{ entrant: { id: 8001 }, selectionValue: FOX }, { entrant: { id: 8002 }, selectionValue: FALCO }] },
+    ]);
+    const cookie = await makeSignedInCookie('bracket-characters-many');
+
+    const res = await request(server).get('/api/sets/phase-group/1/bracket').set('Cookie', cookie);
+
+    const completed = (res.body as ResponseBracketGroup).sets.find((s) => s.id === 7001)!;
+    // Fox twice, Wolf once — not the order they were played in.
+    expect(completed.slots[0].characterIds).toEqual([FOX, WOLF]);
+    expect(completed.slots[1].characterIds).toEqual([FALCO]);
   });
 
   it('walks the pool for characters once, not on every poll', async () => {
@@ -924,7 +943,7 @@ describe('GET /phase-group/:phaseGroupId/bracket', () => {
     // The bracket really was re-fetched, and the characters were not: they are
     // the same games, and paying ~20 objects a set for them again is the cost
     // this whole design exists to avoid.
-    expect(res.body.sets.find((s: ResponseBracketSet) => s.id === 7001)!.slots[0].characterId).toBe(FOX);
+    expect(res.body.sets.find((s: ResponseBracketSet) => s.id === 7001)!.slots[0].characterIds).toEqual([FOX]);
     expect(calls.characters).toBe(1);
   });
 

@@ -557,3 +557,98 @@ describe('ReportPanel — character dropdowns ordered by what each player plays'
     await vi.waitFor(() => expect(dropdownNames()).toEqual(CHARACTERS.map((c) => c.name)));
   });
 });
+
+describe('ReportPanel — the characters a set was played on', () => {
+  const ROSTER = [
+    { id: 100, name: 'Fox', imageUrl: 'fox.png' },
+    { id: 200, name: 'Falco', imageUrl: 'falco.png' },
+    { id: 300, name: 'Wolf', imageUrl: 'wolf.png' },
+  ];
+
+  function renderWithDetail(games: { orderNum: number; winnerEntrantId: number; characterIdByEntrantId: Record<number, number> }[]) {
+    render(
+      <ReportPanel
+        set={setFor('Winners Round 1')}
+        presumedWinnerId={10}
+        priorWinnerEntrantId={10}
+        priorDetail={{ games: games.map((g) => ({ ...g, stageId: null })) }}
+        onQueue={onQueue}
+        characters={ROSTER}
+        stages={[]}
+        topXBo5={null}
+        videogameId={1386}
+        phaseGroupId={1}
+        onNotify={vi.fn()}
+        onAuthError={() => false}
+        onDone={vi.fn()}
+        onCancel={vi.fn()}
+      />
+    );
+  }
+
+  const iconsBySide = () =>
+    [...document.querySelectorAll('.side')].map((side) =>
+      [...side.querySelectorAll('.side-character')].map((img) => img.getAttribute('src'))
+    );
+
+  it('shows a finished set on the characters it was actually played on', () => {
+    // Ada: Fox, Wolf, Fox — a counterpick that did not take over the set.
+    // mudd stayed on Falco, so their side is still one icon.
+    renderWithDetail([
+      { orderNum: 1, winnerEntrantId: 10, characterIdByEntrantId: { 10: 100, 20: 200 } },
+      { orderNum: 2, winnerEntrantId: 20, characterIdByEntrantId: { 10: 300, 20: 200 } },
+      { orderNum: 3, winnerEntrantId: 10, characterIdByEntrantId: { 10: 100, 20: 200 } },
+    ]);
+
+    // Fox twice then Wolf once — most of the set first, not play order.
+    expect(iconsBySide()).toEqual([['fox.png', 'wolf.png'], ['falco.png']]);
+  });
+
+  it('leaves both sides bare when start.gg carries no picks, which is the common case', () => {
+    renderWithDetail([
+      { orderNum: 1, winnerEntrantId: 10, characterIdByEntrantId: {} },
+      { orderNum: 2, winnerEntrantId: 10, characterIdByEntrantId: {} },
+    ]);
+
+    expect(iconsBySide()).toEqual([[], []]);
+    expect(document.querySelector('.side-characters')).toBeNull();
+  });
+
+  it('keeps the tag readable beside the icons', () => {
+    renderWithDetail([{ orderNum: 1, winnerEntrantId: 10, characterIdByEntrantId: { 10: 100, 20: 200 } }]);
+
+    // The icons are decoration; the names still read exactly as before.
+    expect([...document.querySelectorAll('.side-name')].map((e) => e.textContent)).toEqual(['Ada', 'mudd']);
+  });
+
+  it('follows the characters as they are typed in, before anything is reported', async () => {
+    render(
+      <ReportPanel
+        set={setFor('Winners Round 1')}
+        presumedWinnerId={10}
+        onQueue={onQueue}
+        characters={ROSTER}
+        stages={[]}
+        topXBo5={null}
+        videogameId={1386}
+        phaseGroupId={1}
+        onNotify={vi.fn()}
+        onAuthError={() => false}
+        onDone={vi.fn()}
+        onCancel={vi.fn()}
+      />
+    );
+    // Nothing typed yet, so there is nothing to show.
+    expect(document.querySelector('.side-character')).toBeNull();
+
+    const winnerAllGames = document.querySelectorAll('.all-games-row .game-stat-side')[0].querySelector('.fuzzy-cell') as HTMLElement;
+    fireEvent.click(winnerAllGames);
+    fireEvent.change(screen.getByPlaceholderText('type a character…'), { target: { value: 'falco' } });
+    fireEvent.keyDown(screen.getByPlaceholderText('type a character…'), { key: 'Enter' });
+
+    // The report has not been sent — this is the form updating under the TO.
+    await vi.waitFor(() => expect(iconsBySide()[0]).toEqual(['falco.png']));
+    expect(onQueue).not.toHaveBeenCalled();
+    expect(iconsBySide()[1]).toEqual([]);
+  });
+});

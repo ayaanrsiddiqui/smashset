@@ -4,6 +4,7 @@ import { bracketSetById, isOpenable, isUnreachedGrandFinalReset, isWinnerSlot, s
 import { compareIdentifiers } from './identifierOrder';
 import { anchoredScroll, clampZoom, fitZoom, MAX_ZOOM, MIN_ZOOM, zoomStep } from './bracketZoom';
 import { upsetFactor } from './upsetFactor';
+import { MAX_SET_CHARACTERS } from './setCharacters';
 import type { BracketGroup, BracketSet, Character } from './types';
 
 // The only two shapes with an elimination tree to draw — round robin and
@@ -335,10 +336,21 @@ function BracketTree({
                       <span className="bracket-seed">{slot.seedNum ?? ''}</span>
                       <span className="bracket-name">{slotLabel(slot, byId)}</span>
                       {/* alt is empty deliberately: the tag it sits beside is
-                          already read out, so the icon is decoration. */}
-                      {slot.characterId != null && iconUrlById.has(slot.characterId) && (
-                        <img className="bracket-character" src={iconUrlById.get(slot.characterId)} alt="" />
-                      )}
+                          already read out, so the icons are decoration.
+                          Filtered before slicing, so a character whose icon the
+                          videogame list does not carry does not silently cost
+                          one of the three slots. */}
+                      {(() => {
+                        const icons = slot.characterIds.filter((id) => iconUrlById.has(id)).slice(0, MAX_SET_CHARACTERS);
+                        if (icons.length === 0) return null;
+                        return (
+                          <span className="bracket-characters">
+                            {icons.map((id) => (
+                              <img key={id} className="bracket-character" src={iconUrlById.get(id)} alt="" />
+                            ))}
+                          </span>
+                        );
+                      })()}
                       {s.state === 3 && slot.score !== null && <span className={`bracket-score ${won ? 'won' : 'lost'}`}>{slot.score}</span>}
                     </div>
                   );

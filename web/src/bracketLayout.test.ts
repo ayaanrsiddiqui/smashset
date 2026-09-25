@@ -11,7 +11,7 @@ function slot(
   return {
     entrant: entrantId !== null ? { id: entrantId, name: `P${entrantId}` } : null,
     score: null,
-    characterId: null,
+    characterIds: [],
     prereqSetId,
     prereqPlacement,
     seedNum: null,

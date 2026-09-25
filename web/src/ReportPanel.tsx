@@ -21,6 +21,7 @@ import {
 } from './api';
 import { lookupMain, orderCharactersByTally, type CharacterCounts } from './mains';
 import { derivePriorState } from './priorDetail';
+import { MAX_SET_CHARACTERS, rankCharacters } from './setCharacters';
 
 interface Props {
   set: OpenSet;
@@ -78,6 +79,26 @@ type Mode =
   | { kind: 'editMain'; side: CharSide };
 
 type CharsByGame = Record<number, { winner: Character | null; loser: Character | null }>;
+
+/**
+ * The characters beside a player's tag on this screen.
+ *
+ * Inline with the name rather than a row of its own: the matchup is the
+ * tallest thing above the games, and a best-of-five only just fits a short
+ * laptop window as it is.
+ */
+function sideCharacters(played: Character[]) {
+  if (played.length === 0) return null;
+  return (
+    <span className="side-characters">
+      {played.map((character) => (
+        // alt is empty on purpose — the tag beside it is already read out, so
+        // the icon is decoration. The title still names it on hover.
+        <img key={character.id} className="side-character" src={character.imageUrl} alt="" title={character.name} />
+      ))}
+    </span>
+  );
+}
 
 // What's currently known about a player's main and how much to trust it —
 // see mainStatus() below for how each variant gets decided.
@@ -864,6 +885,25 @@ export function ReportPanel({
 
   const rowNumbers = Array.from({ length: maxRows }, (_, i) => i + 1);
 
+  /**
+   * The characters a side has played, ranked the same way the bracket will
+   * rank them once this is reported — so the row a TO is filling in and the
+   * row they see afterwards agree.
+   *
+   * Read off the games currently in play rather than every key in charsByGame:
+   * dropping a Bo5 to a Bo3 leaves games 4 and 5 behind, and a character from
+   * a game that is no longer part of the set should not be shown as part of it.
+   */
+  function setCharactersFor(side: 'winner' | 'loser'): Character[] {
+    const picks = rowNumbers.map((n) => charsByGame[n]?.[side] ?? null);
+    const byId = new Map<number, Character>();
+    for (const pick of picks) if (pick) byId.set(pick.id, pick);
+    return rankCharacters(picks.map((pick) => pick?.id))
+      .map((id) => byId.get(id)!)
+      .filter((character) => character.imageUrl)
+      .slice(0, MAX_SET_CHARACTERS);
+  }
+
   // When multiple games are targeted (e.g. "1 3"), only the most-recently
   // toggled one gets the real active input — the rest just show a queued
   // outline — so there's never more than one text box fighting for focus.
@@ -909,14 +949,20 @@ export function ReportPanel({
 
         <div className="matchup">
           <div className="side winner-side">
-            <span className="side-name">{winner.name}</span>
+            <span className="side-name">
+              {sideCharacters(setCharactersFor('winner'))}
+              {winner.name}
+            </span>
             <span className="badge">winner</span>
           </div>
           <button className="flip-btn" onClick={flip} title="Flip winner (f)" aria-label="Flip winner">
             ⇄
           </button>
           <button className="side loser-side" onClick={flip}>
-            <span className="side-name">{loser.name}</span>
+            <span className="side-name">
+              {sideCharacters(setCharactersFor('loser'))}
+              {loser.name}
+            </span>
           </button>
         </div>
 

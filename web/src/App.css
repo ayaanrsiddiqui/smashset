@@ -366,6 +366,43 @@
 /* A finished set's character, beside the tag. Fixed size and flex:none so a
    row's height and the name's truncation never depend on whether start.gg had
    a pick for that set — most of the time it does not. */
+/* The icons for one player overlap, rather than each taking the row's own 6px
+   gap. The box is 188px wide and the tag has to stay readable in it: laid out
+   side by side, three icons cut a 13-character tag from 110px of room to 52px,
+   where overlapping leaves 68px. The order is already "most of the set first",
+   so the one in front being the one fully visible says the same thing twice.
+   The ring is the box's own background, so each icon reads as separate rather
+   than as one smeared shape. */
+.bracket-characters {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  flex: none;
+}
+
+.bracket-characters .bracket-character + .bracket-character {
+  margin-left: -6px;
+}
+
+.bracket-characters .bracket-character {
+  position: relative;
+  box-shadow: 0 0 0 1.5px #1c1f27;
+}
+
+/* Earlier icons sit on top of later ones, so the leading character is the one
+   never cut into. */
+.bracket-characters .bracket-character:nth-child(1) {
+  z-index: 3;
+}
+
+.bracket-characters .bracket-character:nth-child(2) {
+  z-index: 2;
+}
+
+.bracket-characters .bracket-character:nth-child(3) {
+  z-index: 1;
+}
+
 .bracket-character {
   width: 16px;
   height: 16px;
@@ -1029,6 +1066,30 @@
   max-width: 600px;
   margin-left: auto;
   margin-right: auto;
+}
+
+/* Name and icons share one line. A row of their own would push the games
+   down, and a best-of-five already only just fits a short window. */
+.side-name {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.side-characters {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+}
+
+.side-character {
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  object-fit: cover;
 }
 
 .side {
@@ -2595,6 +2656,12 @@ kbd {
 
 /* Fixed size and flex:none so a row's height never depends on whether there
    was a character to show — most of the time there is not. */
+.row-characters {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
 .row-character {
   width: 16px;
   height: 16px;

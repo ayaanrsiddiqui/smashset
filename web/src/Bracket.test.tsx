@@ -15,8 +15,8 @@ function set(id: number, identifier: string, round: number, fullRoundText: strin
     lPlacement: null,
     completedAt: null,
     slots: [
-      { entrant: { id: id * 10, name: `P${id}a` }, score: null, characterId: null, prereqSetId: null, prereqPlacement: null, progressionOrigin: null, seedNum: null },
-      { entrant: { id: id * 10 + 1, name: `P${id}b` }, score: null, characterId: null, prereqSetId: null, prereqPlacement: null, progressionOrigin: null, seedNum: null },
+      { entrant: { id: id * 10, name: `P${id}a` }, score: null, characterIds: [], prereqSetId: null, prereqPlacement: null, progressionOrigin: null, seedNum: null },
+      { entrant: { id: id * 10 + 1, name: `P${id}b` }, score: null, characterIds: [], prereqSetId: null, prereqPlacement: null, progressionOrigin: null, seedNum: null },
     ],
     winnerAdvancesToPhase: null,
     loserAdvancesToPhase: null,
@@ -158,8 +158,8 @@ describe('what a set says about seeding', () => {
           state,
           winnerId: state === 3 ? 10 : null,
           slots: [
-            { entrant: { id: 10, name: 'Winner' }, score: 2, characterId: null, prereqSetId: null, prereqPlacement: null, progressionOrigin: null, seedNum: winnerSeed },
-            { entrant: { id: 20, name: 'Loser' }, score: 0, characterId: null, prereqSetId: null, prereqPlacement: null, progressionOrigin: null, seedNum: loserSeed },
+            { entrant: { id: 10, name: 'Winner' }, score: 2, characterIds: [], prereqSetId: null, prereqPlacement: null, progressionOrigin: null, seedNum: winnerSeed },
+            { entrant: { id: 20, name: 'Loser' }, score: 0, characterIds: [], prereqSetId: null, prereqPlacement: null, progressionOrigin: null, seedNum: loserSeed },
           ],
         },
       ],
@@ -207,7 +207,7 @@ describe('what a set says about seeding', () => {
 
   it('keeps the character beside the score rather than the tag', () => {
     const group = played(7, 2);
-    group.sets[0].slots[0] = { ...group.sets[0].slots[0], characterId: 100 };
+    group.sets[0].slots[0] = { ...group.sets[0].slots[0], characterIds: [100] };
     render(
       <div className="bracket-stage">
         <Bracket group={group} onSelectSet={vi.fn()} characters={[{ id: 100, name: 'Fox', imageUrl: 'f.png' }]} />
@@ -216,6 +216,74 @@ describe('what a set says about seeding', () => {
 
     const row = document.querySelector('.bracket-row');
     const order = [...(row?.children ?? [])].map((el) => el.className.split(' ')[0]);
-    expect(order).toEqual(['bracket-seed', 'bracket-name', 'bracket-character', 'bracket-score']);
+    expect(order).toEqual(['bracket-seed', 'bracket-name', 'bracket-characters', 'bracket-score']);
+  });
+
+  it('shows every character a player used, most of the set first', () => {
+    const group = played(7, 2);
+    // Already ranked by the server; the row renders them in the order given.
+    group.sets[0].slots[0] = { ...group.sets[0].slots[0], characterIds: [100, 200] };
+    render(
+      <div className="bracket-stage">
+        <Bracket
+          group={group}
+          onSelectSet={vi.fn()}
+          characters={[
+            { id: 100, name: 'Fox', imageUrl: 'fox.png' },
+            { id: 200, name: 'Falco', imageUrl: 'falco.png' },
+          ]}
+        />
+      </div>
+    );
+
+    const icons = [...document.querySelectorAll('.bracket-row .bracket-character')].map((el) => el.getAttribute('src'));
+    expect(icons).toEqual(['fox.png', 'falco.png']);
+  });
+
+  it('shows at most three, so the icons cannot crowd out the tag', () => {
+    const group = played(7, 2);
+    group.sets[0].slots[0] = { ...group.sets[0].slots[0], characterIds: [100, 200, 300, 400] };
+    render(
+      <div className="bracket-stage">
+        <Bracket
+          group={group}
+          onSelectSet={vi.fn()}
+          characters={[100, 200, 300, 400].map((id) => ({ id, name: `C${id}`, imageUrl: `${id}.png` }))}
+        />
+      </div>
+    );
+
+    const icons = [...document.querySelectorAll('.bracket-row .bracket-character')].map((el) => el.getAttribute('src'));
+    expect(icons).toEqual(['100.png', '200.png', '300.png']);
+  });
+
+  it('does not spend one of the three on a character it has no icon for', () => {
+    const group = played(7, 2);
+    // 200 is missing from the videogame's character list, as happens when the
+    // list and the set's picks disagree.
+    group.sets[0].slots[0] = { ...group.sets[0].slots[0], characterIds: [100, 200, 300, 400] };
+    render(
+      <div className="bracket-stage">
+        <Bracket
+          group={group}
+          onSelectSet={vi.fn()}
+          characters={[100, 300, 400].map((id) => ({ id, name: `C${id}`, imageUrl: `${id}.png` }))}
+        />
+      </div>
+    );
+
+    const icons = [...document.querySelectorAll('.bracket-row .bracket-character')].map((el) => el.getAttribute('src'));
+    expect(icons).toEqual(['100.png', '300.png', '400.png']);
+  });
+
+  it('renders no icon group at all when the set carries no picks', () => {
+    const group = played(7, 2);
+    render(
+      <div className="bracket-stage">
+        <Bracket group={group} onSelectSet={vi.fn()} characters={[{ id: 100, name: 'Fox', imageUrl: 'fox.png' }]} />
+      </div>
+    );
+
+    expect(document.querySelector('.bracket-characters')).toBeNull();
   });
 });

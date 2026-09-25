@@ -5,7 +5,7 @@ import { hasSeenPool, publishPoolChanged, recordPoolAccess, subscribe, subscribe
 import { startWatching, stopWatching } from '../poolWatcher.js';
 import { ensureMainComputed } from '../mainLookup.js';
 import { parseDisplayScore } from '../displayScore.js';
-import { pickSetCharacter, type SetGame } from '../setCharacter.js';
+import { rankSetCharacters, type SetGame } from '../setCharacter.js';
 import { getEventStations, type Station } from '../stations.js';
 
 export const setsRouter = Router();
@@ -472,10 +472,11 @@ interface SetsPage<N, H> {
 export interface BracketSlot {
   entrant: { id: number; name: string } | null;
   score: number | null;
-  // The character this entrant is shown as having played, for a finished set.
-  // Null whenever start.gg carries no picks for the set, which is common —
-  // plenty of TOs never report them. See pickSetCharacter.
-  characterId: number | null;
+  // Every character this entrant played in a finished set, most of the set
+  // first — people counterpick, so one character rarely describes one. Empty
+  // whenever start.gg carries no picks for the set, which is common: plenty of
+  // TOs never report them. See rankSetCharacters for the order.
+  characterIds: number[];
   // A same-response Set.id this slot is fed by (winner or loser, per
   // prereqPlacement below), or null once the slot is already filled, or if
   // the prereq is a seed rather than another set (first-round slots).
@@ -1126,7 +1127,7 @@ function resultFingerprint(set: { winnerId: number | null; displayScore: string 
   return `${set.winnerId ?? ''}|${set.displayScore ?? ''}`;
 }
 
-const setCharacterCache = new Map<string, { fingerprint: string; byEntrant: Record<number, number> }>();
+const setCharacterCache = new Map<string, { fingerprint: string; byEntrant: Record<number, number[]> }>();
 
 async function refreshSetCharacters(accessToken: string, userId: number, phaseGroupId: string): Promise<void> {
   const paged = await fetchSetsPaged<RawCharacterSet, BracketHeader>(accessToken, phaseGroupId, SET_CHARACTERS_QUERY, {
@@ -1148,10 +1149,10 @@ async function refreshSetCharacters(accessToken: string, userId: number, phaseGr
       return [{ orderNum: game.orderNum, characterIdByEntrantId }];
     });
 
-    const byEntrant: Record<number, number> = {};
+    const byEntrant: Record<number, number[]> = {};
     for (const entrantId of new Set(games.flatMap((g) => Object.keys(g.characterIdByEntrantId).map(Number)))) {
-      const character = pickSetCharacter(games, entrantId);
-      if (character != null) byEntrant[entrantId] = character;
+      const ranked = rankSetCharacters(games, entrantId);
+      if (ranked.length > 0) byEntrant[entrantId] = ranked;
     }
     setCharacterCache.set(`${userId}:${set.id}`, { fingerprint: resultFingerprint(set), byEntrant });
   }
@@ -1224,7 +1225,7 @@ async function fetchBracketData(accessToken: string, userId: number, phaseGroupI
         // seed of whoever is in it, and an empty slot has nobody.
         seedNum: slot.entrant ? (seed?.seedNum ?? null) : null,
         score: scores[i],
-        characterId: slot.entrant ? (characters[slot.entrant.id] ?? null) : null,
+        characterIds: slot.entrant ? (characters[slot.entrant.id] ?? []) : [],
         prereqSetId: slot.prereqType === 'set' ? slot.prereqId : null,
         prereqPlacement: slot.prereqPlacement === 1 || slot.prereqPlacement === 2 ? slot.prereqPlacement : null,
         // The filled-in seed first, then the phase group's seed list for a
