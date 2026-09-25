@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { StrictMode } from 'react';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { fetchAccount, fetchBracket, fetchCharacters, fetchOpenSets, fetchPhaseGroups, fetchPoolPlayers, fetchSetDetail, fetchStages, reportSet, updatePlayerMain, updateTopXBo5 } from './api';
+import { fetchAccount, fetchBracket, fetchCharacters, fetchOpenSets, fetchPhaseGroups, fetchPoolPlayers, fetchSetDetail, fetchStages, fetchStations, reportSet, startSet, updatePlayerMain, updateTopXBo5 } from './api';
 import { apiFailure, flushTimers, resetApiDefaults, seedEvent, seedPool, TEST_EVENT } from './test-helpers';
 import type { BracketSet } from './types';
 import { openedEventSource, resetEventSources } from './test-eventsource';
@@ -34,7 +34,8 @@ vi.mock('./api', async (importOriginal) => ({
   fetchStages: vi.fn().mockResolvedValue({ stages: [] }),
   fetchAccount: vi.fn().mockResolvedValue({ displayName: 'FireSlam23', startggSlug: null, topXBo5: null }),
   updateTopXBo5: vi.fn().mockResolvedValue({ topXBo5: null }),
-  startSet: vi.fn(),
+  startSet: vi.fn().mockResolvedValue({ ok: true, station: null }),
+  fetchStations: vi.fn().mockResolvedValue({ stations: [] }),
   reportSet: vi.fn().mockResolvedValue({ result: {} }),
   updatePlayerMain: vi.fn().mockResolvedValue({ characterId: null }),
   fetchPoolPlayers: vi.fn().mockResolvedValue({ players: [], videogameId: 1386 }),
@@ -1638,5 +1639,144 @@ describe('App — when the session check cannot reach the server', () => {
     render(<App />);
 
     expect(await screen.findByText(/Sending Ada vs mudd/)).toBeInTheDocument();
+  });
+});
+
+describe('starting a set at a station', () => {
+  const OPEN_SET = {
+    id: 5001,
+    isPreview: false,
+    isStarted: false,
+    fullRoundText: 'Winners Round 1',
+    identifier: 'A',
+    lPlacement: null,
+    entrants: [
+      { id: 6001, name: 'Ada' },
+      { id: 6002, name: 'mudd' },
+    ],
+  };
+
+  beforeEach(() => {
+    localStorage.clear();
+    seedEvent();
+    seedPool();
+    resetApiDefaults();
+    resetEventSources();
+    fetchMeMock.mockResolvedValue({ user: { id: 1, displayName: 'FireSlam23' } });
+    vi.mocked(fetchOpenSets).mockResolvedValue({ sets: [OPEN_SET] });
+    vi.mocked(startSet).mockResolvedValue({ ok: true, station: null });
+    vi.mocked(fetchStations).mockResolvedValue({ stations: [] });
+  });
+
+  afterEach(() => {
+    vi.mocked(startSet).mockReset();
+    fetchMeMock.mockReset();
+    localStorage.clear();
+  });
+
+  const startBtn = () => document.querySelector('.start-btn') as HTMLButtonElement | null;
+  const stationField = () => document.querySelector('.station-input') as HTMLInputElement | null;
+
+  async function showRow() {
+    await screen.findByText(
+      (_c, el) => el?.className === 'entrant-names' && /Ada vs mudd/.test(el.textContent ?? '')
+    );
+  }
+
+  it('keeps start a single tap when the tournament has no stations', async () => {
+    // The whole reason this is conditional. Asking every TO for a number they
+    // do not have would slow down the one action they do most.
+    render(<App />);
+    await showRow();
+
+    fireEvent.click(startBtn()!);
+
+    await waitFor(() => expect(startSet).toHaveBeenCalled());
+    expect(vi.mocked(startSet).mock.calls[0][2]).toBeUndefined();
+    expect(stationField()).toBeNull();
+  });
+
+  it('asks for a number first when the tournament has stations', async () => {
+    vi.mocked(fetchStations).mockResolvedValue({ stations: [{ id: 91, number: 1 }, { id: 95, number: 5 }] });
+    render(<App />);
+    await showRow();
+
+    fireEvent.click(startBtn()!);
+
+    await waitFor(() => expect(stationField()).not.toBeNull());
+    // Nothing is started until the TO says so — the tap opened a question.
+    expect(startSet).not.toHaveBeenCalled();
+  });
+
+  it('starts at the number that was typed', async () => {
+    vi.mocked(fetchStations).mockResolvedValue({ stations: [{ id: 95, number: 5 }] });
+    vi.mocked(startSet).mockResolvedValue({ ok: true, station: 5 });
+    render(<App />);
+    await showRow();
+    fireEvent.click(startBtn()!);
+    await waitFor(() => expect(stationField()).not.toBeNull());
+
+    fireEvent.change(stationField()!, { target: { value: '5' } });
+    fireEvent.keyDown(stationField()!, { key: 'Enter' });
+
+    await waitFor(() => expect(startSet).toHaveBeenCalled());
+    expect(vi.mocked(startSet).mock.calls[0][2]).toEqual({ eventId: TEST_EVENT.id, number: 5 });
+    expect(await screen.findByText(/Started at station 5/)).toBeInTheDocument();
+  });
+
+  it('starts with no station when the field is left empty', async () => {
+    // The field must never become something a TO has to fill in to get past.
+    vi.mocked(fetchStations).mockResolvedValue({ stations: [{ id: 95, number: 5 }] });
+    render(<App />);
+    await showRow();
+    fireEvent.click(startBtn()!);
+    await waitFor(() => expect(stationField()).not.toBeNull());
+
+    fireEvent.keyDown(stationField()!, { key: 'Enter' });
+
+    await waitFor(() => expect(startSet).toHaveBeenCalled());
+    expect(vi.mocked(startSet).mock.calls[0][2]).toBeUndefined();
+  });
+
+  it('backs out on Escape without starting anything', async () => {
+    vi.mocked(fetchStations).mockResolvedValue({ stations: [{ id: 95, number: 5 }] });
+    render(<App />);
+    await showRow();
+    fireEvent.click(startBtn()!);
+    await waitFor(() => expect(stationField()).not.toBeNull());
+
+    fireEvent.keyDown(stationField()!, { key: 'Escape' });
+
+    await waitFor(() => expect(stationField()).toBeNull());
+    expect(startSet).not.toHaveBeenCalled();
+  });
+
+  it('refuses letters rather than sending something start.gg cannot use', async () => {
+    vi.mocked(fetchStations).mockResolvedValue({ stations: [{ id: 95, number: 5 }] });
+    render(<App />);
+    await showRow();
+    fireEvent.click(startBtn()!);
+    await waitFor(() => expect(stationField()).not.toBeNull());
+
+    fireEvent.change(stationField()!, { target: { value: '1a2' } });
+
+    expect(stationField()!.value).toBe('12');
+  });
+
+  it('leaves the field open on a refusal so the number can be fixed', async () => {
+    // A mistyped station is the common failure, and making the TO find the set
+    // again to retype one digit is the slow path this app exists to avoid.
+    vi.mocked(fetchStations).mockResolvedValue({ stations: [{ id: 95, number: 5 }] });
+    vi.mocked(startSet).mockRejectedValue(apiFailure(400, 'This event has no station 40. It goes up to 5.'));
+    render(<App />);
+    await showRow();
+    fireEvent.click(startBtn()!);
+    await waitFor(() => expect(stationField()).not.toBeNull());
+
+    fireEvent.change(stationField()!, { target: { value: '40' } });
+    fireEvent.keyDown(stationField()!, { key: 'Enter' });
+
+    expect(await screen.findByText(/no station 40/)).toBeInTheDocument();
+    expect(stationField()).not.toBeNull();
   });
 });

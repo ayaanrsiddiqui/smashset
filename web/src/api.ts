@@ -139,11 +139,39 @@ export function fetchOpenSets(phaseGroupId: number): Promise<{ sets: OpenSet[] }
  * which pool's watchers to wake. A wrong value only makes other clients refetch
  * for nothing — they still fetch with their own token.
  */
-export function startSet(setId: number | string, phaseGroupId?: number): Promise<{ ok: true }> {
+export interface Station {
+  id: number;
+  number: number;
+}
+
+/**
+ * The stations this event's tournament has. An empty list is a normal answer —
+ * plenty of tournaments configure none, and that is what tells the client to
+ * leave starting a set as the single tap it has always been.
+ */
+export function fetchStations(eventId: number): Promise<{ stations: Station[] }> {
+  return req(`/api/event/${eventId}/stations`);
+}
+
+/**
+ * `station` comes back as the number actually attached, or null when none was
+ * asked for. A refusal names what went wrong; a failure that still started the
+ * set carries `started: true` in its body, because telling a TO it failed when
+ * the set is running would cost them the set.
+ */
+export function startSet(
+  setId: number | string,
+  phaseGroupId?: number,
+  station?: { eventId: number; number: number }
+): Promise<{ ok: true; station: number | null }> {
   return req(`/api/sets/${setId}/start`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ phaseGroupId: phaseGroupId == null ? undefined : String(phaseGroupId) }),
+    body: JSON.stringify({
+      phaseGroupId: phaseGroupId == null ? undefined : String(phaseGroupId),
+      eventId: station == null ? undefined : String(station.eventId),
+      stationNumber: station?.number,
+    }),
   });
 }
 

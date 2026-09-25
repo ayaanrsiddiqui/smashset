@@ -23,6 +23,7 @@ import {
   fetchPhaseGroups,
   fetchSetDetail,
   fetchStages,
+  fetchStations,
   fetchMe,
   fetchAccount,
   updateTopXBo5,
@@ -33,6 +34,7 @@ import {
 } from './api';
 import { fuzzyMatchSets } from './fuzzy';
 import { bracketSetById, priorResultFor } from './bracketDisplay';
+import type { Station } from './api';
 import type {
   AccountDetails,
   BracketGroup,
@@ -135,6 +137,11 @@ export default function App() {
   const [bracketLoadError, setBracketLoadError] = useState<string | null>(null);
   const [account, setAccount] = useState<AccountDetails | null>(null);
   const [accountError, setAccountError] = useState(false);
+  // Which set is having a station typed for it, and what has been typed.
+  // Null means nobody is: starting stays one tap for every tournament that
+  // does not use stations at all.
+  const [stationFor, setStationFor] = useState<{ setId: number | string; text: string } | null>(null);
+  const [stations, setStations] = useState<Station[]>([]);
   const [startingIds, setStartingIds] = useState<Set<number | string>>(new Set());
   // Sets we've successfully started this session, kept separately from `sets`
   // so a poll landing before start.gg's own read catches up to the mutation
@@ -156,6 +163,22 @@ export default function App() {
   // TO switched pool while they were awaiting — a ref because a closure
   // captured at click time would still see the old value.
   const poolRef = useRef<number | null>(null);
+
+  // Deliberately degrading: without the list the station field simply does not
+  // appear, and starting a set keeps working exactly as before. Nothing is
+  // surfaced because there is nothing a TO could do about it mid-tournament.
+  useEffect(() => {
+    if (!user || !event) return;
+    let cancelled = false;
+    fetchStations(event.id)
+      .then((res) => {
+        if (!cancelled) setStations(res.stations);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [user, event]);
 
   useEffect(() => {
     poolRef.current = phaseGroupId;
@@ -899,13 +922,21 @@ export default function App() {
     });
   }
 
-  async function handleStart(s: OpenSet) {
+  async function handleStart(s: OpenSet, stationNumber?: number) {
     setStartingIds((prev) => new Set(prev).add(s.id));
     try {
-      await startSet(s.id, phaseGroupId ?? undefined);
+      const at = stationNumber != null && event ? { eventId: event.id, number: stationNumber } : undefined;
+      const res = await startSet(s.id, phaseGroupId ?? undefined, at);
       setStartedIds((prev) => new Set(prev).add(s.id));
+      setStationFor(null);
+      if (res.station != null) notify(`Started at station ${res.station}`, 'success');
     } catch (err) {
       if (handledAuthError(err)) return;
+      // A refusal leaves the field open so the number can be corrected without
+      // finding the set again. A failure that still started the set does not:
+      // the set is running, and re-entering a station there would be a second
+      // start.
+      if (err instanceof ApiError && err.details?.started === true) setStationFor(null);
       notify(err instanceof Error ? err.message : 'Failed to start set', 'error');
     } finally {
       setStartingIds((prev) => {
@@ -1042,16 +1073,59 @@ export default function App() {
                 {s.isStarted && ' · started'}
               </span>
               {!s.isPreview && !s.isStarted && (
-                <button
-                  className="start-btn"
-                  disabled={startingIds.has(s.id)}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleStart(s);
-                  }}
-                >
-                  {startingIds.has(s.id) ? '…' : 'start'}
-                </button>
+                stationFor?.setId === s.id ? (
+                  <span className="start-station" onClick={(e) => e.stopPropagation()}>
+                    <input
+                      className="station-input"
+                      // Numeric keypad on a phone: a TO is typing a station
+                      // number one-handed at a bracket table.
+                      type="text"
+                      inputMode="numeric"
+                      autoFocus
+                      placeholder="#"
+                      value={stationFor.text}
+                      disabled={startingIds.has(s.id)}
+                      onChange={(e) => setStationFor({ setId: s.id, text: e.target.value.replace(/[^0-9]/g, '') })}
+                      onKeyDown={(e) => {
+                        e.stopPropagation();
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          const text = stationFor.text.trim();
+                          // Enter on an empty field starts without a station,
+                          // so the field never becomes a thing you must fill in.
+                          handleStart(s, text === '' ? undefined : Number(text));
+                        } else if (e.key === 'Escape') {
+                          e.preventDefault();
+                          setStationFor(null);
+                        }
+                      }}
+                    />
+                    <button
+                      className="start-btn"
+                      disabled={startingIds.has(s.id)}
+                      onClick={() => {
+                        const text = stationFor.text.trim();
+                        handleStart(s, text === '' ? undefined : Number(text));
+                      }}
+                    >
+                      {startingIds.has(s.id) ? '…' : 'go'}
+                    </button>
+                  </span>
+                ) : (
+                  <button
+                    className="start-btn"
+                    disabled={startingIds.has(s.id)}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      // Only asks where there is something to ask about. A
+                      // tournament with no stations keeps the one-tap start.
+                      if (stations.length > 0) setStationFor({ setId: s.id, text: '' });
+                      else handleStart(s);
+                    }}
+                  >
+                    {startingIds.has(s.id) ? '…' : 'start'}
+                  </button>
+                )
               )}
             </li>
           );

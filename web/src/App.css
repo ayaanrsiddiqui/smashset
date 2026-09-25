@@ -105,6 +105,27 @@
   padding-left: 13px;
 }
 
+/* Sits where the start button was, so the row does not reflow when the number
+   field opens under a TO's thumb. */
+.start-station {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.station-input {
+  width: 46px;
+  box-sizing: border-box;
+  text-align: center;
+  padding: 6px 4px;
+  border-radius: 8px;
+  border: 2px solid #384059;
+  background: #1c2030;
+  color: #f1f2f6;
+  font-size: 15px;
+}
+
 .start-btn {
   flex-shrink: 0;
   background: #2a2e38;

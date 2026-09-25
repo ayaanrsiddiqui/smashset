@@ -55,6 +55,7 @@ export function resetApiDefaults(): void {
   vi.mocked(api.fetchSetDetail).mockResolvedValue({ games: [] });
   vi.mocked(api.fetchCharacters).mockResolvedValue({ characters: [] });
   vi.mocked(api.fetchStages).mockResolvedValue({ stages: [] });
+  vi.mocked(api.fetchStations).mockResolvedValue({ stations: [] });
   vi.mocked(api.fetchAccount).mockResolvedValue({ displayName: 'FireSlam23', startggSlug: null, topXBo5: null });
   vi.mocked(api.updateTopXBo5).mockResolvedValue({ topXBo5: null });
 }

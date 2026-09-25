@@ -8,6 +8,7 @@ import { createSession } from '../db/sessions.js';
 import { SESSION_COOKIE_NAME } from '../middleware/auth.js';
 import { closeTestPool } from '../test-helpers.js';
 import { testServer } from '../test-server.js';
+import { resetStationCache } from '../stations.js';
 
 const gqlMock = vi.fn();
 // What start.gg reports a response cost. Null by default (most tests don't
@@ -32,6 +33,14 @@ const { COST_MODEL, invalidateSetCaches } = await import('./sets.js');
 const { hasSeenPool, resetPoolEvents } = await import('../poolEvents.js');
 const { resetMainLookupState } = await import('../mainLookup.js');
 const server = testServer(createApp());
+
+// File-level rather than in whichever describe happens to be last: the pool is
+// a module-level singleton, so closing it inside one block ends it for every
+// block after it, and appending a new describe silently broke the file.
+afterAll(async () => {
+  await pool.query('DELETE FROM users WHERE startgg_user_id LIKE $1', [`${PREFIX}%`]);
+  await closeTestPool();
+});
 
 const PREFIX = `test-sets-route-${Date.now()}-`;
 const idFor = (label: string) => `${PREFIX}${label}`;
@@ -100,9 +109,6 @@ describe('GET /phase-group/:phaseGroupId/open-sets — auto-main integration', (
   });
 
   afterAll(async () => {
-    // Users cleanup + closeTestPool() happen once, in the last describe
-    // block in this file (below) — the pool is a shared module-level
-    // singleton, so closing it here would break that later block.
     await pool.query('DELETE FROM player_mains WHERE player_id = ANY($1)', [[CACHED_PLAYER_ID, UNCACHED_PLAYER_ID]]);
   });
 
@@ -1514,11 +1520,6 @@ describe('GET /:setId/detail', () => {
     gqlMock.mockReset();
   });
 
-  afterAll(async () => {
-    await pool.query('DELETE FROM users WHERE startgg_user_id LIKE $1', [`${PREFIX}%`]);
-    await closeTestPool();
-  });
-
   it('returns each game in order with its winner, stage, and per-entrant character picks', async () => {
     gqlMock.mockImplementation((_token: unknown, query: string) => {
       if (query.includes('SetDetail')) return Promise.resolve(setDetailFixture());
@@ -1547,5 +1548,133 @@ describe('GET /:setId/detail', () => {
 
     expect(res.status).toBe(200);
     expect(res.body.games).toEqual([]);
+  });
+});
+
+describe('POST /api/sets/:setId/start with a station', () => {
+  const EVENT_ID = '4242';
+
+  /** Routes each mutation/query to its own answer, and records what was sent. */
+  function startgg(over: { stations?: { id: number; number: number }[]; assign?: Error } = {}) {
+    const sent: string[] = [];
+    gqlMock.mockImplementation((_t: unknown, query: string) => {
+      if (query.includes('EventStations')) {
+        sent.push('stations');
+        return Promise.resolve({ event: { tournament: { stations: { nodes: over.stations ?? [{ id: 91, number: 1 }, { id: 95, number: 5 }] } } } });
+      }
+      if (query.includes('markSetInProgress')) {
+        sent.push('start');
+        return Promise.resolve({ markSetInProgress: { id: 1 } });
+      }
+      if (query.includes('assignStation')) {
+        sent.push('assign');
+        if (over.assign) return Promise.reject(over.assign);
+        return Promise.resolve({ assignStation: { id: 1, station: { number: 5 } } });
+      }
+      throw new Error(`unexpected query in test: ${query}`);
+    });
+    return sent;
+  }
+
+  beforeEach(() => {
+    resetStationCache();
+  });
+
+  it('starts a set with no station, the way it always did', async () => {
+    const sent = startgg();
+    const cookie = await makeSignedInCookie('start-plain');
+
+    const res = await request(server).post('/api/sets/1/start').set('Cookie', cookie).send({ phaseGroupId: '7' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.station).toBeNull();
+    // No station means no lookup: starting must not get slower for the
+    // tournaments that do not use them.
+    expect(sent).toEqual(['start']);
+  });
+
+  it('starts the set and puts it on the station', async () => {
+    const sent = startgg();
+    const cookie = await makeSignedInCookie('start-station');
+
+    const res = await request(server)
+      .post('/api/sets/1/start')
+      .set('Cookie', cookie)
+      .send({ phaseGroupId: '7', eventId: EVENT_ID, stationNumber: 5 });
+
+    expect(res.status).toBe(200);
+    expect(res.body.station).toBe(5);
+    expect(sent).toEqual(['stations', 'start', 'assign']);
+  });
+
+  it('refuses a station the event does not have, before starting anything', async () => {
+    // The guard that matters. start.gg only takes a station id, so a bad number
+    // can only be caught here — and catching it after the start would leave the
+    // set running at no station while the TO walked away believing otherwise.
+    const sent = startgg();
+    const cookie = await makeSignedInCookie('start-bad-station');
+
+    const res = await request(server)
+      .post('/api/sets/1/start')
+      .set('Cookie', cookie)
+      .send({ phaseGroupId: '7', eventId: EVENT_ID, stationNumber: 40 });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/no station 40.*goes up to 5/i);
+    expect(sent).toEqual(['stations']);
+  });
+
+  it('says so plainly when the tournament has no stations at all', async () => {
+    const sent = startgg({ stations: [] });
+    const cookie = await makeSignedInCookie('start-no-stations');
+
+    const res = await request(server)
+      .post('/api/sets/1/start')
+      .set('Cookie', cookie)
+      .send({ eventId: EVENT_ID, stationNumber: 1 });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/no stations set up/i);
+    expect(sent).toEqual(['stations']);
+  });
+
+  it('admits the set started when only the station failed to attach', async () => {
+    // Saying "failed to start" would be false and would cost a TO the set: they
+    // would start it again, or go looking for it as unstarted.
+    const sent = startgg({ assign: new Error('start.gg said no') });
+    const cookie = await makeSignedInCookie('start-assign-failed');
+
+    const res = await request(server)
+      .post('/api/sets/1/start')
+      .set('Cookie', cookie)
+      .send({ eventId: EVENT_ID, stationNumber: 5 });
+
+    expect(res.status).toBe(502);
+    expect(res.body.started).toBe(true);
+    expect(res.body.error).toMatch(/started, but station 5/i);
+    expect(sent).toEqual(['stations', 'start', 'assign']);
+  });
+
+  it('refuses a station that is not a whole number', async () => {
+    const sent = startgg();
+    const cookie = await makeSignedInCookie('start-fractional');
+
+    const res = await request(server)
+      .post('/api/sets/1/start')
+      .set('Cookie', cookie)
+      .send({ eventId: EVENT_ID, stationNumber: 2.5 });
+
+    expect(res.status).toBe(400);
+    expect(sent).toEqual([]);
+  });
+
+  it('will not guess the event when asked for a station', async () => {
+    const sent = startgg();
+    const cookie = await makeSignedInCookie('start-no-event');
+
+    const res = await request(server).post('/api/sets/1/start').set('Cookie', cookie).send({ stationNumber: 5 });
+
+    expect(res.status).toBe(400);
+    expect(sent).toEqual([]);
   });
 });

@@ -6,6 +6,7 @@ import { startWatching, stopWatching } from '../poolWatcher.js';
 import { ensureMainComputed } from '../mainLookup.js';
 import { parseDisplayScore } from '../displayScore.js';
 import { pickSetCharacter, type SetGame } from '../setCharacter.js';
+import { getEventStations, type Station } from '../stations.js';
 
 export const setsRouter = Router();
 
@@ -566,6 +567,20 @@ const START_SET_MUTATION = /* GraphQL */ `
   mutation StartSet($setId: ID!) {
     markSetInProgress(setId: $setId) {
       id
+    }
+  }
+`;
+
+// Separate from starting, because start.gg keeps them separate: assigning a
+// station leaves the set's state alone (verified live — state stayed 1), so
+// "start it at station 5" is genuinely two calls.
+const ASSIGN_STATION_MUTATION = /* GraphQL */ `
+  mutation AssignStation($setId: ID!, $stationId: ID!) {
+    assignStation(setId: $setId, stationId: $stationId) {
+      id
+      station {
+        number
+      }
     }
   }
 `;
@@ -1523,13 +1538,62 @@ setsRouter.post('/:setId/start', async (req, res) => {
     });
     return;
   }
+  const stationNumber = req.body?.stationNumber;
+  const wantsStation = stationNumber != null;
+  if (wantsStation && !Number.isInteger(stationNumber)) {
+    res.status(400).json({ error: 'A station has to be a whole number.' });
+    return;
+  }
+
   try {
+    // Resolved before anything is written. A typo'd number caught afterwards
+    // would leave the set started at no station while the TO walked away
+    // believing otherwise, and start.gg only takes a station id, never a
+    // number, so this lookup is the only thing that can catch it.
+    let station: Station | undefined;
+    if (wantsStation) {
+      const eventId = req.body?.eventId;
+      if (typeof eventId !== 'string') {
+        res.status(400).json({ error: 'Cannot check that station without knowing the event.' });
+        return;
+      }
+      const stations = await getEventStations(req.user!.accessToken, eventId);
+      station = stations.find((s) => s.number === stationNumber);
+      if (!station) {
+        res.status(400).json({
+          error: stations.length
+            ? `This event has no station ${stationNumber}. It goes up to ${stations[stations.length - 1].number}.`
+            : 'This tournament has no stations set up on start.gg.',
+        });
+        return;
+      }
+    }
+
     await gql<{ markSetInProgress: { id: number } | null }>(req.user!.accessToken, START_SET_MUTATION, { setId });
+    // Starting is the half that matters — a set at the wrong station is still
+    // being played, while a set nobody marked started is invisible to everyone
+    // watching. So it goes first, and a station that fails to attach is
+    // reported without pretending the start did not happen.
+    let assigned: number | null = null;
+    if (station) {
+      try {
+        await gql(req.user!.accessToken, ASSIGN_STATION_MUTATION, { setId, stationId: station.id });
+        assigned = station.number;
+      } catch (err) {
+        invalidateSetCaches();
+        if (typeof req.body?.phaseGroupId === 'string') publishPoolChanged(req.body.phaseGroupId);
+        res.status(502).json({
+          error: `Started, but station ${station.number} would not attach (${err instanceof Error ? err.message : 'start.gg failed'}).`,
+          started: true,
+        });
+        return;
+      }
+    }
     invalidateSetCaches(); // force the next fetch to pick up the new state
     // The client sends the pool it is viewing, because a set id alone does not
     // say which bracket moved and looking it up would cost a request.
     if (typeof req.body?.phaseGroupId === 'string') publishPoolChanged(req.body.phaseGroupId);
-    res.json({ ok: true });
+    res.json({ ok: true, station: assigned });
   } catch (err) {
     res.status(502).json({ error: err instanceof Error ? err.message : 'Failed to start set' });
   }

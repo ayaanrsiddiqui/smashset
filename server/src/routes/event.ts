@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { gql, parseStartggInput, resolveShortUrl } from '../startgg.js';
+import { getEventStations } from '../stations.js';
 
 export const eventRouter = Router();
 
@@ -111,5 +112,22 @@ eventRouter.post('/resolve', async (req, res) => {
     });
   } catch (err) {
     res.status(502).json({ error: err instanceof Error ? err.message : 'Failed to resolve event' });
+  }
+});
+
+/**
+ * The stations this event's tournament has, so a TO can name one by number
+ * when starting a set.
+ *
+ * An empty list is a normal answer, not a failure — plenty of tournaments
+ * configure no stations at all, and the client uses it to leave starting a set
+ * as the single tap it has always been.
+ */
+eventRouter.get('/:eventId/stations', async (req, res) => {
+  try {
+    const stations = await getEventStations(req.user!.accessToken, req.params.eventId);
+    res.json({ stations });
+  } catch (err) {
+    res.status(502).json({ error: err instanceof Error ? err.message : 'Failed to load stations' });
   }
 });
