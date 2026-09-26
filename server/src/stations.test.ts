@@ -71,18 +71,33 @@ describe('getEventStations', () => {
     expect(stations).toHaveLength(100);
   });
 
-  it('gives up rather than spinning when pages never run out', async () => {
-    // A paging field that always answers is not hypothetical here: this one
-    // reports six pages that do not exist. Spinning would burn an 80/minute
-    // budget on one start.
+  it('fails loudly rather than truncating when pages never run out', async () => {
+    // A pager that always answers is not hypothetical here: this one reports
+    // six pages that do not exist. Stopping quietly would be worse than
+    // failing — the caller tells the TO the highest station it saw, so a
+    // truncated list turns into a confident ceiling that is not real.
     gqlMock.mockImplementation((_t: unknown, _q: string, vars: { page: number }) =>
       Promise.resolve(page(Array.from({ length: 50 }, (_, i) => station((vars.page - 1) * 50 + i + 1))))
     );
 
+    await expect(getEventStations('t', '1')).rejects.toThrow(/kept returning station pages/);
+    // Eight pages, then the ninth that proves it has not stopped.
+    expect(gqlMock).toHaveBeenCalledTimes(9);
+  });
+
+  it('accepts a list that ends exactly on the last allowed page', async () => {
+    // The boundary the throw must not eat: 400 stations that genuinely stop
+    // there are a valid answer, not a runaway pager.
+    const all = Array.from({ length: 400 }, (_, i) => station(i + 1));
+    gqlMock.mockImplementation((_t: unknown, _q: string, vars: { page: number }) =>
+      Promise.resolve(page(all.slice((vars.page - 1) * 50, vars.page * 50)))
+    );
+
     const stations = await getEventStations('t', '1');
 
-    expect(gqlMock).toHaveBeenCalledTimes(8);
     expect(stations).toHaveLength(400);
+    // The ninth request is the one that tells a real 400 from a runaway pager.
+    expect(gqlMock).toHaveBeenCalledTimes(9);
   });
 
   it('drops a station with no number, which a TO could not name anyway', async () => {
