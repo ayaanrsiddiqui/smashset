@@ -371,8 +371,13 @@
    side by side, three icons cut a 13-character tag from 110px of room to 52px,
    where overlapping leaves 68px. The order is already "most of the set first",
    so the one in front being the one fully visible says the same thing twice.
-   The ring is the box's own background, so each icon reads as separate rather
-   than as one smeared shape. */
+
+   No separating ring. There used to be one — a box-shadow in the box's own
+   colour — but a box-shadow follows the element's square box, not the
+   character, and start.gg's stock icons are transparent around the head. So it
+   drew a square band across the icon behind, slicing into a face the front
+   icon was not even covering. The art already outlines each head in a dark
+   stroke, which does the separating on its own. */
 .bracket-characters {
   display: flex;
   align-items: center;
@@ -384,9 +389,9 @@
   margin-left: -6px;
 }
 
+/* Positioned only so the z-index order below applies. */
 .bracket-characters .bracket-character {
   position: relative;
-  box-shadow: 0 0 0 1.5px #1c1f27;
 }
 
 /* Earlier icons sit on top of later ones, so the leading character is the one
