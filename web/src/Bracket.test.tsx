@@ -254,7 +254,8 @@ describe('what a set says about seeding', () => {
     );
 
     const icons = [...document.querySelectorAll('.bracket-row .bracket-character')].map((el) => el.getAttribute('src'));
-    expect(icons).toEqual(['100.png', '200.png', '300.png']);
+    // Which three, not where — the arrangement has its own test below.
+    expect([...icons].sort()).toEqual(['100.png', '200.png', '300.png']);
   });
 
   it('does not spend one of the three on a character it has no icon for', () => {
@@ -273,7 +274,56 @@ describe('what a set says about seeding', () => {
     );
 
     const icons = [...document.querySelectorAll('.bracket-row .bracket-character')].map((el) => el.getAttribute('src'));
-    expect(icons).toEqual(['100.png', '300.png', '400.png']);
+    expect([...icons].sort()).toEqual(['100.png', '300.png', '400.png']);
+  });
+
+  /** Each icon in the first row, left to right, with the rank it was drawn as. */
+  function placedIcons() {
+    return [...document.querySelectorAll('.bracket-row .bracket-character')].map((el) => ({
+      src: el.getAttribute('src'),
+      rank: [...el.classList].find((c) => c.startsWith('rank-')),
+    }));
+  }
+
+  function renderPicks(characterIds: number[]) {
+    const group = played(7, 2);
+    group.sets[0].slots[0] = { ...group.sets[0].slots[0], characterIds };
+    render(
+      <div className="bracket-stage">
+        <Bracket
+          group={group}
+          onSelectSet={vi.fn()}
+          characters={characterIds.map((id) => ({ id, name: `C${id}`, imageUrl: `${id}.png` }))}
+        />
+      </div>
+    );
+  }
+
+  it('puts the main character in the middle of three, flanked by the other two', () => {
+    // Ranked most-of-the-set first, so 100 is the character the set was about.
+    renderPicks([100, 200, 300]);
+
+    expect(placedIcons()).toEqual([
+      { src: '200.png', rank: 'rank-1' },
+      { src: '100.png', rank: 'rank-0' },
+      { src: '300.png', rank: 'rank-2' },
+    ]);
+  });
+
+  it('leads with the main character when there are only two', () => {
+    // Nothing to flank with one other character, so the main stays first.
+    renderPicks([100, 200]);
+
+    expect(placedIcons()).toEqual([
+      { src: '100.png', rank: 'rank-0' },
+      { src: '200.png', rank: 'rank-1' },
+    ]);
+  });
+
+  it('marks a single character as the main one', () => {
+    renderPicks([100]);
+
+    expect(placedIcons()).toEqual([{ src: '100.png', rank: 'rank-0' }]);
   });
 
   it('renders no icon group at all when the set carries no picks', () => {

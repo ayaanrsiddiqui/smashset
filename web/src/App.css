@@ -367,10 +367,11 @@
    row's height and the name's truncation never depend on whether start.gg had
    a pick for that set — most of the time it does not. */
 /* The icons for one player overlap, rather than each taking the row's own 6px
-   gap. The box is 188px wide and the tag has to stay readable in it: laid out
-   side by side, three icons cut a 13-character tag from 110px of room to 52px,
-   where overlapping leaves 68px. The order is already "most of the set first",
-   so the one in front being the one fully visible says the same thing twice.
+   gap. The box is 188px wide and the tag has to stay readable in it. Measured
+   2026-09-26 with a 13-character tag: 102px of room with no icons, 48px with
+   three side by side, 66px with three overlapped at -9px (73px with two).
+   Tighter than -9px and the two characters behind the main one shrink to
+   slivers too thin to tell apart at 16px.
 
    No separating ring. There used to be one — a box-shadow in the box's own
    colour — but a box-shadow follows the element's square box, not the
@@ -386,7 +387,7 @@
 }
 
 .bracket-characters .bracket-character + .bracket-character {
-  margin-left: -6px;
+  margin-left: -9px;
 }
 
 /* Positioned only so the z-index order below applies. */
@@ -394,17 +395,18 @@
   position: relative;
 }
 
-/* Earlier icons sit on top of later ones, so the leading character is the one
-   never cut into. */
-.bracket-characters .bracket-character:nth-child(1) {
+/* Stacked by rank, not position: with three the main character sits in the
+   middle (see Bracket), so "first in the row" no longer means "on top". The
+   main one is never cut into; the others tuck behind it. */
+.bracket-characters .bracket-character.rank-0 {
   z-index: 3;
 }
 
-.bracket-characters .bracket-character:nth-child(2) {
+.bracket-characters .bracket-character.rank-1 {
   z-index: 2;
 }
 
-.bracket-characters .bracket-character:nth-child(3) {
+.bracket-characters .bracket-character.rank-2 {
   z-index: 1;
 }
 

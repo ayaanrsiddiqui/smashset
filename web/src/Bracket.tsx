@@ -343,10 +343,17 @@ function BracketTree({
                       {(() => {
                         const icons = slot.characterIds.filter((id) => iconUrlById.has(id)).slice(0, MAX_SET_CHARACTERS);
                         if (icons.length === 0) return null;
+                        // Rank 0 is the character the set was most about. With
+                        // three it goes in the middle, stacked over the two
+                        // either side of it; with two it leads. The rank rides
+                        // on a class rather than on DOM position, because
+                        // position no longer says which one belongs on top.
+                        const ranked = icons.map((id, rank) => ({ id, rank }));
+                        const placed = ranked.length === 3 ? [ranked[1], ranked[0], ranked[2]] : ranked;
                         return (
                           <span className="bracket-characters">
-                            {icons.map((id) => (
-                              <img key={id} className="bracket-character" src={iconUrlById.get(id)} alt="" />
+                            {placed.map(({ id, rank }) => (
+                              <img key={id} className={`bracket-character rank-${rank}`} src={iconUrlById.get(id)} alt="" />
                             ))}
                           </span>
                         );
