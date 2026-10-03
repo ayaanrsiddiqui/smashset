@@ -1,5 +1,5 @@
 import type { CharacterCounts } from './mains';
-import type { AccountDetails, BracketGroup, Character, CurrentUser, EntrantMatch, EventInfo, OpenSet, PhaseGroupSummary, PoolPlayer, PoolPreview, SetDetail, Stage } from './types';
+import type { AdminDashboardData, AccountDetails, BracketGroup, Character, CurrentUser, EntrantMatch, EventInfo, OpenSet, PhaseGroupSummary, PoolPlayer, PoolPreview, SetDetail, Stage } from './types';
 
 export class ApiError extends Error {
   // Assigned explicitly rather than as a constructor parameter property: the
@@ -63,6 +63,11 @@ async function req<T>(url: string, opts?: RequestInit): Promise<T> {
     throw new ApiError('Got an unexpected response from the network. Check your connection.', 0);
   }
   return body as T;
+}
+
+/** Every set smashset has reported. Admin only — anyone else gets a 403. */
+export function fetchAdminReports(): Promise<AdminDashboardData> {
+  return req('/api/admin/reports');
 }
 
 export function fetchMe(): Promise<{ user: CurrentUser | null }> {

@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { gql, StartggError } from '../startgg.js';
 import { publishPoolChanged } from '../poolEvents.js';
-import { parseScoreShorthand } from '../scoreParser.js';
+import { parseScoreShorthand, type ParsedGame } from '../scoreParser.js';
 import { parseDisplayScore } from '../displayScore.js';
 import { COST_MODEL, fetchSetsPaged, invalidateSetCaches } from './sets.js';
 import { resetCascade, type CascadeSet } from '../resetCascade.js';
@@ -374,7 +374,7 @@ reportRouter.post('/', async (req, res) => {
     return;
   }
 
-  let games;
+  let games: ParsedGame[];
   try {
     games = parseScoreShorthand(body.shorthand, body.requiredWins);
   } catch (err) {
@@ -462,6 +462,8 @@ reportRouter.post('/', async (req, res) => {
    * phaseGroupId, which this route treats as an untrusted notification hint.
    */
   const confirmed = current;
+  const nameOf = (entrantId: number | undefined) =>
+    confirmed.slots.find((slot) => String(slot.entrant?.id) === String(entrantId))?.entrant?.name ?? null;
   async function recordConfirmed(setId: string, outcome: { alreadyOnFile: boolean }) {
     const phaseGroupId = confirmed.phaseGroup ? String(confirmed.phaseGroup.id) : null;
     if (phaseGroupId === null) {
@@ -484,6 +486,11 @@ reportRouter.post('/', async (req, res) => {
         userId: req.user!.id,
         winnerEntrantId: String(body.winnerEntrantId),
         loserEntrantId: String(body.loserEntrantId),
+        // From start.gg's own read of the set, not from the client.
+        winnerName: nameOf(body.winnerEntrantId),
+        loserName: nameOf(body.loserEntrantId),
+        winnerScore: games.filter((g) => g.winnerWonGame).length,
+        loserScore: games.filter((g) => !g.winnerWonGame).length,
         games: games.length,
         winnerCharacterGames: gamesWithCharacter(body.characters, 'winner', games.length),
         loserCharacterGames: gamesWithCharacter(body.characters, 'loser', games.length),

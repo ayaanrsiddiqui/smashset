@@ -41,6 +41,8 @@ export interface Stage {
 export interface CurrentUser {
   id: number;
   displayName: string;
+  /** Only decides whether the admin link is offered; the server checks again itself. */
+  isAdmin?: boolean;
 }
 
 export interface AccountDetails {
@@ -164,4 +166,53 @@ export interface SetDetailGame {
 // part of the polled bracket data) — see ReportPanel's `priorDetail` prop.
 export interface SetDetail {
   games: SetDetailGame[];
+}
+
+/** Mirrors the server's adminDashboard; see there for how each figure is defined. */
+export interface AdminSummary {
+  reportedSets: number;
+  medianOpenToReportMs: number | null;
+  timedSets: number;
+  medianDeliveryMs: number | null;
+  deliveredSets: number;
+  bothCharacters: number;
+  anyCharacters: number;
+  charactersKnown: number;
+  correctedSets: number;
+  foundOnFile: number;
+}
+
+export interface AdminSet {
+  setId: string;
+  firstReportedAt: string;
+  reporter: string | null;
+  winnerName: string | null;
+  loserName: string | null;
+  winnerScore: number | null;
+  loserScore: number | null;
+  games: number | null;
+  winnerCharacterGames: number | null;
+  loserCharacterGames: number | null;
+  openToReportMs: number | null;
+  deliveryMs: number | null;
+  reports: number;
+  foundOnFile: number;
+  fromLog: boolean;
+}
+
+export interface AdminBracket {
+  phaseGroupId: string;
+  tournamentName: string | null;
+  tournamentSlug: string | null;
+  eventName: string | null;
+  phaseName: string | null;
+  displayIdentifier: string | null;
+  totalSets: number | null;
+  summary: AdminSummary;
+  sets: AdminSet[];
+}
+
+export interface AdminDashboardData {
+  overall: AdminSummary;
+  brackets: AdminBracket[];
 }

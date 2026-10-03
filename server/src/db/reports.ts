@@ -1,4 +1,5 @@
 import { pool } from './pool.js';
+import type { BracketRow, ReportRow } from '../adminDashboard.js';
 
 export interface SetReportRecord {
   setId: string;
@@ -6,6 +7,10 @@ export interface SetReportRecord {
   userId: number | null;
   winnerEntrantId: string | null;
   loserEntrantId: string | null;
+  winnerName: string | null;
+  loserName: string | null;
+  winnerScore: number | null;
+  loserScore: number | null;
   games: number | null;
   winnerCharacterGames: number | null;
   loserCharacterGames: number | null;
@@ -22,8 +27,8 @@ export async function recordSetReport(r: SetReportRecord): Promise<void> {
   await pool.query(
     `INSERT INTO set_reports (set_id, phase_group_id, user_id, winner_entrant_id, loser_entrant_id, games,
        winner_character_games, loser_character_games, attempt, already_on_file, open_to_report_ms, delivery_ms,
-       source, reported_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, COALESCE($14, now()))`,
+       source, reported_at, winner_name, loser_name, winner_score, loser_score)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, COALESCE($14, now()), $15, $16, $17, $18)`,
     [
       r.setId,
       r.phaseGroupId,
@@ -39,6 +44,10 @@ export async function recordSetReport(r: SetReportRecord): Promise<void> {
       r.deliveryMs,
       r.source,
       r.reportedAt ?? null,
+      r.winnerName,
+      r.loserName,
+      r.winnerScore,
+      r.loserScore,
     ]
   );
 }
@@ -97,4 +106,25 @@ export async function saveReportBracket(b: ReportBracket): Promise<void> {
       b.totalSets,
     ]
   );
+}
+
+/**
+ * Everything the admin dashboard is built from. Read whole and aggregated in
+ * code (see adminDashboard) so the rules live somewhere they can be tested.
+ * The reporter's name is joined in, and is null once their account is gone.
+ */
+export async function readDashboardRows(): Promise<{ rows: ReportRow[]; brackets: BracketRow[] }> {
+  const [reports, brackets] = await Promise.all([
+    pool.query<ReportRow>(
+      `SELECT r.id, r.set_id, r.phase_group_id, u.display_name AS reporter, r.winner_name, r.loser_name,
+              r.winner_score, r.loser_score, r.games, r.winner_character_games, r.loser_character_games,
+              r.already_on_file, r.open_to_report_ms, r.delivery_ms, r.source, r.reported_at
+       FROM set_reports r LEFT JOIN users u ON u.id = r.user_id`
+    ),
+    pool.query<BracketRow>(
+      `SELECT phase_group_id, display_identifier, phase_name, event_name, tournament_name, tournament_slug, total_sets
+       FROM report_brackets`
+    ),
+  ]);
+  return { rows: reports.rows, brackets: brackets.rows };
 }

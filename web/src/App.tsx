@@ -6,6 +6,7 @@ import { PoolPicker } from './PoolPicker';
 import { ReportPanel } from './ReportPanel';
 import { HelpModal } from './HelpModal';
 import { AccountModal } from './AccountModal';
+import { AdminDashboard } from './AdminDashboard';
 import { Bracket } from './Bracket';
 import { SetPanel } from './SetPanel';
 import { MainsPanel } from './MainsPanel';
@@ -150,6 +151,7 @@ export default function App() {
   const [startedIds, setStartedIds] = useState<Set<number | string>>(new Set());
   const [showHelp, setShowHelp] = useState(false);
   const [showAccount, setShowAccount] = useState(false);
+  const [showAdmin, setShowAdmin] = useState(false);
   const [showMains, setShowMains] = useState(false);
   // Reports submitted but not yet confirmed by start.gg, read straight from
   // the queue rather than mirrored into state — see the note on subscribe in
@@ -555,7 +557,7 @@ export default function App() {
       // search screen underneath it. The bracket view has no search box or
       // numbered results to target, so these shortcuts are meaningless (and
       // would silently steal focus/keys) while it's showing.
-      if (selectedSet || showHelp || showAccount || showMains) return;
+      if (selectedSet || showHelp || showAccount || showMains || showAdmin) return;
 
       const active = document.activeElement;
       const inField = active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement;
@@ -1223,8 +1225,17 @@ export default function App() {
           onClose={() => setShowAccount(false)}
           onTopXChange={handleTopXChange}
           onSignOut={handleSignOut}
+          onOpenAdmin={
+            user?.isAdmin
+              ? () => {
+                  setShowAccount(false);
+                  setShowAdmin(true);
+                }
+              : undefined
+          }
         />
       )}
+      {showAdmin && <AdminDashboard onClose={() => setShowAdmin(false)} />}
     </div>
   );
 }

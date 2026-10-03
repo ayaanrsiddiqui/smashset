@@ -641,6 +641,18 @@ describe('POST /api/report records what it reported', () => {
     });
   });
 
+  it('records who played and the score, so the admin list reads as sets', async () => {
+    // Names from start.gg's own read of the set, not from the client; the
+    // score from the games the route parsed, so it cannot disagree with them.
+    startgg();
+    const cookie = await makeSignedInCookie('rec-names');
+
+    await request(server).post('/api/report').set('Cookie', cookie).send(VALID);
+
+    const [row] = await recorded('rec-names');
+    expect(row).toMatchObject({ winner_name: 'Ada', loser_name: 'mudd', winner_score: 2, loser_score: 0 });
+  });
+
   it('takes the bracket from start.gg, never from the request', async () => {
     // phaseGroupId in the body is a notification hint the route does not trust.
     // Recording it would let any client file a set under any bracket's count.

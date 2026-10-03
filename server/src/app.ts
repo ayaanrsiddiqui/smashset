@@ -13,6 +13,8 @@ import { stagesRouter } from './routes/stages.js';
 import { reportRouter } from './routes/report.js';
 import { mainsRouter } from './routes/mains.js';
 import { clientEventsRouter } from './routes/clientEvents.js';
+import { adminRouter } from './routes/admin.js';
+import { requireAdmin } from './middleware/admin.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -43,6 +45,9 @@ export function createApp() {
   app.use('/api/stages', requireAuth, stagesRouter);
   app.use('/api/report', requireAuth, reportRouter);
   app.use('/api/mains', requireAuth, mainsRouter);
+  // Signed in is not enough: this shows every TO's reporting. requireAdmin
+  // fails closed, so an unset admin list means nobody gets in.
+  app.use('/api/admin', requireAuth, requireAdmin, adminRouter);
 
   if (process.env.NODE_ENV === 'production') {
     // Railway does not set NODE_ENV=production automatically — it's set

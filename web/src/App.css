@@ -2783,3 +2783,175 @@ kbd {
     padding: 4px 8px;
   }
 }
+
+/* Admin dashboard. Wider than the other modals because it is a table, and the
+   gap between sections is tighter: it is read top to bottom as one report, not
+   as separate settings. */
+.admin-modal {
+  max-width: 1080px;
+}
+
+.admin-modal .help-modal-body {
+  gap: 20px;
+  padding: 32px 24px;
+}
+
+.account-admin-link {
+  align-self: flex-start;
+  background: none;
+  border: 1px solid #384059;
+  border-radius: 8px;
+  color: #c7cbff;
+  padding: 8px 14px;
+  font-size: 14px;
+}
+
+.admin-error {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.admin-empty {
+  color: #9aa0ac;
+  margin: 0;
+}
+
+.admin-overall {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.admin-coverage {
+  margin: 0;
+  color: #f1f2f6;
+  font-weight: 600;
+}
+
+.admin-figures {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 10px;
+  margin: 0;
+}
+
+.admin-figures > div {
+  background: #1c1f27;
+  border: 1px solid #2a2e38;
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+
+.admin-figures dt {
+  font-size: 12px;
+  color: #9aa0ac;
+}
+
+.admin-figures dd {
+  margin: 4px 0 0;
+  font-size: 18px;
+  font-weight: 700;
+  color: #f1f2f6;
+}
+
+/* The count beside a median: small, because it qualifies the number rather
+   than competing with it. */
+.admin-n {
+  font-size: 12px;
+  font-weight: 400;
+  color: #9aa0ac;
+}
+
+.admin-bracket {
+  border-top: 1px solid #2a2e38;
+  padding-top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* A flex summary loses the browser's own disclosure triangle, which left a
+   folded bracket looking like a plain heading with nothing to say it opens.
+   The chevron is drawn on the title rather than the summary so it does not
+   become a third item in the space-between row. */
+.admin-bracket > summary {
+  cursor: pointer;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 4px 16px;
+  list-style: none;
+}
+
+.admin-bracket > summary::-webkit-details-marker {
+  display: none;
+}
+
+.admin-bracket-title::before {
+  content: '▸';
+  display: inline-block;
+  width: 1em;
+  color: #9aa0ac;
+}
+
+.admin-bracket[open] .admin-bracket-title::before {
+  content: '▾';
+}
+
+.admin-bracket[open] > summary {
+  margin-bottom: 12px;
+}
+
+.admin-bracket-title {
+  color: #f1f2f6;
+}
+
+.admin-startgg-link {
+  font-size: 13px;
+  color: #9aa0ac;
+  margin-bottom: 10px;
+  display: inline-block;
+}
+
+.admin-table-wrap {
+  overflow-x: auto;
+  margin-top: 12px;
+}
+
+.admin-sets {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.admin-sets th {
+  text-align: left;
+  font-weight: 600;
+  color: #9aa0ac;
+  padding: 6px 10px;
+  border-bottom: 1px solid #2a2e38;
+  white-space: nowrap;
+}
+
+.admin-sets td {
+  padding: 7px 10px;
+  border-bottom: 1px solid #1f232c;
+  color: #cfd3dc;
+  white-space: nowrap;
+}
+
+.admin-set-label {
+  color: #f1f2f6;
+  font-weight: 600;
+}
+
+.admin-tag {
+  display: inline-block;
+  margin-right: 6px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid #384059;
+  font-size: 11px;
+  color: #c7cbff;
+}

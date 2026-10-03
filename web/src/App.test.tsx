@@ -36,6 +36,10 @@ vi.mock('./api', async (importOriginal) => ({
   updateTopXBo5: vi.fn().mockResolvedValue({ topXBo5: null }),
   startSet: vi.fn().mockResolvedValue({ ok: true, station: null }),
   fetchStations: vi.fn().mockResolvedValue({ stations: [] }),
+  fetchAdminReports: vi.fn().mockResolvedValue({
+    overall: { reportedSets: 0, medianOpenToReportMs: null, timedSets: 0, medianDeliveryMs: null, deliveredSets: 0, bothCharacters: 0, anyCharacters: 0, charactersKnown: 0, correctedSets: 0, foundOnFile: 0 },
+    brackets: [],
+  }),
   reportSet: vi.fn().mockResolvedValue({ result: {} }),
   updatePlayerMain: vi.fn().mockResolvedValue({ characterId: null }),
   fetchPoolPlayers: vi.fn().mockResolvedValue({ players: [], videogameId: 1386 }),
@@ -226,6 +230,27 @@ describe('App — account modal', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'Close' }));
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  it('offers an admin the reported-sets dashboard, and opens it', async () => {
+    fetchMeMock.mockResolvedValue({ user: { id: 1, displayName: 'FireSlam23', isAdmin: true } });
+    render(<App />);
+    await userEvent.click(await screen.findByRole('button', { name: /account/i }));
+
+    await userEvent.click(await screen.findByRole('button', { name: /sets reported with smashset/i }));
+
+    expect(await screen.findByRole('dialog', { name: 'Reported with smashset' })).toBeInTheDocument();
+    // The account modal gives way to it rather than stacking underneath.
+    expect(screen.queryByRole('dialog', { name: 'Account' })).not.toBeInTheDocument();
+  });
+
+  it('does not offer it to a TO who is not an admin', async () => {
+    // The server refuses them anyway; this only keeps a dead link off the page.
+    render(<App />);
+    await userEvent.click(await screen.findByRole('button', { name: /account/i }));
+    await screen.findByRole('dialog', { name: 'Account' });
+
+    expect(screen.queryByRole('button', { name: /sets reported with smashset/i })).not.toBeInTheDocument();
   });
 
   it('saves a changed Top X preference through the API', async () => {

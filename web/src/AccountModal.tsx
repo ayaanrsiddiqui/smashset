@@ -7,9 +7,11 @@ interface Props {
   onClose: () => void;
   onTopXChange: (value: number | null) => void;
   onSignOut: () => void;
+  /** Present only for an admin; the server refuses the page to anyone else regardless. */
+  onOpenAdmin?: () => void;
 }
 
-export function AccountModal({ account, accountError, onClose, onTopXChange, onSignOut }: Props) {
+export function AccountModal({ account, accountError, onClose, onTopXChange, onSignOut, onOpenAdmin }: Props) {
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
       if (e.key === 'Escape') onClose();
@@ -83,6 +85,15 @@ export function AccountModal({ account, accountError, onClose, onTopXChange, onS
                   to always guess from the round name instead.
                 </p>
               </section>
+
+              {onOpenAdmin && (
+                <section className="account-section">
+                  <h3>Admin</h3>
+                  <button type="button" className="account-admin-link" onClick={onOpenAdmin}>
+                    sets reported with smashset
+                  </button>
+                </section>
+              )}
             </>
           )}
         </div>
