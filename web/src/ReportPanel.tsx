@@ -173,6 +173,9 @@ export function ReportPanel({
   // very next line of JS — even from an event fired a microtask later —
   // sees the flip. `submitting` itself stays purely for rendering.
   const submittingRef = useRef(false);
+  // The start of "time to report": when the TO opened this set. Monotonic, so
+  // a device clock adjusting mid-report cannot make the number negative.
+  const openedAtRef = useRef(performance.now());
   const panelRef = useRef<HTMLDivElement>(null);
   const quickRef = useRef<HTMLInputElement>(null);
   const confirmSubmitRef = useRef<HTMLDivElement>(null);
@@ -576,7 +579,8 @@ export function ReportPanel({
       // Only ever true on a second submit, made from the confirmation the
       // refusal opens — so the destructive path cannot be reached without
       // the TO having seen what it costs.
-    confirmReset,
+      confirmReset,
+      openToReportMs: Math.round(performance.now() - openedAtRef.current),
     };
   }
 
@@ -593,7 +597,8 @@ export function ReportPanel({
       submittingRef.current = true;
       setSubmitting(true);
       try {
-        await reportSet({ ...payload, attempt: 1 });
+        // Sent the moment report was pressed, so it waited in no outbox.
+        await reportSet({ ...payload, attempt: 1, pendingMs: 0 });
         // The server disagreed that the winner was changing — this set was
         // not decided after all, and the report simply landed.
         onDone();

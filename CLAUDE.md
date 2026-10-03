@@ -111,7 +111,9 @@ These cost real time to discover; don't re-derive them.
   but their `pageInfo.total` and `totalPages` are **nonsense** — 42 for a 16-station tournament, 76
   for a 15-station one, 15 for an 8-station one. Read `nodes`, count that, and page until a page
   comes back empty. Trusting `total` once cost an afternoon and a wrong conclusion that most
-  stations were unreachable.
+  stations were unreachable. The lie is specific to **stations**: `sets { pageInfo { total } }`
+  matched a full walk on every bracket checked, costs one object, and is what the admin "reported X of
+  Y" figure trusts — pinned by a contract test so it is caught if that ever stops being true.
 - `upsertStation` does **not** resolve an existing number — upserting number 3 on a tournament that
   already had one created a *second* station 3. It is a create, so it cannot be used as a
   number-to-id lookup. (`deleteStation` returns a bare Boolean, no selection set.)

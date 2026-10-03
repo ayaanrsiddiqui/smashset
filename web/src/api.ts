@@ -244,6 +244,14 @@ export interface ReportPayload {
    * already walked away from rather than one they are standing over.
    */
   attempt?: number;
+  /** Panel opened to report pressed, in ms. The server sanitises it. */
+  openToReportMs?: number;
+  /**
+   * How long this report waited in the outbox before this delivery. The server
+   * adds its own handling to make report-pressed-to-confirmed, so the two
+   * clocks are never subtracted from each other.
+   */
+  pendingMs?: number;
 }
 
 export function reportSet(payload: ReportPayload): Promise<{ result: unknown }> {

@@ -8,7 +8,7 @@ function payload(setId: number | string = 1): ReportPayload {
 }
 
 const delivered: string[] = [];
-function deps(send: (p: ReportPayload, attempt: number) => Promise<DeliverResult>, now = 1000) {
+function deps(send: (p: ReportPayload, attempt: number, queuedAt: number) => Promise<DeliverResult>, now = 1000) {
   return { now, random: () => 0, send, onDelivered: (e: { label: string }) => void delivered.push(e.label) };
 }
 
@@ -94,6 +94,17 @@ describe('delivering what is queued', () => {
 
     expect(allEntries()).toEqual([]);
     expect(delivered).toEqual(['Ada vs mudd']);
+  });
+
+  it('tells send when the report was pressed, so delivery time can be measured', async () => {
+    // From the entry, not from whenever the drain happens to run: a report that
+    // waited out a venue outage must count the whole wait, reloads included.
+    enqueue(payload(), 'Ada vs mudd', 1_000);
+    const send = vi.fn().mockResolvedValue({ ok: true });
+
+    await drainOnce(deps(send, 61_000));
+
+    expect(send).toHaveBeenCalledWith(expect.anything(), 1, 1_000);
   });
 
   it('counts the attempt, so the server can hold a retry to a stricter rule', async () => {

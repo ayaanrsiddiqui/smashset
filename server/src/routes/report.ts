@@ -5,6 +5,9 @@ import { parseScoreShorthand } from '../scoreParser.js';
 import { parseDisplayScore } from '../displayScore.js';
 import { COST_MODEL, fetchSetsPaged, invalidateSetCaches } from './sets.js';
 import { resetCascade, type CascadeSet } from '../resetCascade.js';
+import { recordSetReport } from '../db/reports.js';
+import { ensureBracketRecorded } from '../reportBrackets.js';
+import { MAX_DELIVERY_MS, MAX_OPEN_TO_REPORT_MS, acceptDuration, gamesWithCharacter } from '../reportStats.js';
 
 export const reportRouter = Router();
 
@@ -47,6 +50,18 @@ interface ReportBody {
    * stricter rule than a TO standing at the set deciding to overwrite it.
    */
   attempt?: number;
+  /**
+   * Panel opened to report pressed, measured in the browser — the only place
+   * it can be. Untrusted: sanitised before it is stored, see reportStats.
+   */
+  openToReportMs?: number;
+  /**
+   * How long this report sat in the outbox before this delivery was sent. The
+   * server adds its own handling time to make "report pressed to start.gg
+   * confirming"; each half is a duration on its own clock, so client and
+   * server clocks are never compared with each other.
+   */
+  pendingMs?: number;
 }
 
 interface GameDataInput {
@@ -198,9 +213,38 @@ const REPORT_MUTATION = /* GraphQL */ `
     reportBracketSet(setId: $setId, winnerId: $winnerId, gameData: $gameData) {
       id
       state
+      slots {
+        entrant {
+          id
+        }
+      }
     }
   }
 `;
+
+/**
+ * The real id a preview set became, found in the mutation's own answer.
+ *
+ * Reporting a preview spends its id and materialises the bracket, so the set
+ * that was reported now has an id the client never sent. It is matched by its
+ * two players because that is the only identity that survives — and read from
+ * this response rather than looked up, since a freshly materialised bracket
+ * hides its sets for about forty seconds. Null when it cannot be found, and the
+ * caller records the preview id instead of guessing.
+ */
+function materialisedSetId(data: unknown, winnerEntrantId: number, loserEntrantId: number): string | null {
+  const answer = (data as { reportBracketSet?: unknown } | null)?.reportBracketSet;
+  const sets = (Array.isArray(answer) ? answer : answer ? [answer] : []) as {
+    id: number | string;
+    slots?: { entrant: { id: number | string } | null }[] | null;
+  }[];
+  const wanted = [String(winnerEntrantId), String(loserEntrantId)];
+  const match = sets.find((set) => {
+    const ids = (set.slots ?? []).map((slot) => slot.entrant?.id).filter((id) => id != null).map(String);
+    return ids.length === 2 && wanted.every((id) => ids.includes(id));
+  });
+  return match ? String(match.id) : null;
+}
 
 function buildGameData(
   body: ReportBody,
@@ -316,6 +360,7 @@ async function resolveVanishedPreview(
 }
 
 reportRouter.post('/', async (req, res) => {
+  const receivedAt = Date.now();
   const body = req.body as Partial<ReportBody>;
 
   if (
@@ -405,6 +450,56 @@ reportRouter.post('/', async (req, res) => {
     return;
   }
 
+  /**
+   * Writes the record of a report start.gg has confirmed.
+   *
+   * Awaited, so the row exists by the time the TO hears back, but never allowed
+   * to fail the report: the set is already on start.gg, and a TO told it failed
+   * would report it again. A failure is logged for the admin, the only person
+   * who could act on it.
+   *
+   * The phase group is the one start.gg answered with, never the request's
+   * phaseGroupId, which this route treats as an untrusted notification hint.
+   */
+  const confirmed = current;
+  async function recordConfirmed(setId: string, outcome: { alreadyOnFile: boolean }) {
+    const phaseGroupId = confirmed.phaseGroup ? String(confirmed.phaseGroup.id) : null;
+    if (phaseGroupId === null) {
+      // Every set belongs to a phase group, so this is start.gg answering
+      // strangely. Without one the row cannot be placed in any bracket, and
+      // inventing one would put it in the wrong bracket's count.
+      console.error(`[reports] set ${setId} reported but start.gg gave no phase group; not recorded`);
+      return;
+    }
+    // A retry that found its result already on start.gg did not report
+    // anything, it learned that an earlier attempt had. Its timings would
+    // describe that earlier attempt, so they are left out rather than letting
+    // one set count twice in the median.
+    const pending = outcome.alreadyOnFile ? null : acceptDuration(body.pendingMs, MAX_DELIVERY_MS);
+    const deliveryMs = pending === null ? null : acceptDuration(pending + (Date.now() - receivedAt), MAX_DELIVERY_MS);
+    try {
+      await recordSetReport({
+        setId,
+        phaseGroupId,
+        userId: req.user!.id,
+        winnerEntrantId: String(body.winnerEntrantId),
+        loserEntrantId: String(body.loserEntrantId),
+        games: games.length,
+        winnerCharacterGames: gamesWithCharacter(body.characters, 'winner', games.length),
+        loserCharacterGames: gamesWithCharacter(body.characters, 'loser', games.length),
+        attempt: body.attempt ?? 1,
+        alreadyOnFile: outcome.alreadyOnFile,
+        openToReportMs: outcome.alreadyOnFile ? null : acceptDuration(body.openToReportMs, MAX_OPEN_TO_REPORT_MS),
+        deliveryMs,
+        source: 'server',
+      });
+    } catch (err) {
+      console.error(`[reports] set ${setId} reported but the record could not be written:`, err);
+      return;
+    }
+    ensureBracketRecorded(req.user!.accessToken, phaseGroupId);
+  }
+
   const alreadyDecided = current.state === COMPLETED_STATE;
 
   // A retry is the outbox re-sending something the TO has already moved on
@@ -414,6 +509,7 @@ reportRouter.post('/', async (req, res) => {
   // only safe thing is to stop and say so.
   if ((body.attempt ?? 1) > 1 && alreadyDecided) {
     if (alreadyOnFile(current, body.winnerEntrantId, body.requiredWins, games.length)) {
+      await recordConfirmed(String(effectiveSetId), { alreadyOnFile: true });
       res.json({ alreadyOnFile: true, games });
       return;
     }
@@ -473,6 +569,12 @@ reportRouter.post('/', async (req, res) => {
         gameData,
       });
     }
+    // A preview id was spent by this report; record the set it became.
+    const recordedId =
+      previewPhaseGroupId(effectiveSetId) !== null
+        ? (materialisedSetId(data, body.winnerEntrantId, body.loserEntrantId) ?? String(effectiveSetId))
+        : String(effectiveSetId);
+    await recordConfirmed(recordedId, { alreadyOnFile: false });
     // Without this the set the TO just reported keeps coming back as open
     // until the cache expires, so it stays in the list they are working from.
     invalidateSetCaches();

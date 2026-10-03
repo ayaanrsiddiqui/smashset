@@ -150,6 +150,20 @@ describe('ReportPanel — handing a report to the outbox', () => {
     expect(vi.mocked(reportSet)).not.toHaveBeenCalled();
   });
 
+  it('sends how long the set was open before report was pressed', () => {
+    // The number behind "15-20 seconds down to 5-10": measured from when the
+    // panel opened, on the monotonic clock, so a device clock change mid-report
+    // cannot turn it negative.
+    let now = 1_000;
+    const clock = vi.spyOn(performance, 'now').mockImplementation(() => now);
+    renderPanel('Winners Round 1');
+    now = 7_400;
+    submit();
+
+    expect(onQueue.mock.calls[0][0].openToReportMs).toBe(6_400);
+    clock.mockRestore();
+  });
+
   it('labels the report with both names, so it is recognisable minutes later', () => {
     renderPanel('Winners Round 1');
     submit();

@@ -222,7 +222,11 @@ export interface DeliverResult {
 export interface DrainDeps {
   now: number;
   random: () => number;
-  send: (payload: ReportPayload, attempt: number) => Promise<DeliverResult>;
+  /**
+   * `queuedAt` is when the TO pressed report — the outbox already holds it, and
+   * it survives a reload, which a timer started in the panel would not.
+   */
+  send: (payload: ReportPayload, attempt: number, queuedAt: number) => Promise<DeliverResult>;
   /** Confirmed by start.gg, not merely sent — the only honest success signal. */
   onDelivered: (entry: OutboxEntry) => void;
 }
@@ -240,7 +244,7 @@ export async function drainOnce(deps: DrainDeps): Promise<boolean> {
   draining = true;
   const attempt = due.attempt + 1;
   try {
-    const result = await deps.send(due.payload, attempt);
+    const result = await deps.send(due.payload, attempt, due.queuedAt);
     if (result.ok) {
       remove(due.setId);
       deps.onDelivered(due);

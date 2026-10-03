@@ -1353,6 +1353,21 @@ describe('App — reporting a set and walking away', () => {
     expect(document.querySelector('.score-line')?.textContent?.replace(/\s+/g, ' ').trim()).toBe('2–0');
   });
 
+  it('tells the server how long the set was open and how long it waited to send', async () => {
+    // Both numbers only exist in the browser. Without them the server can
+    // record that a set was reported, but not whether reporting got faster.
+    vi.mocked(reportSet).mockResolvedValue({ result: {} });
+    render(<App />);
+    await reportIt();
+
+    await waitFor(() => expect(reportSet).toHaveBeenCalled());
+    const sent = vi.mocked(reportSet).mock.calls[0][0];
+    expect(Number.isFinite(sent.openToReportMs)).toBe(true);
+    expect(sent.openToReportMs).toBeGreaterThanOrEqual(0);
+    expect(Number.isFinite(sent.pendingMs)).toBe(true);
+    expect(sent.pendingMs).toBeGreaterThanOrEqual(0);
+  });
+
   it('gives the TO the screen back at once, without claiming anything was reported', async () => {
     vi.mocked(reportSet).mockReturnValue(new Promise(() => {})); // in flight forever
     render(<App />);

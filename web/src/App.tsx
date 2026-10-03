@@ -448,9 +448,9 @@ export default function App() {
       await drainOnce({
         now: Date.now(),
         random: Math.random,
-        send: async (payload: ReportPayload, attempt: number) => {
+        send: async (payload: ReportPayload, attempt: number, queuedAt: number) => {
           try {
-            await reportSet({ ...payload, attempt });
+            await reportSet({ ...payload, attempt, pendingMs: Date.now() - queuedAt });
             // Every outbox transition is beaconed: the whole point of a remote
             // field test is that nobody is here to watch this queue drain.
             recordClientEvent('report-delivered', { setId: payload.setId, attempt });

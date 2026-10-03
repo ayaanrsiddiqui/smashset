@@ -8,6 +8,7 @@ import { SESSION_COOKIE_NAME } from '../middleware/auth.js';
 import { closeTestPool } from '../test-helpers.js';
 import { testServer } from '../test-server.js';
 import { StartggError } from '../startgg.js';
+import { settleBracketRecording } from '../reportBrackets.js';
 
 const gqlMock = vi.fn();
 vi.mock('../startgg.js', async (importOriginal) => ({
@@ -53,10 +54,22 @@ const CASCADE_SETS = [
  * it, so a single mockResolvedValue would feed the mutation's response to the
  * read as well.
  */
-function startgg(over: { set?: unknown; report?: unknown; update?: unknown; reset?: unknown; cascade?: unknown; live?: unknown } = {}) {
+function startgg(over: { set?: unknown; report?: unknown; update?: unknown; reset?: unknown; cascade?: unknown; live?: unknown; bracket?: unknown } = {}) {
   gqlMock.mockImplementation((_token: string, query: string) => {
     if (query.includes('ReportPrecondition')) {
       return over.set instanceof Error ? Promise.reject(over.set) : Promise.resolve({ set: 'set' in over ? over.set : OPEN_SET });
+    }
+    if (query.includes('ReportBracket')) {
+      if (over.bracket instanceof Error) return Promise.reject(over.bracket);
+      return Promise.resolve(
+        over.bracket ?? {
+          phaseGroup: {
+            displayIdentifier: '1',
+            phase: { name: 'Bracket', event: { id: 50, name: 'Singles', tournament: { id: 60, name: 'Weekly 1', slug: 'tournament/weekly-1' } } },
+            sets: { pageInfo: { total: 58 } },
+          },
+        }
+      );
     }
     if (query.includes('PhaseGroupBracket')) {
       if (over.live instanceof Error) return Promise.reject(over.live);
@@ -93,6 +106,12 @@ function watcher(phaseGroupId: string) {
 }
 
 afterAll(async () => {
+  await settleBracketRecording();
+  await pool.query(
+    'DELETE FROM set_reports WHERE user_id IN (SELECT id FROM users WHERE startgg_user_id LIKE $1)',
+    [`${PREFIX}%`]
+  );
+  await pool.query("DELETE FROM report_brackets WHERE phase_group_id IN ('1', '9')");
   await pool.query('DELETE FROM users WHERE startgg_user_id LIKE $1', [`${PREFIX}%`]);
   await closeTestPool();
 });
@@ -582,5 +601,203 @@ describe('POST /api/report against a bracket nobody has started', () => {
     expect(res.body.error).toMatch(/bracket has been started/i);
     expect(lookedUpTheRealBracket(), 'gave up without ever looking for the real set').toBe(true);
     expect(mutations()).toEqual([]);
+  });
+});
+
+describe('POST /api/report records what it reported', () => {
+  /** Every row this test's user recorded, oldest first. */
+  async function recorded(label: string) {
+    const { rows } = await pool.query(
+      `SELECT * FROM set_reports WHERE user_id = (SELECT id FROM users WHERE startgg_user_id = $1) ORDER BY id`,
+      [`${PREFIX}${label}`]
+    );
+    return rows;
+  }
+
+  afterEach(async () => {
+    await settleBracketRecording();
+    gqlMock.mockReset();
+    resetPoolEvents();
+  });
+
+  it('writes one row once start.gg confirms the set', async () => {
+    startgg();
+    const cookie = await makeSignedInCookie('rec-basic');
+
+    const res = await request(server).post('/api/report').set('Cookie', cookie).send(VALID);
+
+    expect(res.status).toBe(200);
+    const rows = await recorded('rec-basic');
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      set_id: '7001',
+      phase_group_id: '1',
+      winner_entrant_id: '8001',
+      loser_entrant_id: '8002',
+      games: 2,
+      attempt: 1,
+      already_on_file: false,
+      source: 'server',
+    });
+  });
+
+  it('takes the bracket from start.gg, never from the request', async () => {
+    // phaseGroupId in the body is a notification hint the route does not trust.
+    // Recording it would let any client file a set under any bracket's count.
+    startgg();
+    const cookie = await makeSignedInCookie('rec-untrusted-pg');
+
+    await request(server).post('/api/report').set('Cookie', cookie).send({ ...VALID, phaseGroupId: '999' });
+
+    expect((await recorded('rec-untrusted-pg'))[0].phase_group_id).toBe('1');
+  });
+
+  it('keeps both timings, and adds the server\'s own handling to delivery', async () => {
+    startgg();
+    const cookie = await makeSignedInCookie('rec-timings');
+
+    await request(server).post('/api/report').set('Cookie', cookie).send({ ...VALID, openToReportMs: 6400, pendingMs: 1200 });
+
+    const [row] = await recorded('rec-timings');
+    expect(row.open_to_report_ms).toBe(6400);
+    // At least the time it sat in the outbox; the server adds its share.
+    expect(row.delivery_ms).toBeGreaterThanOrEqual(1200);
+    expect(row.delivery_ms).toBeLessThan(1200 + 5000);
+  });
+
+  it('stores junk timings as nothing rather than as a number', async () => {
+    startgg();
+    const cookie = await makeSignedInCookie('rec-junk');
+
+    await request(server)
+      .post('/api/report')
+      .set('Cookie', cookie)
+      .send({ ...VALID, openToReportMs: 60 * 60_000, pendingMs: -5 });
+
+    const [row] = await recorded('rec-junk');
+    expect(row.open_to_report_ms).toBeNull();
+    expect(row.delivery_ms).toBeNull();
+  });
+
+  it('records no delivery time for an older client that never sent one', async () => {
+    // Server handling time alone is not "report pressed to confirmed", and
+    // storing it as if it were would drag the median towards zero.
+    startgg();
+    const cookie = await makeSignedInCookie('rec-old-client');
+
+    await request(server).post('/api/report').set('Cookie', cookie).send(VALID);
+
+    expect((await recorded('rec-old-client'))[0].delivery_ms).toBeNull();
+  });
+
+  it('counts the played games each side had a character for', async () => {
+    startgg();
+    const cookie = await makeSignedInCookie('rec-characters');
+
+    await request(server)
+      .post('/api/report')
+      .set('Cookie', cookie)
+      .send({
+        ...VALID,
+        characters: [
+          { gameNum: 1, winnerCharacterId: 10, loserCharacterId: 20 },
+          { gameNum: 2, winnerCharacterId: 10 },
+          { gameNum: 3, winnerCharacterId: 10, loserCharacterId: 20 },
+        ],
+      });
+
+    const [row] = await recorded('rec-characters');
+    // A 2-0, so game three's picks were never played and do not count.
+    expect(row.winner_character_games).toBe(2);
+    expect(row.loser_character_games).toBe(1);
+  });
+
+  it('records a retry that found its result already on start.gg, without timings', async () => {
+    // That retry reported nothing; it learned an earlier attempt had. Its
+    // timings would describe that earlier attempt and count one set twice.
+    startgg({ set: COMPLETED_SET });
+    const cookie = await makeSignedInCookie('rec-already');
+
+    const res = await request(server)
+      .post('/api/report')
+      .set('Cookie', cookie)
+      .send({ ...VALID, attempt: 2, openToReportMs: 6400, pendingMs: 30000 });
+
+    expect(res.body.alreadyOnFile).toBe(true);
+    const [row] = await recorded('rec-already');
+    expect(row).toMatchObject({ attempt: 2, already_on_file: true, open_to_report_ms: null, delivery_ms: null });
+  });
+
+  it('records nothing when start.gg refuses the report', async () => {
+    // The shape a real refusal takes: an HTTP 200 carrying GraphQL errors.
+    startgg({ report: new StartggError('start.gg API error: Invalid set.', 200, [{ message: 'Invalid set.' }]) });
+    const cookie = await makeSignedInCookie('rec-refused');
+
+    const res = await request(server).post('/api/report').set('Cookie', cookie).send(VALID);
+
+    expect(res.status).toBe(502);
+    expect(await recorded('rec-refused')).toHaveLength(0);
+  });
+
+  it('records nothing for a report the route itself turned away', async () => {
+    startgg({ set: { ...OPEN_SET, slots: [{ entrant: { id: 1, name: 'x' } }, { entrant: { id: 2, name: 'y' } }] } });
+    const cookie = await makeSignedInCookie('rec-wrong-players');
+
+    const res = await request(server).post('/api/report').set('Cookie', cookie).send(VALID);
+
+    expect(res.status).toBe(409);
+    expect(await recorded('rec-wrong-players')).toHaveLength(0);
+  });
+
+  it('records a reported preview under the real set it became', async () => {
+    // Shape verified live: the mutation answers with every set it touched,
+    // and the two downstream sets each hold one of these players. Only the
+    // reported set holds both.
+    startgg({
+      set: { ...OPEN_SET, id: 'preview_1_1_1' },
+      report: {
+        reportBracketSet: [
+          { id: 9101, state: 1, slots: [{ entrant: { id: 8001 } }, { entrant: null }] },
+          { id: 9102, state: 1, slots: [{ entrant: { id: 8002 } }, { entrant: null }] },
+          { id: 9100, state: 3, slots: [{ entrant: { id: 8001 } }, { entrant: { id: 8002 } }] },
+        ],
+      },
+    });
+    const cookie = await makeSignedInCookie('rec-preview');
+
+    await request(server).post('/api/report').set('Cookie', cookie).send({ ...VALID, setId: 'preview_1_1_1' });
+
+    expect((await recorded('rec-preview'))[0].set_id).toBe('9100');
+  });
+
+  it('names the bracket and records its size the first time a report lands in it', async () => {
+    startgg();
+    const cookie = await makeSignedInCookie('rec-bracket');
+
+    await request(server).post('/api/report').set('Cookie', cookie).send(VALID);
+    await settleBracketRecording();
+
+    const { rows } = await pool.query("SELECT * FROM report_brackets WHERE phase_group_id = '1'");
+    expect(rows[0]).toMatchObject({ event_name: 'Singles', tournament_name: 'Weekly 1', total_sets: 58 });
+  });
+
+  it('never records a bracket size of zero, which is a bracket mid-materialising', async () => {
+    startgg({
+      set: { ...OPEN_SET, phaseGroup: { id: 9 } },
+      bracket: {
+        phaseGroup: {
+          displayIdentifier: '1',
+          phase: { name: 'Bracket', event: { id: 50, name: 'Singles', tournament: { id: 60, name: 'Weekly 1', slug: 'tournament/weekly-1' } } },
+          sets: { pageInfo: { total: 0 } },
+        },
+      },
+    });
+    const cookie = await makeSignedInCookie('rec-zero');
+
+    await request(server).post('/api/report').set('Cookie', cookie).send(VALID);
+    await settleBracketRecording();
+
+    const { rows } = await pool.query("SELECT total_sets FROM report_brackets WHERE phase_group_id = '9'");
+    expect(rows[0].total_sets).toBeNull();
   });
 });

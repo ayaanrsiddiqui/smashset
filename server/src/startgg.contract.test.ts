@@ -430,6 +430,44 @@ describe.skipIf(!ENABLED)('start.gg pool previews', () => {
   }, NETWORK_TIMEOUT_MS);
 });
 
+describe.skipIf(!ENABLED)('start.gg bracket set counts', () => {
+  it('still reports a bracket\'s true set count in pageInfo.total', async () => {
+    // The admin record trusts this number for "reported X of Y", and it is the
+    // same field that is simply wrong on stations — 76 against 15. It matched
+    // a full walk of the nodes on four real brackets on 2026-10-03; this keeps
+    // checking, so the day it drifts the dashboard is not quietly wrong.
+    const phaseGroupId = await livePhaseGroupId();
+
+    const head = JSON.parse(
+      (await post(`query Total($id: ID!) { phaseGroup(id: $id) { sets(page: 1, perPage: 1) { pageInfo { total } } } }`, {
+        id: phaseGroupId,
+      })).raw
+    ) as { data?: { phaseGroup?: { sets?: { pageInfo?: { total?: number } } } } };
+    const claimed = head.data?.phaseGroup?.sets?.pageInfo?.total;
+
+    let walked = 0;
+    for (let page = 1; page <= 30; page++) {
+      const body = JSON.parse(
+        (await post(`query Walk($id: ID!, $page: Int!) { phaseGroup(id: $id) { sets(page: $page, perPage: 50) { nodes { id } } } }`, {
+          id: phaseGroupId,
+          page,
+        })).raw
+      ) as { data?: { phaseGroup?: { sets?: { nodes?: unknown[] } } } };
+      const nodes = body.data?.phaseGroup?.sets?.nodes ?? [];
+      walked += nodes.length;
+      if (nodes.length < 50) break;
+    }
+
+    expect(walked, `phase group ${phaseGroupId} returned no sets to count`).toBeGreaterThan(0);
+    expect(
+      claimed,
+      `pageInfo.total says ${claimed} sets but walking the bracket found ${walked}. ` +
+        'ensureBracketRecorded in server/src/reportBrackets.ts trusts that total for the ' +
+        'admin "reported X of Y" figure, which is now wrong.'
+    ).toBe(walked);
+  }, NETWORK_TIMEOUT_MS);
+});
+
 describe.skipIf(!ENABLED)('start.gg bracket previews', () => {
   /**
    * An unstarted phase group whose previews already know their entrants — i.e.
