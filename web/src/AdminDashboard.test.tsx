@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { AdminDashboard, formatDuration, formatShare } from './AdminDashboard';
 import { fetchAdminReports } from './api';
-import type { AdminDashboardData, AdminSummary } from './types';
+import type { AdminDashboardData, AdminSet, AdminSummary } from './types';
 
 vi.mock('./api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./api')>()),
@@ -22,6 +22,42 @@ const SUMMARY: AdminSummary = {
   foundOnFile: 1,
 };
 
+const SERVER_SET: AdminSet = {
+  setId: '108437297',
+  firstReportedAt: '2026-10-02T23:48:51Z',
+  reporter: 'FireSlam23',
+  winnerName: 'Ada',
+  loserName: 'mudd',
+  winnerScore: 2,
+  loserScore: 1,
+  games: 3,
+  winnerCharacterGames: 3,
+  loserCharacterGames: 2,
+  openToReportMs: 6400,
+  deliveryMs: 800,
+  reports: 2,
+  foundOnFile: 0,
+  fromLog: false,
+};
+
+const LOG_SET: AdminSet = {
+  setId: '108437426',
+  firstReportedAt: '2026-10-03T01:24:31Z',
+  reporter: null,
+  winnerName: null,
+  loserName: null,
+  winnerScore: null,
+  loserScore: null,
+  games: null,
+  winnerCharacterGames: null,
+  loserCharacterGames: null,
+  openToReportMs: null,
+  deliveryMs: null,
+  reports: 1,
+  foundOnFile: 0,
+  fromLog: true,
+};
+
 const DATA: AdminDashboardData = {
   overall: SUMMARY,
   brackets: [
@@ -34,45 +70,12 @@ const DATA: AdminDashboardData = {
       displayIdentifier: '1',
       totalSets: 58,
       summary: SUMMARY,
-      sets: [
-        {
-          setId: '108437297',
-          firstReportedAt: '2026-10-02T23:48:51Z',
-          reporter: 'FireSlam23',
-          winnerName: 'Ada',
-          loserName: 'mudd',
-          winnerScore: 2,
-          loserScore: 1,
-          games: 3,
-          winnerCharacterGames: 3,
-          loserCharacterGames: 2,
-          openToReportMs: 6400,
-          deliveryMs: 800,
-          reports: 2,
-          foundOnFile: 0,
-          fromLog: false,
-        },
-        {
-          setId: '108437426',
-          firstReportedAt: '2026-10-03T01:24:31Z',
-          reporter: null,
-          winnerName: null,
-          loserName: null,
-          winnerScore: null,
-          loserScore: null,
-          games: null,
-          winnerCharacterGames: null,
-          loserCharacterGames: null,
-          openToReportMs: null,
-          deliveryMs: null,
-          reports: 1,
-          foundOnFile: 0,
-          fromLog: true,
-        },
-      ],
+      sets: [SERVER_SET],
     },
   ],
 };
+
+const FROM_LOGS: AdminDashboardData = { ...DATA, brackets: [{ ...DATA.brackets[0], sets: [SERVER_SET, LOG_SET] }] };
 
 afterEach(() => {
   vi.mocked(fetchAdminReports).mockReset();
@@ -130,11 +133,21 @@ describe('AdminDashboard', () => {
   });
 
   it('labels a set recovered from the logs, so its blanks read as expected', async () => {
-    vi.mocked(fetchAdminReports).mockResolvedValue(DATA);
+    vi.mocked(fetchAdminReports).mockResolvedValue(FROM_LOGS);
     render(<AdminDashboard onClose={vi.fn()} />);
 
     expect(await screen.findByText('set 108437426')).toBeInTheDocument();
     expect(screen.getByText('from logs')).toBeInTheDocument();
+  });
+
+  it('calls a count that includes sets recovered from logs a floor, not a total', async () => {
+    // A log line only exists if the browser's beacon arrived after the report,
+    // so a bracket recovered from logs may have had more reported than shown.
+    vi.mocked(fetchAdminReports).mockResolvedValue(FROM_LOGS);
+    render(<AdminDashboard onClose={vi.fn()} />);
+
+    expect(await screen.findByText('Reported at least 34 of 58 sets (59%)')).toBeInTheDocument();
+    expect(screen.getByText(/At least 34 sets reported across 1 bracket/)).toBeInTheDocument();
   });
 
   it('admits a bracket it has not counted yet instead of inventing a total', async () => {

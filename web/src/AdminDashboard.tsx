@@ -26,11 +26,20 @@ function bracketTitle(b: AdminBracket): string {
   return where || `Unnamed bracket (phase group ${b.phaseGroupId})`;
 }
 
+/**
+ * A set recovered from logs is only there because the browser's beacon arrived
+ * after the report, so a count that includes one is a floor, not a total.
+ */
+function hasLogSets(b: AdminBracket): boolean {
+  return b.sets.some((s) => s.fromLog);
+}
+
 /** "Reported 34 of 58 sets" — the number the whole page exists to answer. */
 function coverage(b: AdminBracket): string {
   const n = b.summary.reportedSets;
-  if (b.totalSets === null) return `Reported ${n} set${n === 1 ? '' : 's'} · bracket size not counted yet`;
-  return `Reported ${n} of ${b.totalSets} sets (${Math.round((n / b.totalSets) * 100)}%)`;
+  const atLeast = hasLogSets(b) ? 'at least ' : '';
+  if (b.totalSets === null) return `Reported ${atLeast}${n} set${n === 1 ? '' : 's'} · bracket size not counted yet`;
+  return `Reported ${atLeast}${n} of ${b.totalSets} sets (${Math.round((n / b.totalSets) * 100)}%)`;
 }
 
 function SummaryFigures({ summary }: { summary: AdminSummary }) {
@@ -65,7 +74,7 @@ function SummaryFigures({ summary }: { summary: AdminSummary }) {
 
 function setLabel(s: AdminSet): string {
   if (s.winnerName && s.loserName) return `${s.winnerName} ${s.winnerScore ?? '?'}–${s.loserScore ?? '?'} ${s.loserName}`;
-  // Recovered from logs before names were recorded: the id is all there is.
+  // Recorded without names (rows from before they were kept): the id is all there is.
   return `set ${s.setId}`;
 }
 
@@ -175,6 +184,7 @@ export function AdminDashboard({ onClose }: Props) {
             <>
               <section className="admin-overall">
                 <p className="admin-coverage">
+                  {data.brackets.some(hasLogSets) ? 'At least ' : ''}
                   {data.overall.reportedSets} set{data.overall.reportedSets === 1 ? '' : 's'} reported across{' '}
                   {data.brackets.length} bracket{data.brackets.length === 1 ? '' : 's'}
                 </p>
