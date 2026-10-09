@@ -9,6 +9,10 @@ export default defineConfig({
   server: { fs: { allow: ['..'] } },
   test: {
     environment: 'jsdom',
+    // The palette guard reads index.css with ?raw. Left off (the default),
+    // vitest stubs every CSS import to an empty string and the guard passes
+    // having checked nothing. Costs about half a second across the suite.
+    css: true,
     setupFiles: ['./src/test-setup.ts'],
     globals: true,
   },

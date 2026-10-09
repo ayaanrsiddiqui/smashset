@@ -9,7 +9,9 @@
          screen — where there is no browser chrome left to protect them. -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <link rel="manifest" href="/manifest.webmanifest" />
-    <meta name="theme-color" content="#14161c" />
+    <!-- Replaced before paint by the script below; this is only what a
+         browser sees before any JS runs. -->
+    <meta name="theme-color" content="#1a1d24" />
     <!-- iOS ignores the manifest's icons for the home screen and reads this
          one, which is why it is a separate file with the background baked in. -->
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
@@ -23,6 +25,21 @@
     <title>SmashSet</title>
   </head>
   <body>
+    <script>
+      // Inline and before the app, on purpose: resolving the theme from React
+      // would paint the dark palette first and then flip, which on a
+      // light-mode phone is a full-screen flash on every load.
+      (function () {
+        try {
+          var choice = localStorage.getItem('smashset.theme');
+          var light = choice === 'light' || (choice !== 'dark' && window.matchMedia('(prefers-color-scheme: light)').matches);
+          document.documentElement.dataset.theme = light ? 'light' : 'dark';
+        } catch (err) {
+          // localStorage throws outright in some privacy modes.
+          document.documentElement.dataset.theme = 'dark';
+        }
+      })();
+    </script>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

@@ -1,4 +1,5 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
+import { setTheme, storedTheme, type ThemeChoice } from './theme';
 import type { AccountDetails } from './types';
 
 interface Props {
@@ -11,7 +12,20 @@ interface Props {
   onOpenAdmin?: () => void;
 }
 
+const THEME_OPTIONS: { value: ThemeChoice; label: string }[] = [
+  { value: 'system', label: 'System' },
+  { value: 'light', label: 'Light' },
+  { value: 'dark', label: 'Dark' },
+];
+
 export function AccountModal({ account, accountError, onClose, onTopXChange, onSignOut, onOpenAdmin }: Props) {
+  const [theme, setThemeChoice] = useState<ThemeChoice>(storedTheme);
+
+  function chooseTheme(choice: ThemeChoice) {
+    setThemeChoice(choice);
+    setTheme(choice);
+  }
+
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
       if (e.key === 'Escape') onClose();
@@ -83,6 +97,26 @@ export function AccountModal({ account, accountError, onClose, onTopXChange, onS
                 <p className="account-top-x-hint">
                   When reporting, a set whose loser will place at or above this number auto-selects Bo5. Leave blank
                   to always guess from the round name instead.
+                </p>
+
+                <div className="account-theme" role="group" aria-label="Appearance">
+                  <span className="account-theme-label">Appearance</span>
+                  <div className="account-theme-options">
+                    {THEME_OPTIONS.map((option) => (
+                      <button
+                        key={option.value}
+                        type="button"
+                        className={theme === option.value ? 'selected' : ''}
+                        aria-pressed={theme === option.value}
+                        onClick={() => chooseTheme(option.value)}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <p className="account-top-x-hint">
+                  Stored on this device. A bracket table outdoors wants the light one whatever the phone is set to.
                 </p>
               </section>
 
