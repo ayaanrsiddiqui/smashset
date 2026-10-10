@@ -1,5 +1,12 @@
 import { useRef } from 'react';
 import type { ReactNode, RefObject, TouchEvent } from 'react';
+import { SkeletonRows } from './Loading';
+
+/**
+ * Enough placeholder rows to fill the collapsed panel, which is the state a TO
+ * is looking at while the first fetch lands.
+ */
+const SKELETON_ROWS = 3;
 
 /**
  * Below this, a drag is a tap or a vertical scroll that wandered sideways,
@@ -24,8 +31,17 @@ interface Props {
   onModeChange: (next: 'open' | 'completed') => void;
   /** Shown under the search box — a failed poll shouldn't hide the bracket. */
   error?: string | null;
-  /** Describes what the collapsed list is showing, e.g. "3 ready to start". */
-  collapsedLabel: string;
+  /**
+   * Whether the pile on screen has never answered for this pool. The list used
+   * to render its "nothing here" row straight away, which told a TO there was
+   * nothing left to report before anything had been asked.
+   */
+  loading: boolean;
+  /**
+   * Describes what the collapsed list is showing, e.g. "3 ready to start".
+   * Null while `loading`, because a count is the one thing it cannot know yet.
+   */
+  collapsedLabel: string | null;
   children: ReactNode;
 }
 
@@ -46,6 +62,7 @@ export function SetPanel({
   onSearchBlur,
   onModeChange,
   error,
+  loading,
   collapsedLabel,
   children,
 }: Props) {
@@ -122,15 +139,17 @@ export function SetPanel({
           onChange={(e) => onQueryChange(e.target.value)}
         />
         {mode === 'completed' ? (
-          <span className="set-panel-summary">Completed sets, newest first</span>
+          <span className="set-panel-summary">{loading ? 'Loading completed sets…' : 'Completed sets, newest first'}</span>
         ) : (
-          !expanded && <span className="set-panel-summary">{collapsedLabel}</span>
+          !expanded && <span className="set-panel-summary">{collapsedLabel ?? 'Loading sets…'}</span>
         )}
       </div>
 
       {error && <p className="error set-panel-error">{error}</p>}
 
-      <ul className="results-list set-panel-list">{children}</ul>
+      <ul className="results-list set-panel-list" aria-busy={loading || undefined}>
+        {loading ? <SkeletonRows count={SKELETON_ROWS} /> : children}
+      </ul>
     </aside>
   );
 }

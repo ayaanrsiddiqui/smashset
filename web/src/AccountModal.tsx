@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { LoadingNote } from './Loading';
 import { setTheme, storedTheme, type ThemeChoice } from './theme';
 import type { AccountDetails } from './types';
 
@@ -56,7 +57,7 @@ export function AccountModal({ account, accountError, onClose, onTopXChange, onS
           <h2 id="account-modal-title">Account</h2>
 
           {accountError && <p className="error">Couldn't load your account details. Try closing and reopening this.</p>}
-          {!account && !accountError && <p className="account-loading">Loading…</p>}
+          {!account && !accountError && <LoadingNote>Loading your account…</LoadingNote>}
 
           {account && (
             <>

@@ -3,8 +3,8 @@ import { StrictMode } from 'react';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { fetchAccount, fetchBracket, fetchCharacters, fetchOpenSets, fetchPhaseGroups, fetchPoolPlayers, fetchSetDetail, fetchStages, fetchStations, reportSet, startSet, updatePlayerMain, updateTopXBo5 } from './api';
-import { apiFailure, flushTimers, resetApiDefaults, seedEvent, seedPool, TEST_EVENT } from './test-helpers';
-import type { BracketSet } from './types';
+import { apiFailure, EMPTY_BRACKET, flushTimers, resetApiDefaults, seedEvent, seedPool, SOLE_PHASE_GROUP, TEST_EVENT } from './test-helpers';
+import type { BracketGroup, BracketSet } from './types';
 import { openedEventSource, resetEventSources } from './test-eventsource';
 import { enqueue, remove as dropFromOutbox, resetOutbox } from './outbox';
 
@@ -43,6 +43,11 @@ vi.mock('./api', async (importOriginal) => ({
   reportSet: vi.fn().mockResolvedValue({ result: {} }),
   updatePlayerMain: vi.fn().mockResolvedValue({ characterId: null }),
   fetchPoolPlayers: vi.fn().mockResolvedValue({ players: [], videogameId: 1386 }),
+  // Only reached by the tests that go through PoolPicker, but it has to be a
+  // mock rather than the real thing — unmocked it makes a real request out of
+  // the suite and the picker renders a lookup error on top of what is being
+  // asserted.
+  fetchPoolPreviews: vi.fn().mockResolvedValue({ previews: [] }),
   poolEventsUrl: (id: number) => `/api/sets/phase-group/${id}/events`,
 }));
 
@@ -500,8 +505,11 @@ describe('App — completed and not-ready sets on the bracket', () => {
 
     await screen.findByPlaceholderText(/winner's name/i);
     expect(container.querySelectorAll('.bracket-box')).toHaveLength(0);
-    // The panel collapses to its summary rather than vanishing.
-    expect(container.querySelector('.set-panel-summary')?.textContent).toMatch(/to report/i);
+    expect(await screen.findByText(/this bracket has no sets yet/i)).toBeInTheDocument();
+    // The panel collapses to its summary rather than vanishing. Waited for,
+    // not read once: the count only exists after the sets poll answers, and
+    // until then the summary says it is still loading.
+    await waitFor(() => expect(container.querySelector('.set-panel-summary')?.textContent).toMatch(/to report/i));
     expect(container.querySelector('.set-panel')?.className).toContain('collapsed');
   });
 
@@ -1818,5 +1826,158 @@ describe('starting a set at a station', () => {
 
     expect(await screen.findByText(/no station 40/)).toBeInTheDocument();
     expect(stationField()).not.toBeNull();
+  });
+});
+
+/**
+ * A placeholder that answers the TO's question wrongly is worse than one that
+ * says it does not know yet. Every assertion below is of that shape: the
+ * screen must distinguish "still coming" from "came back empty" from "failed".
+ */
+describe('App — what the screens say while they wait', () => {
+  const fetchBracketMock = vi.mocked(fetchBracket);
+  const fetchOpenSetsMock = vi.mocked(fetchOpenSets);
+  const fetchSetDetailMock = vi.mocked(fetchSetDetail);
+
+  function completedBracket(): BracketGroup {
+    return {
+      phaseGroupId: 1,
+      phaseName: 'Bracket',
+      displayIdentifier: '1',
+      bracketType: 'DOUBLE_ELIMINATION',
+      sets: [
+        {
+          id: 1,
+          identifier: 'A',
+          round: 1,
+          fullRoundText: 'Winners Round 1',
+          state: 3,
+          winnerId: 101,
+          lPlacement: 9,
+          completedAt: 100,
+          winnerAdvancesToPhase: null,
+          loserAdvancesToPhase: null,
+          slots: [
+            { entrant: { id: 101, name: 'Winner Player' }, score: 2, characterIds: [], prereqSetId: null, prereqPlacement: null, progressionOrigin: null, seedNum: null },
+            { entrant: { id: 102, name: 'Loser Player' }, score: 0, characterIds: [], prereqSetId: null, prereqPlacement: null, progressionOrigin: null, seedNum: null },
+          ],
+        },
+      ],
+    };
+  }
+
+  beforeEach(() => {
+    localStorage.clear();
+    seedEvent();
+    seedPool();
+    fetchMeMock.mockResolvedValue({ user: { id: 1, displayName: 'FireSlam23' } });
+    resetApiDefaults();
+    resetEventSources();
+  });
+
+  afterEach(() => {
+    fetchMeMock.mockReset();
+    fetchBracketMock.mockReset();
+    fetchOpenSetsMock.mockReset();
+    fetchSetDetailMock.mockReset();
+  });
+
+  it('says the bracket is on its way rather than that there is none', async () => {
+    fetchBracketMock.mockReturnValue(new Promise(() => {}));
+    render(<App />);
+
+    expect(await screen.findByRole('status', { name: /loading the bracket/i })).toBeInTheDocument();
+    // The old message for exactly this state. A TO reads it as a fact about
+    // the bracket, and "this bracket is empty" is something they act on.
+    expect(screen.queryByText(/no bracket data/i)).toBeNull();
+  });
+
+  it('does not claim a count of sets to report before anything has answered', async () => {
+    fetchOpenSetsMock.mockReturnValue(new Promise(() => {}));
+    const { container } = render(<App />);
+
+    await waitFor(() => expect(container.querySelector('.set-panel-summary')?.textContent).toMatch(/loading sets/i));
+    expect(container.querySelector('.set-panel-list')?.getAttribute('aria-busy')).toBe('true');
+    expect(screen.queryByText(/nothing left to report/i)).toBeNull();
+    expect(screen.queryByText('0 sets to report')).toBeNull();
+    await waitFor(() => expect(container.querySelectorAll('li.skeleton-row').length).toBe(3));
+  });
+
+  it('switching pool goes back to waiting instead of reporting the old pool emptied out', async () => {
+    vi.mocked(fetchPhaseGroups).mockResolvedValue({
+      phaseGroups: [SOLE_PHASE_GROUP, { ...SOLE_PHASE_GROUP, id: 2, displayIdentifier: '2' }],
+    });
+    fetchOpenSetsMock.mockResolvedValue({ sets: [] });
+    const { container } = render(<App />);
+    await waitFor(() => expect(container.querySelector('.set-panel-summary')?.textContent).toMatch(/to report/i));
+
+    // The next pool has not answered yet, so a count about it would be made up.
+    fetchOpenSetsMock.mockReturnValue(new Promise(() => {}));
+    fetchBracketMock.mockReturnValue(new Promise(() => {}));
+    await userEvent.click(screen.getByRole('button', { name: /switch pool/i }));
+    // Phases start collapsed; the pools are inside.
+    await userEvent.click(await screen.findByRole('button', { name: /bracket.*2 brackets/i }));
+    await userEvent.click(await screen.findByText('2'));
+
+    await waitFor(() => expect(container.querySelector('.set-panel-summary')?.textContent).toMatch(/loading sets/i));
+  });
+
+  it('says a bracket is empty only once it has actually answered with nothing', async () => {
+    fetchBracketMock.mockResolvedValue(EMPTY_BRACKET);
+    render(<App />);
+
+    expect(await screen.findByText(/this bracket has no sets yet/i)).toBeInTheDocument();
+  });
+
+  it('reports a bracket that never loaded on the stage, with the fact that it keeps trying', async () => {
+    fetchBracketMock.mockRejectedValue(apiFailure(0));
+    const { container } = render(<App />);
+
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toMatch(/could not reach the server/i);
+    expect(alert.textContent).toMatch(/retries by itself/i);
+    // Not said twice: the panel line is for a poll that failed over a bracket
+    // already drawn, which is a different message to a TO.
+    expect(container.querySelector('.set-panel-error')).toBeNull();
+  });
+
+  it('keeps a bracket that loaded once when a later poll fails, and says so in the panel instead', async () => {
+    vi.useFakeTimers();
+    try {
+      fetchBracketMock.mockResolvedValue(completedBracket());
+      const { container } = render(<App />);
+      await flushTimers(40);
+      expect(container.querySelectorAll('.bracket-box')).toHaveLength(1);
+
+      fetchBracketMock.mockRejectedValue(apiFailure(500));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5000);
+      });
+
+      // The last bracket beats no bracket at a venue, so it stays drawn.
+      expect(container.querySelectorAll('.bracket-box')).toHaveLength(1);
+      expect(container.querySelector('.set-panel-error')?.textContent).toMatch(/request failed \(500\)/i);
+      expect(screen.queryByRole('alert')).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('marks a finished set while its detail is being fetched, and ignores a second tap', async () => {
+    fetchBracketMock.mockResolvedValue(completedBracket());
+    fetchSetDetailMock.mockReturnValue(new Promise(() => {}));
+    const { container } = render(<App />);
+    await screen.findByPlaceholderText(/winner's name/i);
+    const box = await findBracketBox(container, 'A');
+
+    await userEvent.click(box);
+
+    // Without this the tap is silent for a whole start.gg round trip, so on
+    // venue wifi it reads as a miss and gets tapped again.
+    expect(await screen.findByRole('status', { name: /opening set/i })).toBeInTheDocument();
+    expect(box.className).toContain('opening');
+
+    await userEvent.click(box);
+    expect(fetchSetDetailMock).toHaveBeenCalledTimes(1);
   });
 });

@@ -14,7 +14,9 @@ export const HEADER_HEIGHT = 32;
 // mostly empty. start.gg's own bracket steps 204px across to our 216, read off
 // its rendered DOM for fireslam23test.
 const COLUMN_STEP = BOX_WIDTH + 28;
-const ROW_STEP = BOX_HEIGHT + 10;
+// Exported so the loading placeholder can taper on the real row pitch rather
+// than on a second number that would drift from this one.
+export const ROW_STEP = BOX_HEIGHT + 10;
 const SECTION_GAP = 36;
 // Horizontal space reserved for a cross-phase link's label + dashed stub,
 // at whichever edge(s) of the canvas actually have one (see PhaseLink).

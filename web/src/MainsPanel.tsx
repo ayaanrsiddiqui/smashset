@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { fetchPoolPlayers } from './api';
+import { LoadingNote } from './Loading';
 import type { Character, PoolPlayer } from './types';
 
 interface Props {
@@ -123,7 +124,7 @@ export function MainsPanel({ phaseGroupId, characters, onClose, onSave }: Props)
           {loadError && <p className="error">{loadError}</p>}
           {failed && <p className="error">{failed}</p>}
 
-          {!players && !loadError && <p className="mains-empty">Loading…</p>}
+          {!players && !loadError && <LoadingNote>Loading everyone in this pool…</LoadingNote>}
           {players?.length === 0 && <p className="mains-empty">No players seeded into this pool yet.</p>}
 
           {players && players.length > 0 && (

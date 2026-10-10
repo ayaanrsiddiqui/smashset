@@ -11,6 +11,7 @@ import { Bracket } from './Bracket';
 import { SetPanel } from './SetPanel';
 import { MainsPanel } from './MainsPanel';
 import { AppHeader } from './AppHeader';
+import { LoadingNote } from './Loading';
 import { OutboxStrip } from './OutboxStrip';
 import { allEntries, clearOutbox, drainOnce, enqueue, remove as dropFromOutbox, retryNow, subscribe as subscribeToOutbox } from './outbox';
 import { recordClientEvent } from './clientEvents';
@@ -104,7 +105,11 @@ export default function App() {
   // fall back to event selection on Back rather than cancel back to a
   // current pool that doesn't exist yet.
   const [pickingPool, setPickingPool] = useState(false);
-  const [sets, setSets] = useState<OpenSet[]>([]);
+  // null = no answer yet for the current pool, matching phaseGroups and
+  // bracketGroup below. It used to start as [], so until the first fetch landed
+  // the panel said "0 sets to report" — a count, about a pool nobody had asked
+  // about yet.
+  const [sets, setSets] = useState<OpenSet[] | null>(null);
   const [bracketGroup, setBracketGroup] = useState<BracketGroup | null>(null);
   // Whether the pool's change stream is up, and a counter the stream bumps.
   // The counter is a polling dependency, so an event refetches immediately and
@@ -149,6 +154,11 @@ export default function App() {
   // so a poll landing before start.gg's own read catches up to the mutation
   // can't flip a just-started set back to not-started and bring the button back.
   const [startedIds, setStartedIds] = useState<Set<number | string>>(new Set());
+  // Which finished set is waiting on its per-game detail before the report
+  // panel can open. That fetch is a start.gg round trip, and without a mark on
+  // the row the tap looks like it missed — so a TO on venue wifi taps again,
+  // and the second tap lands on a set they can no longer see.
+  const [openingSetId, setOpeningSetId] = useState<number | string | null>(null);
   const [showHelp, setShowHelp] = useState(false);
   const [showAccount, setShowAccount] = useState(false);
   const [showAdmin, setShowAdmin] = useState(false);
@@ -258,7 +268,7 @@ export default function App() {
     setPickingPool(false);
     // Drop the pool being switched away from, so its sets aren't briefly
     // listed — and reportable — under the newly chosen one.
-    setSets([]);
+    setSets(null);
     setBracketGroup(null);
   }
 
@@ -337,7 +347,7 @@ export default function App() {
     setEvent(null);
     setPhaseGroups(null);
     setPhaseGroupIdState(null);
-    setSets([]);
+    setSets(null);
     setBracketGroup(null);
     setSelectedSet(null);
     setAccount(null);
@@ -645,7 +655,7 @@ export default function App() {
   const iconFor = (characterId: number | null | undefined) =>
     characterId == null ? undefined : iconUrlById.get(characterId);
 
-  const results = fuzzyMatchSets(query, sets, (s) => s.entrants.map((e) => e.name))
+  const results = fuzzyMatchSets(query, sets ?? [], (s) => s.entrants.map((e) => e.name))
     .map((s) => (!s.isStarted && startedIds.has(s.id) ? { ...s, isStarted: true } : s))
     .sort((a, b) => Number(b.isStarted) - Number(a.isStarted));
 
@@ -706,6 +716,18 @@ export default function App() {
     mode === 'completed'
       ? playerHistory.map((set) => ({ kind: 'completed' as const, set }))
       : toReport.map((set) => ({ kind: 'open' as const, set }));
+
+  // Each pile has its own source, and only its own source can say whether this
+  // pool has answered yet: the open list comes from the sets poll, the
+  // completed list from the bracket. Without this the list rendered its
+  // "nothing here" row immediately, which told a TO there was nothing left to
+  // report before anything had been asked.
+  const rowsLoading = mode === 'completed' ? bracketGroup === null : sets === null;
+
+  // A bracket that has never loaded reports its own failure on the stage,
+  // where there is room to say that it keeps retrying. The panel line is for a
+  // poll that failed over a bracket already drawn.
+  const panelError = loadError ?? (bracketGroup ? bracketLoadError : null);
 
   // A query naming exactly one player pulls up that player's history, and the
   // top row is their latest set — so highlight it without waiting for an arrow
@@ -777,12 +799,14 @@ export default function App() {
         {outboxEl}
         <div className="settings-screen">
           <h1>SmashSet</h1>
-          {sessionError && (
+          {sessionError ? (
             <>
               <p className="error">{sessionError}</p>
               <p className="subtitle">Not signed out — smashset just can't be reached. Retrying.</p>
               <button onClick={() => recheckSession.current()}>try again</button>
             </>
+          ) : (
+            <LoadingNote>Checking your session…</LoadingNote>
           )}
         </div>
       </>
@@ -806,14 +830,14 @@ export default function App() {
     if (!event) return;
     await updatePlayerMain(playerId, event.videogame.id, characterId);
     setSets((current) =>
-      current.map((set) => ({
+      current?.map((set) => ({
         ...set,
         entrants: set.entrants.map((entrant) =>
           entrant.playerId === playerId
             ? { ...entrant, suggestedMain: { characterId, gamesTallied: 0, setsConsidered: 0 } }
             : entrant
         ),
-      }))
+      })) ?? null
     );
   }
 
@@ -828,11 +852,19 @@ export default function App() {
     // rendered — and reportable — under whatever event is chosen next.
     setPhaseGroups(null);
     setPhaseGroupIdState(null);
-    setSets([]);
+    setSets(null);
     setBracketGroup(null);
   }
 
-  if (phaseGroups === null) return <div className="settings-screen"><h1>SmashSet</h1></div>;
+  // Both of these used to be a bare heading on an otherwise empty screen for
+  // as long as start.gg took to answer, which looks like the app giving up.
+  if (phaseGroups === null)
+    return (
+      <div className="settings-screen">
+        <h1>SmashSet</h1>
+        <LoadingNote>Finding this event's brackets…</LoadingNote>
+      </div>
+    );
 
   if (phaseGroups.length === 0) {
     return (
@@ -860,7 +892,13 @@ export default function App() {
     );
   }
 
-  if (phaseGroupId === null) return <div className="settings-screen"><h1>SmashSet</h1></div>;
+  if (phaseGroupId === null)
+    return (
+      <div className="settings-screen">
+        <h1>SmashSet</h1>
+        <LoadingNote>Opening the bracket…</LoadingNote>
+      </div>
+    );
 
 
   function openRow(row: PanelRow) {
@@ -886,6 +924,10 @@ export default function App() {
     const openedFor = phaseGroupId;
 
     if (bs.state === 3) {
+      // A second tap while the first is in the air would open the panel twice
+      // and race two detail fetches into it.
+      if (openingSetId !== null) return;
+      setOpeningSetId(bs.id);
       try {
         const detail = await fetchSetDetail(bs.id);
         if (poolRef.current !== openedFor) return;
@@ -895,6 +937,8 @@ export default function App() {
         // Still opens — just without the pre-fill, same as if start.gg had
         // no game records for this set at all (e.g. a quick-reported one).
         setPriorDetail(null);
+      } finally {
+        setOpeningSetId(null);
       }
     } else {
       setPriorDetail(null);
@@ -904,7 +948,7 @@ export default function App() {
     // in `sets` (polled continuously regardless of which view is showing)
     // — completed sets are never in it (fetchOpenSets excludes them), so
     // this only ever actually matches for a still-open set.
-    const openSet = sets.find((s) => s.id === bs.id);
+    const openSet = sets?.find((s) => s.id === bs.id);
     if (openSet) {
       selectSet(openSet);
       return;
@@ -972,6 +1016,8 @@ export default function App() {
       <div className="bracket-stage">
         <Bracket
           group={bracketGroup}
+          loadError={bracketLoadError}
+          openingSetId={openingSetId}
           characters={characters}
           onSelectSet={selectFromBracket}
           focusedSetId={showHighlight ? (visibleRows[highlight]?.set.id ?? null) : null}
@@ -991,8 +1037,9 @@ export default function App() {
         onSearchFocus={() => setSearchFocused(true)}
         onSearchBlur={() => setSearchFocused(false)}
         onModeChange={showMode}
-        error={loadError ?? bracketLoadError}
-        collapsedLabel={toReport.length === 1 ? '1 set to report' : `${toReport.length} sets to report`}
+        error={panelError}
+        loading={rowsLoading}
+        collapsedLabel={sets === null ? null : toReport.length === 1 ? '1 set to report' : `${toReport.length} sets to report`}
       >
         {visibleRows.map((row, i) => {
           const active = showHighlight && i === highlight;
@@ -1009,6 +1056,7 @@ export default function App() {
 
           if (row.kind === 'completed') {
             const prior = priorResultFor(row.set);
+            const opening = openingSetId === row.set.id;
             return (
               <li key={`done-${row.set.id}`} className={active ? 'active' : ''} {...rowProps}>
                 {i < 9 && <span className="result-num">{i + 1}</span>}
@@ -1056,7 +1104,10 @@ export default function App() {
                     row.set.slots.map((slot) => slot.entrant?.name ?? 'TBD').join(' vs ')
                   )}
                 </span>
-                <span className="round-text">{row.set.fullRoundText} · tap to correct</span>
+                <span className="round-text">
+                  {row.set.fullRoundText} · {opening ? 'opening…' : 'tap to correct'}
+                </span>
+                {opening && <span className="spinner row-opening" role="status" aria-label="Opening set" />}
               </li>
             );
           }

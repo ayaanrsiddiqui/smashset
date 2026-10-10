@@ -220,11 +220,114 @@
   background: var(--accent-surface);
 }
 
+/* ---------- Waiting states ----------
+   See Loading.tsx for why these exist at all: every one of them replaced a
+   placeholder that claimed to be an answer.                                */
+
+.spinner {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  box-sizing: border-box;
+  border-radius: 50%;
+  border: 2px solid var(--border-strong);
+  border-top-color: var(--accent-fg);
+  animation: spinner-turn 0.8s linear infinite;
+}
+
+@keyframes spinner-turn {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.loading-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 15px;
+}
+
+/* A highlight swept across a flat block, so a skeleton reads as "filling in"
+   rather than as a grey rectangle that failed to load. background-color
+   rather than the shorthand, which would wipe the gradient out. */
+.skeleton {
+  display: block;
+  border-radius: 4px;
+  background-color: var(--border-soft);
+  background-image: linear-gradient(90deg, transparent, var(--surface-raised), transparent);
+  background-repeat: no-repeat;
+  background-size: 180px 100%;
+  animation: skeleton-sweep 1.3s ease-in-out infinite;
+}
+
+@keyframes skeleton-sweep {
+  from {
+    background-position: -180px 0;
+  }
+  to {
+    background-position: calc(100% + 180px) 0;
+  }
+}
+
+/* Two stacked bars, not the real row grid: the row it stands in for has a
+   number, names, a round label and maybe a start button, and a placeholder
+   that mimicked all four would be a second copy of that layout to maintain. */
+.results-list li.skeleton-row {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 7px;
+  cursor: default;
+}
+
+.skeleton-name {
+  height: 13px;
+  width: 70%;
+}
+
+.skeleton-round {
+  height: 10px;
+  width: 42%;
+}
+
+/* Boxes at the size the real ones will be (BOX_WIDTH/BOX_HEIGHT are passed in
+   from bracketLayout), tapering 4 -> 2 -> 1 so the shape says "bracket". It is
+   not the real geometry and is not trying to be — the real canvas is ~1700px
+   wide and always scrolled, so nothing can stop the content landing
+   differently; this only has to say a bracket is coming and that it is not an
+   empty one. */
+.bracket-skeleton {
+  display: flex;
+  align-items: center;
+  gap: 28px;
+  padding: 28px 24px;
+}
+
+.bracket-skeleton-column {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-around;
+}
+
+.bracket-skeleton-box {
+  border-radius: 10px;
+}
+
 /* ---------- Bracket tree ---------- */
 
 .bracket-empty {
   color: var(--text-dim);
   font-size: 15px;
+}
+
+.bracket-failed {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 20px;
 }
 
 .bracket-scroll {
@@ -346,6 +449,29 @@
 
 .bracket-box.clickable:hover {
   border-color: var(--accent);
+}
+
+/* A tap on a finished set fetches its per-game detail before the report panel
+   can open pre-filled, which on venue wifi is long enough that a silent box
+   reads as a dead tap and gets tapped again. */
+.bracket-box.opening {
+  border-color: var(--accent);
+}
+
+/* The rows fade, not the box: dimming the whole thing took the spinner down
+   with it and left nothing legible on top of the names. */
+.bracket-box.opening .bracket-row {
+  opacity: 0.3;
+}
+
+.bracket-opening {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 18px;
+  height: 18px;
+  margin: -9px 0 0 -9px;
+  z-index: 2;
 }
 
 .bracket-badge {
@@ -1975,11 +2101,6 @@ kbd {
   gap: 28px;
 }
 
-.account-loading {
-  margin: 0;
-  color: var(--text-muted);
-}
-
 .account-section {
   display: flex;
   flex-direction: column;
@@ -2440,6 +2561,17 @@ kbd {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  /* A skeleton still reads as a placeholder without the sweep. The spinner
+     keeps turning, slower: taking the motion out of it entirely would leave
+     no signal that anything is happening at all. */
+  .skeleton {
+    animation: none;
+  }
+
+  .spinner {
+    animation-duration: 2s;
+  }
+
   .help-key {
     transition: none;
   }
@@ -2688,6 +2820,12 @@ kbd {
 }
 
 .set-panel-list .start-btn {
+  grid-area: action;
+}
+
+/* Where the start button sits on an open row, so a finished row waiting on its
+   detail fetch marks itself without the row reflowing. */
+.set-panel-list .row-opening {
   grid-area: action;
 }
 

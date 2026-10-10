@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { fetchAdminReports } from './api';
+import { LoadingNote } from './Loading';
 import type { AdminBracket, AdminDashboardData, AdminSet, AdminSummary } from './types';
 
 interface Props {
@@ -174,7 +175,7 @@ export function AdminDashboard({ onClose }: Props) {
               </button>
             </div>
           )}
-          {!data && !error && <p className="account-loading">Loading…</p>}
+          {!data && !error && <LoadingNote>Loading your reporting history…</LoadingNote>}
 
           {data && data.brackets.length === 0 && (
             <p className="admin-empty">Nothing reported yet. Sets appear here as start.gg confirms them.</p>

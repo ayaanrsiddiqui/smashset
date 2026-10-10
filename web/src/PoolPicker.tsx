@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { fetchPoolPreviews, searchEntrants } from './api';
+import { LoadingNote } from './Loading';
 import type { EntrantMatch, PhaseGroupSummary, PoolPreview } from './types';
 
 interface Props {
@@ -209,7 +210,7 @@ export function PoolPicker({ eventId, eventName, phaseGroups, onPicked, onBack }
         />
         {lookupError && <p className="error">{lookupError}</p>}
         {previewError && <p className="error">{previewError}</p>}
-        {!lookupError && searching && <p className="lookup-note">Searching…</p>}
+        {!lookupError && searching && <LoadingNote>Searching…</LoadingNote>}
         {!lookupError && !searching && matches?.length === 0 && (
           <p className="lookup-note">No player matching "{playerQuery.trim()}"</p>
         )}

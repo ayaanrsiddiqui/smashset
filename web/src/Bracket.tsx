@@ -1,10 +1,11 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { layoutBracket, BOX_HEIGHT, BOX_WIDTH, LINK_WIDTH } from './bracketLayout';
+import { layoutBracket, BOX_HEIGHT, BOX_WIDTH, LINK_WIDTH, ROW_STEP } from './bracketLayout';
 import { bracketSetById, isOpenable, isUnreachedGrandFinalReset, isWinnerSlot, slotLabel } from './bracketDisplay';
 import { compareIdentifiers } from './identifierOrder';
 import { anchoredScroll, clampZoom, fitZoom, MAX_ZOOM, MIN_ZOOM, zoomStep } from './bracketZoom';
 import { upsetFactor } from './upsetFactor';
 import { MAX_SET_CHARACTERS } from './setCharacters';
+import { Delayed } from './Loading';
 import type { BracketGroup, BracketSet, Character } from './types';
 
 // The only two shapes with an elimination tree to draw — round robin and
@@ -48,8 +49,62 @@ function visibleArea(stage: HTMLElement): { left: number; top: number; width: nu
   };
 }
 
+/** 4 -> 2 -> 1, enough of a taper to read as a bracket. See .bracket-skeleton. */
+const SKELETON_COLUMNS = [4, 2, 1];
+
+/**
+ * A bracket-shaped placeholder while the first fetch for this pool is still in
+ * the air.
+ *
+ * The thing it replaced said "No bracket data yet", which for the two or three
+ * seconds a bracket takes to arrive is a wrong answer rather than a missing
+ * one — and "this bracket is empty" is a thing a TO can act on.
+ */
+function BracketSkeleton() {
+  return (
+    <Delayed>
+      <div className="bracket-skeleton" role="status" aria-label="Loading the bracket">
+        {SKELETON_COLUMNS.map((rows, column) => (
+          // Every column the same height, boxes spaced evenly within it, so
+          // the pitch of the tallest one is the real row pitch.
+          <div key={column} className="bracket-skeleton-column" style={{ height: SKELETON_COLUMNS[0] * ROW_STEP }}>
+            {Array.from({ length: rows }, (_, i) => (
+              <span key={i} className="skeleton bracket-skeleton-box" style={{ width: BOX_WIDTH, height: BOX_HEIGHT }} />
+            ))}
+          </div>
+        ))}
+      </div>
+    </Delayed>
+  );
+}
+
+/**
+ * Shown only when there is nothing drawn to fall back to. Once a bracket has
+ * loaded once, a failed poll leaves the last one on screen and says so in the
+ * set panel instead — a stale bracket beats no bracket at a venue.
+ */
+function BracketLoadFailed({ message }: { message: string }) {
+  return (
+    <div className="bracket-failed" role="alert">
+      <p className="error">{message}</p>
+      <p className="bracket-empty">Still trying — this retries by itself every few seconds.</p>
+    </div>
+  );
+}
+
 interface Props {
   group: BracketGroup | null;
+  /**
+   * Why the bracket has not arrived, if the reason is a failure rather than
+   * the fetch still being in flight. Only read while `group` is null.
+   */
+  loadError?: string | null;
+  /**
+   * A set whose detail is being fetched after a tap. Marked while that round
+   * trip is in the air, so tapping a finished set is not a dead tap on venue
+   * wifi — which is also when the fetch takes longest.
+   */
+  openingSetId?: number | string | null;
   onSelectSet: (s: BracketSet) => void;
   /**
    * The set currently highlighted in the list — scrolled into view and marked
@@ -65,12 +120,20 @@ interface Props {
   characters?: Character[];
 }
 
-export function Bracket({ group, onSelectSet, focusedSetId, characters = [] }: Props) {
+export function Bracket({ group, loadError, openingSetId, onSelectSet, focusedSetId, characters = [] }: Props) {
+  // Three states the one old message ran together: still coming, failed, and
+  // genuinely empty (below, once a group has actually arrived).
   if (!group) {
-    return <p className="bracket-empty">No bracket data yet.</p>;
+    return loadError ? <BracketLoadFailed message={loadError} /> : <BracketSkeleton />;
   }
   return ELIMINATION_TYPES.has(group.bracketType) ? (
-    <BracketTree sets={group.sets} onSelectSet={onSelectSet} focusedSetId={focusedSetId} characters={characters} />
+    <BracketTree
+      sets={group.sets}
+      onSelectSet={onSelectSet}
+      focusedSetId={focusedSetId}
+      openingSetId={openingSetId}
+      characters={characters}
+    />
   ) : (
     <FallbackList sets={group.sets} />
   );
@@ -80,11 +143,13 @@ function BracketTree({
   sets,
   onSelectSet,
   focusedSetId,
+  openingSetId,
   characters,
 }: {
   sets: BracketSet[];
   onSelectSet: (s: BracketSet) => void;
   focusedSetId?: number | string | null;
+  openingSetId?: number | string | null;
   characters: Character[];
 }) {
   // Built once per render rather than per slot; a bracket has hundreds.
@@ -247,8 +312,9 @@ function BracketTree({
     });
   }, [focusedSetId]);
 
+  // Reached only once a group has arrived, so this one really is empty.
   if (layout.boxes.length === 0) {
-    return <p className="bracket-empty">No bracket data yet.</p>;
+    return <p className="bracket-empty">This bracket has no sets yet.</p>;
   }
 
   return (
@@ -303,6 +369,7 @@ function BracketTree({
         {layout.boxes.map(({ set: s, x, y, links }) => {
           const clickable = isOpenable(s);
           const focused = focusedSetId != null && String(s.id) === String(focusedSetId);
+          const opening = openingSetId != null && String(s.id) === String(openingSetId);
           // Only a finished set has a result to have been an upset.
           const winnerSlot = s.slots.find((slot) => isWinnerSlot(s, slot));
           const loserSlot = s.slots.find((slot) => slot !== winnerSlot);
@@ -314,11 +381,12 @@ function BracketTree({
             <div key={s.id}>
               <div
                 ref={focused ? focusedRef : undefined}
-                className={`bracket-box${clickable ? ' clickable' : ''}${focused ? ' focused' : ''}`}
+                className={`bracket-box${clickable ? ' clickable' : ''}${focused ? ' focused' : ''}${opening ? ' opening' : ''}`}
                 style={{ left: x, top: y, width: BOX_WIDTH, height: BOX_HEIGHT }}
                 onClick={clickable ? () => onSelectSet(s) : undefined}
               >
                 <span className="bracket-badge">{s.identifier}</span>
+                {opening && <span className="spinner bracket-opening" role="status" aria-label="Opening set" />}
                 {upset !== null && (
                   <span
                     className={`bracket-upset${upset > 0 ? ' real' : ''}`}
