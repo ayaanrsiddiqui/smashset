@@ -1,4 +1,4 @@
-// A real 116-entrant bracket lays out at 1784 x 2516px (re-measured 2026-10-09,
+// A real 116-entrant bracket lays out at 1700 x 2516px (re-measured 2026-10-10,
 // after the column and row steps were tightened; it was 1952 x 3032 before),
 // so on a phone the bracket view shows a handful of sets and no shape at all —
 // and the binding dimension is height, not width, because double elimination
@@ -13,7 +13,7 @@
  *
  * It also has to be low enough that "fit" genuinely fits, or the button lies.
  * Measured on the real 116-entrant bracket at start.gg/fireslam23test —
- * 1784 x 2516px as of 2026-10-09 — which needs 0.21 to fit a phone in portrait
+ * 1700 x 2516px as of 2026-10-10 — which needs 0.21 to fit a phone in portrait
  * and 0.28 on a laptop. A first guess of 0.25 would have fitted neither back
  * when the same bracket was 1952 x 3032 and wanted 0.17; the floor stays where
  * it is, since a tighter layout only ever needs less of it. See the test that

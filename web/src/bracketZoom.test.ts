@@ -46,12 +46,12 @@ describe('fitting the whole bracket on screen', () => {
 
   it('actually fits the largest real bracket on a phone, rather than nearly', () => {
     // Measured from the 116-entrant bracket at start.gg/fireslam23test,
-    // re-measured 2026-10-09 after the layout was tightened (it was
+    // re-measured 2026-10-10 after the layout was tightened (it was
     // 1952 x 3032). A floor picked by feel (0.25) could not fit the old one on
     // a phone OR a laptop, and "fit" that does not fit is a button that lies —
     // so this asserts the outcome, and fails if the layout grows or MIN_ZOOM
     // rises.
-    const huge = { width: 1784, height: 2516 };
+    const huge = { width: 1700, height: 2516 };
     const phonePortrait = { width: 380, height: 520 };
 
     const zoom = fitZoom(huge, phonePortrait);

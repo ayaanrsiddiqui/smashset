@@ -5,15 +5,15 @@ export const BOX_WIDTH = 188;
 export const BOX_HEIGHT = 48;
 export const HEADER_HEIGHT = 32;
 // The gutter holds the elbow connectors, and the identifier and upset badges
-// that sit centred on the box edges and jut about 9px out of each — so roughly
-// 18px of it is spoken for before an elbow is drawn.
+// that sit centred on the box edges and jut 9px out of each — so 18px of it is
+// spoken for before an elbow is drawn, and what is left is the clearance
+// between a finished set's upset badge and the next column's identifier.
 //
-// Calibrated against start.gg rather than taste: its own bracket steps 204px
-// across and 66px down (read off its rendered DOM for fireslam23test). Ours
-// was 252 and 72, which is why the page looked mostly empty — boxes were 19%
-// of the canvas. At 228 and 58 the canvas drops about a quarter and the
-// density lands near start.gg's, while the box stays wide enough for a tag.
-const COLUMN_STEP = BOX_WIDTH + 40;
+// 28 leaves 12px of that, measured on a played bracket with both badges drawn.
+// 24 leaves 8 and the two read as one smudge; 40 left 24 and the page looked
+// mostly empty. start.gg's own bracket steps 204px across to our 216, read off
+// its rendered DOM for fireslam23test.
+const COLUMN_STEP = BOX_WIDTH + 28;
 const ROW_STEP = BOX_HEIGHT + 10;
 const SECTION_GAP = 36;
 // Horizontal space reserved for a cross-phase link's label + dashed stub,

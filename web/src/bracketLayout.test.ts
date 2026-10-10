@@ -320,10 +320,11 @@ describe('layoutBracket — how tightly it packs', () => {
 
     const columns = [...new Set(boxes.map((b) => b.x))].sort((a, b) => a - b);
     const gutter = columns[1] - columns[0] - BOX_WIDTH;
-    // The identifier and upset badges jut about 9px out of each facing edge,
-    // so the floor is not zero.
-    expect(gutter).toBeGreaterThanOrEqual(24);
-    expect(gutter).toBeLessThanOrEqual(48);
+    // The identifier and upset badges jut 9px out of each facing edge, so the
+    // floor is not zero: at 24 only 8px separates a finished set's upset badge
+    // from the next column's identifier, and they read as one smudge.
+    expect(gutter).toBeGreaterThanOrEqual(26);
+    expect(gutter).toBeLessThanOrEqual(36);
   });
 
   it('still fits two rows of readable text in a box', () => {
