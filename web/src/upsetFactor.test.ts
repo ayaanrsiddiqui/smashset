@@ -2,13 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { seedBucket, upsetFactor } from './upsetFactor';
 
 describe('projected placement buckets', () => {
-  it('puts the two grand finalists together', () => {
-    expect(seedBucket(1)).toBe(seedBucket(2));
-  });
-
-  it('gives losers final and losers semi a tier each', () => {
-    expect(seedBucket(3)).toBe(seedBucket(1) + 1);
-    expect(seedBucket(4)).toBe(seedBucket(3) + 1);
+  it('gives each of the top four a tier of its own', () => {
+    // 1st, 2nd, 3rd and 4th are places a bracket awards individually — only
+    // below them do placings start tying. Grouping 1 and 2 was the bug: it
+    // made seed 2 beating seed 1 register as no upset at all.
+    expect([1, 2, 3, 4].map(seedBucket)).toEqual([0, 1, 2, 3]);
   });
 
   it.each([
@@ -45,9 +43,27 @@ describe('how big an upset a result was', () => {
   });
 
   it('is not an upset between two seeds projected to the same finish', () => {
-    // 5 over 6 is a coin flip on paper, however the numbers compare.
+    // 5 over 6 is a coin flip on paper, however the numbers compare — they
+    // share the 5th-6th placing.
     expect(upsetFactor(6, 5)).toBe(0);
-    expect(upsetFactor(2, 1)).toBe(0);
+    expect(upsetFactor(8, 7)).toBe(0);
+    expect(upsetFactor(12, 9)).toBe(0);
+  });
+
+  it('counts the top four one tier apart each', () => {
+    // Ayaan's correction: these were all reading as 0 or short by one, because
+    // seeds 1 and 2 shared a bucket.
+    expect(upsetFactor(2, 1)).toBe(1);
+    expect(upsetFactor(3, 1)).toBe(2);
+    expect(upsetFactor(4, 1)).toBe(3);
+    expect(upsetFactor(4, 2)).toBe(2);
+  });
+
+  it('scores seed 5 beating seed 1 as four tiers', () => {
+    // The other half of the correction: 5 is the first of the tied placings,
+    // so it sits four above the winner's bucket, not three.
+    expect(upsetFactor(5, 1)).toBe(4);
+    expect(upsetFactor(6, 1)).toBe(4);
   });
 
   it('grows with the gap', () => {

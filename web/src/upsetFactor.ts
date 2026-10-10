@@ -4,21 +4,25 @@
  * Seeds are bucketed by where that seed is *projected* to place, because the
  * gap that matters is in rounds, not in seed numbers: beating seed 2 as seed 7
  * is a much bigger deal than beating seed 30 as seed 35, even though the second
- * gap is bigger. The buckets are the placement tiers a double-elimination
- * bracket actually produces — 1-2 (grands), 3 (losers final), 4 (losers semi),
- * 5-6 (losers quarters), 7-8, 9-12, and so on doubling — and the factor is how
- * many of them the winner jumped.
+ * gap is bigger. The factor is how many buckets the winner jumped.
+ *
+ * The buckets are the distinct placements a double-elimination bracket can
+ * actually award. The top four are separate finishes — somebody wins, somebody
+ * is runner-up, somebody is third, somebody is fourth — and only below that do
+ * placings tie: 5th-6th, 7th-8th, 9th-12th, and on doubling. So seed 2 beating
+ * seed 1 is a one-bucket upset, not a non-event.
  */
 
 /**
- * The last seed in each placement bucket: 2, 3, 4, 6, 8, 12, 16, 24, 32, ...
+ * The last seed in each placement bucket: 1, 2, 3, 4, 6, 8, 12, 16, 24, 32, ...
  *
- * The top three are one-offs (grands take two seeds, then losers final and
- * losers semi take one each); after that the tiers come in pairs of equal size
- * that double, which is just what each extra losers round holds.
+ * The top four are one-offs because 1st, 2nd, 3rd and 4th are places a bracket
+ * hands out individually. After that they come in pairs of equal size that
+ * double, which is just how many people each extra losers round eliminates at
+ * once — and those are the placings that genuinely tie.
  */
 function bucketBounds(): number[] {
-  const bounds = [2, 3, 4];
+  const bounds = [1, 2, 3, 4];
   let size = 2;
   let start = 5;
   // 4096 is well past any real bracket; the loop needs an end more than it
