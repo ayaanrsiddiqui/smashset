@@ -290,3 +290,44 @@ describe('layoutBracket — a round the previous one only partly feeds', () => {
     expect(at('Y')).toBe(at('S'));
   });
 });
+
+describe('layoutBracket — how tightly it packs', () => {
+  /**
+   * The bracket is read as a shape before it is read as text, and at the old
+   * spacing the boxes were 19% of the canvas — mostly gutter. These pin the
+   * density in terms of what the layout actually produces, so loosening it
+   * back out is a failing test rather than a slow drift.
+   *
+   * Upper bounds only: the numbers may tighten further, and the lower bound
+   * that matters (boxes must not touch) is asserted separately below.
+   */
+  it('leaves only a small gap between stacked boxes', () => {
+    const A = set(1, 'A', 1, 'Winners Round 1', [slot(101), slot(102)]);
+    const B = set(2, 'B', 1, 'Winners Round 1', [slot(103), slot(104)]);
+    const { boxes } = layoutBracket([A, B]);
+
+    const [first, second] = boxes.sort((a, b) => a.y - b.y);
+    const gap = second.y - first.y - BOX_HEIGHT;
+    expect(gap).toBeGreaterThan(0);
+    expect(gap).toBeLessThanOrEqual(12);
+  });
+
+  it('leaves only enough gutter between columns for an elbow and the badges', () => {
+    const A = set(1, 'A', 1, 'Winners Round 1', [slot(101), slot(102)]);
+    const B = set(2, 'B', 1, 'Winners Round 1', [slot(103), slot(104)]);
+    const I = set(3, 'I', 2, 'Winners Quarter-Final', [slot(101, '1', 1), slot(103, '2', 1)]);
+    const { boxes } = layoutBracket([A, B, I]);
+
+    const columns = [...new Set(boxes.map((b) => b.x))].sort((a, b) => a - b);
+    const gutter = columns[1] - columns[0] - BOX_WIDTH;
+    // The identifier and upset badges jut about 9px out of each facing edge,
+    // so the floor is not zero.
+    expect(gutter).toBeGreaterThanOrEqual(24);
+    expect(gutter).toBeLessThanOrEqual(48);
+  });
+
+  it('still fits two rows of readable text in a box', () => {
+    // 13px text needs about 15px of line, twice, plus a little breathing room.
+    expect(BOX_HEIGHT).toBeGreaterThanOrEqual(44);
+  });
+});
