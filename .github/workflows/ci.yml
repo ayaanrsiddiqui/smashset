@@ -16,9 +16,11 @@ jobs:
   verify:
     runs-on: ubuntu-latest
 
-    # An ephemeral database per run. Local `npm test` currently points at the
-    # production Postgres, which is why the suite has to run files serially and
-    # delete only its own rows; CI gets a throwaway instead.
+    # A real Postgres for the server suite, fresh every run. It is on localhost
+    # because the test and migration guards refuse any other host, and it
+    # starts empty so "Apply schema" replays every migration from nothing: one
+    # that is broken in itself, data migrations included, fails here rather
+    # than in Railway's pre-deploy step against production.
     services:
       postgres:
         image: postgres:16
